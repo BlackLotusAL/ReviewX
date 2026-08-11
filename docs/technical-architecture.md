@@ -1,755 +1,343 @@
 # ReviewX 技术架构设计
 
 - 文档状态：Draft
-- 版本：0.1
-- 更新日期：2026-07-29
+- 版本：0.4
+- 更新日期：2026-08-12
 - 需求来源：[产品需求文档](./product-requirements.md)
 
-## 1. 文档目的
+## 1. 文档目的与核心决策
 
-本文描述 ReviewX 的系统边界、OpenCode 持续运行方式、多智能体编排、仓库初始化、MR worktree 并发、CodeHub CLI 契约、数据模型、Markdown 产物、部署和安全设计。
+本文定义 ReviewX 首版的进程、命令、运行目录、外部接口、状态和 Agent 协议。产品范围、检视规则和评论内容以《[产品需求文档](./product-requirements.md)》为准。
 
-产品目标、用户流程、功能优先级和验收指标见《[产品需求文档](./product-requirements.md)》。
+核心决策：
 
-## 2. 核心架构决策
+1. 使用 TypeScript/Node 实现单一 `reviewx` CLI。
+2. `reviewx run` 以前台单进程运行；MR 和 Agent 均顺序执行。
+3. 每个 Agent 通过独立的 `opencode run` 子进程调用，不运行 OpenCode Server，不引入 OpenCode SDK。
+4. CodeHub CLI 是唯一代码托管平台 CLI，负责仓库和 MR API 操作；本地 Git 只负责 clone、fetch、worktree 和只读查询。
+5. 使用本地 `state.json` 保存最小状态，不运行数据库或队列。
+6. Workflow 只准备仓库、worktree、分支和 commit 列表，不生成 diff 上下文包。
+7. Agent 只读工作区，不运行项目代码；评论凭据只属于 Workflow。
 
-### 2.1 Runner 管基础设施，Agent 管判断
+首版不包含通用代码托管平台适配层、Webhook、多实例、Web 页面、inline 评论、知识库、报告或阶段恢复。
 
-由确定性的 Review Runner 负责：
-
-- clone、fetch 和仓库缓存。
-- MR 枚举和增量判断。
-- worktree 生命周期。
-- 任务队列、并发、超时、重试和幂等。
-- OpenCode session 创建和状态跟踪。
-- Markdown 与结构化数据写入。
-- CodeHub 评论发布。
-
-OpenCode Agent 负责：
-
-- 理解变更目的和上下文。
-- 从指定专家视角发现候选问题。
-- 输出结构化证据和修改建议。
-- 生成案例与报告中的自然语言内容。
-
-Agent 不负责自由决定任务调度、工作区路径、凭据权限或评论发布。
-
-### 2.2 服务常驻，会话短命
-
-```text
-长期运行：
-  reviewd             调度、队列、状态、并发、重试、发布
-  opencode serve      OpenCode headless 服务
-  review-web          进度和 Markdown 查看
-  database            任务与指标状态
-
-短期运行：
-  每个 MR × 每个专家 = 一个独立 OpenCode session
-```
-
-不使用一个长期积累上下文的 Agent 会话持续数天。知识通过版本化文件持久化，运行状态通过数据库持久化。
-
-### 2.3 先多候选，再只发布一条
-
-专家可以产生多个候选问题，内部报告也可以保留多个候选；只有经过证据裁判并达到阈值的最高价值问题可以发布到 CodeHub。没有合格问题时输出 `PASS`。
-
-## 3. 总体架构
+## 2. 运行拓扑与命令
 
 ```mermaid
 flowchart LR
-    A["CodeHub"] --> B["CodeHub CLI Adapter"]
-    B --> C["reviewd Scheduler / Queue"]
-    C --> D["Repository Cache"]
-    D --> E["MR Worktree"]
-    C --> F["Context Builder"]
-    E --> F
-    G["Knowledge Snapshot"] --> F
-    F --> H["OpenCode Expert Sessions"]
-    H --> I["Normalizer / Deduplicator"]
-    I --> J["Review Judge"]
-    J --> K["Publisher"]
-    K -. "Comment" .-> A
-    J --> L["Markdown Artifact Writer"]
-    L --> M["Review Web"]
-    C --> N["Database"]
-    H --> N
-    K --> N
+    A["管理员"] --> B["reviewx CLI"]
+    B --> C["state.json / JSONL 日志"]
+    B --> D["CodeHub CLI"]
+    D --> E["CodeHub"]
+    B --> F["Git / 仓库缓存 / worktree"]
+    B --> G["opencode run"]
+    G --> F
 ```
 
-## 4. 组件职责
-
-| 组件 | 职责 |
-| --- | --- |
-| `reviewd` | 调度、队列、任务状态、仓库准备、专家编排、门禁和发布 |
-| OpenCode Server | 提供 Agent、Skill、Tool、session、事件和模型调用 |
-| CodeHub Adapter | 将统一仓库接口映射为 CodeHub CLI/API 调用 |
-| Repository Cache | 保存共享 git objects，降低重复 clone 成本 |
-| Worktree Manager | 为每个 MR head SHA 创建和清理隔离工作区 |
-| Context Builder | 生成专家所需的最小、相关、可追溯上下文 |
-| Expert Agents | 从设计、业务、代码等角度独立输出候选问题 |
-| Normalizer | 校验字段、标准化 Tag、合并明显重复候选 |
-| Review Judge | 验证证据、评分、选择唯一问题或 `PASS` |
-| Publisher | 进行新鲜度和幂等检查，并调用 CodeHub 写接口 |
-| Artifact Writer | 生成单次检视、案例和周期报告 |
-| Review Web | 展示状态、历史和 Markdown 文档 |
-| Database | 保存任务、游标、发现、发布和指标数据 |
-
-## 5. OpenCode 持续运行
-
-### 5.1 常驻 OpenCode Server
+对外命令只有两个：
 
 ```bash
-opencode serve --hostname 127.0.0.1 --port 4096
+reviewx repo add <repo-id> [--state runtime/state.json]
+
+reviewx run \
+  [--interval 10m] \
+  [--agent-timeout 20m] \
+  [--state runtime/state.json] \
+  [--log runtime/reviewx.jsonl]
 ```
 
-由 Docker Compose、systemd 或 Kubernetes 保证异常重启。服务应设置认证，并默认仅监听内部网络或本机地址。
+`reviewx repo add` 调用 `codehub repo view <repo-id> --output json` 验证 Project ID 和读取权限。验证通过后，在状态锁内重新读取状态、拒绝重复 ID，并原子写入新仓库；正在运行的 `reviewx run` 会在下一轮扫描前加载它。
 
-### 5.2 MVP 调用方式
+`reviewx run` 获取单实例进程锁，启动后立即扫描一次，每轮结束后等待 `--interval` 再扫描。默认间隔为 10 分钟；一轮未结束时不启动下一轮。
 
-MVP 可以由 `reviewd` 启动 CLI 子进程：
+`--agent-timeout` 是每个专家或裁判子进程的独立超时，默认 20 分钟，不是整个 MR 的总超时。
 
-```bash
-opencode run \
-  --attach http://127.0.0.1:4096 \
-  --agent design-reviewer \
-  --dir /runtime/worktrees/payment-service/mr-128-a18c4e \
-  --format json \
-  "按照任务上下文完成设计规范检视，并输出规定的 JSON。"
-```
+## 3. Runtime、状态与日志
 
-### 5.3 生产调用方式
-
-生产版本使用 OpenCode SDK：
-
-```text
-1. client.session.create(...)
-2. client.session.promptAsync(..., agent = "<expert>")
-3. client.event.subscribe()
-4. 等待 session.idle 或 session.error
-5. 读取并验证 structured_output
-```
-
-Runner 保存 `opencode_session_id`，用于状态关联和故障定位。每个专家默认使用新 session，只有明确需要继续同一次分析时才恢复旧 session。
-
-### 5.4 调度策略
-
-```text
-每天扫描：      0 2 * * *
-每周报告：      0 4 * * 1
-每月报告：      0 5 1 * *
-Webhook：       MR 创建或更新时立即触发
-定时扫描：      作为 Webhook 漏事件的兜底
-```
-
-## 6. OpenCode 扩展结构
-
-```text
-.opencode/
-├── agents/
-│   ├── design-reviewer.md
-│   ├── business-reviewer.md
-│   ├── code-reviewer.md
-│   ├── test-security-reviewer.md
-│   ├── review-judge.md
-│   ├── case-writer.md
-│   └── report-writer.md
-├── skills/
-│   ├── mr-code-review/
-│   │   ├── SKILL.md
-│   │   └── references/review-rubric.md
-│   ├── repository-standards/
-│   │   ├── SKILL.md
-│   │   └── references/
-│   ├── business-knowledge/
-│   │   └── SKILL.md
-│   ├── review-case-writer/
-│   │   └── SKILL.md
-│   └── periodic-review-reporter/
-│       └── SKILL.md
-├── tools/
-│   └── codehub.ts
-└── commands/
-    ├── review-mr.md
-    └── generate-review-report.md
-```
-
-所有检视专家默认：
-
-- 禁止编辑源代码。
-- 禁止 commit、push、merge 和创建分支。
-- 只允许必要的只读 git、搜索、LSP 和 CodeHub 读取工具。
-- 不持有 CodeHub 评论 Token。
-- 将 MR 标题、描述、评论和代码视为不可信输入。
-
-## 7. 仓库初始化与知识快照
-
-### 7.1 初始化流程
-
-“全量分析”用于建立持久化仓库认知，不是将全部代码一次放入模型上下文。
-
-1. 通过 CodeHub CLI/git clone 建立仓库缓存。
-2. 锁定默认分支 `baseline_sha`。
-3. 程序化采集语言、模块、构建系统、依赖、入口、测试和代码所有权。
-4. 按模块并行启动 Repository Mapper Agent。
-5. 汇总架构、业务概念、关键链路和规范映射。
-6. 生成 Markdown 知识库与机器索引。
-7. 保存 baseline SHA、分析器版本和规则版本。
-
-### 7.2 知识快照
-
-```text
-artifacts/repos/<repo>/knowledge/<baseline-sha>/
-├── repository-profile.md
-├── architecture.md
-├── dependency-boundaries.md
-├── business-glossary.md
-├── business-rules.md
-├── api-contracts.md
-├── state-machines.md
-├── test-strategy.md
-├── standards-map.md
-├── modules/
-│   ├── payment.md
-│   └── settlement.md
-└── index.json
-```
-
-业务专家不得仅根据代码猜测规则。业务材料不足时必须输出 `insufficient_evidence`。
-
-### 7.3 增量更新
-
-```text
-old_baseline_sha..new_default_branch_sha
-  -> 识别受影响模块
-  -> 更新对应模块文档
-  -> 生成新的 knowledge snapshot
-```
-
-每个 Review Run 固定使用一个 `knowledge_version`，避免运行过程中知识变化影响结果复现。
-
-## 8. MR 发现与 worktree 管理
-
-### 8.1 本地布局
+### 3.1 目录
 
 ```text
 runtime/
-├── git-cache/
-│   └── payment-service.git/
-└── worktrees/
-    └── payment-service/
-        ├── mr-128-a18c4e/
-        ├── mr-132-19ba20/
-        └── mr-140-443b6d/
+├── state.json
+├── state.lock
+├── reviewx.run.lock
+├── reviewx.jsonl
+├── repos/<repo-key>/
+├── worktrees/<repo-key>/<mr-iid>/
+└── runs/<run-id>/
+    ├── expert-input.json
+    └── judge-input.json
 ```
 
-每个 `MR + head SHA` 使用独立 worktree。不同 MR 可以并行；同一 MR 的专家可以并行只读同一 worktree。
+`runs/` 只保存当前运行的临时输入；校验后的 Agent 输出和评论正文在内存中传递。运行结束后删除对应 run 目录和 worktree。日志不内建轮转，由运行环境处理。
 
-如果需要运行会产生文件的测试或构建，应使用额外临时 worktree、容器 overlay 或沙箱。测试阶段只运行一次，结果提供给所有专家。
+### 3.2 状态
 
-### 8.2 增量判断
+`state.json` 只保存已登记仓库、MR 处理游标和历史问题，结构如下：
 
-每天可以枚举所有开放 MR，但只创建以下任务：
-
-- 从未处理过的 MR。
-- head SHA 已变化的 MR。
-- 规则版本升级后明确要求重检的 MR。
-- 人工触发重检的 MR。
-
-默认跳过或按配置处理 Draft、机器人 MR、忽略标签和非目标分支。
-
-### 8.3 幂等键
-
-```text
-repo_id
-+ mr_iid
-+ head_sha
-+ reviewer_version
-+ policy_version
-+ knowledge_version
-```
-
-发布前重新查询 head SHA。若已变化，将当前任务标记为 `STALE`，不发布，并为新 SHA 入队。
-
-## 9. MR 检视流水线
-
-```mermaid
-sequenceDiagram
-    participant S as Scheduler
-    participant C as CodeHub Adapter
-    participant W as Worktree Manager
-    participant O as OpenCode Experts
-    participant J as Review Judge
-    participant P as Publisher
-
-    S->>C: 列出 open MR
-    C-->>S: MR 元数据和 SHA
-    S->>W: 创建 MR worktree
-    W-->>S: 工作目录
-    S->>C: 获取 diff、提交、已有评论
-    S->>O: 并行运行设计/业务/代码专家
-    O-->>S: 结构化候选问题
-    S->>J: 标准化和去重后的候选
-    J-->>S: 唯一问题或 PASS
-    S->>C: 再次确认 head SHA
-    S->>P: 提交已验证意见
-    P->>C: 创建 inline 或普通 MR 评论
-    S->>S: 写 review.md 和 case.md
-    S->>W: 到期清理 worktree
-```
-
-阶段状态：
-
-```text
-DISCOVERED
-  -> PREPARING
-  -> CONTEXT_BUILDING
-  -> EXPERT_REVIEWING
-  -> NORMALIZING
-  -> JUDGING
-  -> RENDERING
-  -> FRESHNESS_CHECK
-  -> PUBLISHING
-  -> CASE_WRITING
-  -> COMPLETED | PASS | FAILED | STALE | CANCELLED
-```
-
-## 10. 多专家编排
-
-```mermaid
-flowchart LR
-    A["MR Context Package"] --> B["设计规范专家"]
-    A --> C["业务规则专家"]
-    A --> D["代码正确性专家"]
-    A --> E["测试/安全专家（可选）"]
-    B --> F["标准化与去重"]
-    C --> F
-    D --> F
-    E --> F
-    F --> G["证据裁判"]
-    G --> H["Selected Finding 或 PASS"]
-    G --> I["完整内部报告"]
-```
-
-### 10.1 设计规范专家
-
-关注模块边界、依赖方向、架构模式、API 与数据兼容性、事务边界和组织规范。
-
-### 10.2 业务规则专家
-
-关注领域不变量、状态流转、金额、权限、库存、配额、接口契约和历史案例。证据不足时返回 `insufficient_evidence`。
-
-### 10.3 代码正确性专家
-
-关注空值、边界、错误处理、并发、资源释放、事务一致性、安全、性能、兼容性和测试覆盖。
-
-### 10.4 测试/安全专家
-
-作为可选专家，针对高风险仓库或高风险变化启用，避免所有 MR 固定增加相同模型成本。
-
-### 10.5 证据裁判
-
-证据裁判只负责：
-
-- 验证问题与本次 diff 的因果关系。
-- 验证文件、行号、调用路径和触发条件。
-- 合并多个专家发现的同一问题。
-- 排除风格噪声、已有评论和低置信度问题。
-- 评分并选择唯一问题。
-- 无问题达到门槛时输出 `PASS`。
-
-生产编排由 Runner 为每个专家创建独立 session，而不是让一个主 Agent 自由决定是否调用专家。这样可以获得明确的并发、超时、重试和成本边界。
-
-## 11. 上下文构建
-
-每个专家接收一个版本化的 MR Context Package：
-
-```text
-MR 元数据
-base SHA / head SHA
-changed files
-diff
-相关函数、调用方和测试
-相关模块知识文档
-适用规则
-确定性检查结果
-已有 MR 评论
-输出 JSON Schema
-```
-
-Context Builder 只提供与变化相关的仓库上下文，不将整个仓库直接放入模型输入。
-
-## 12. 专家输出协议
-
-专家先输出统一 JSON，不直接生成最终 CodeHub Markdown：
-
-```json
-{
-  "schema_version": "1.0",
-  "expert": "code-reviewer",
-  "verdict": "findings",
-  "findings": [
-    {
-      "finding_id": "F-001",
-      "title": "事务提交前提前发送成功事件",
-      "file": "src/payment/PaymentService.java",
-      "start_line": 184,
-      "end_line": 189,
-      "side": "new",
-      "severity": "S1",
-      "tags": ["correctness", "transaction"],
-      "rule_ids": ["JAVA-TX-004"],
-      "problem": "事件在数据库事务提交前发布。",
-      "trigger": "数据库提交失败或事务回滚。",
-      "impact": "下游收到成功事件，但订单实际未入库。",
-      "evidence": [
-        {
-          "file": "src/payment/PaymentService.java",
-          "line": 186,
-          "description": "publish() 位于事务方法返回前"
-        }
-      ],
-      "recommendation": "改为事务提交后的回调或 transactional outbox。",
-      "confidence": 0.94,
-      "diff_related": true
-    }
-  ]
+```ts
+interface State { repositories: Record<string, RepositoryState>; }
+interface RepositoryState { merge_requests: Record<string, MergeRequestState>; }
+interface MergeRequestState {
+  last_processed_updated_at?: string;
+  finding_history: FindingHistory[];
+}
+interface FindingHistory {
+  summary: { title: string; file: string; problem: string };
+  publication_status: "confirmed" | "unknown";
+  comment_id: string | null;
 }
 ```
 
-输出通过 JSON Schema 校验。字段缺失、Tag 非法、位置不可解析或输出无法解析时，专家任务失败并按策略重试。
+`repositories` 以 CodeHub Project ID 为键，`merge_requests` 以 MR IID 为键。
 
-## 13. 证据门禁与评分
+状态更新规则：
 
-候选问题必须同时满足：
+- 写入时获取 `state.lock`，重新读取状态，写同目录临时文件并原子替换；扫描和外部命令期间不持锁。
+- `pass` 或 `duplicate_of` 成功后保存本次 `updated_at`。
+- 新评论发布后保存 `confirmed` 历史、评论 ID 和重新查询得到的最新 `updated_at`。
+- `WRITE_RESULT_UNKNOWN` 按第 7.1 节保存 `unknown` 历史并终止该次更新的自动重试。
+- 失败、中断、发布前 MR 更新或关闭时不更新 `last_processed_updated_at`。
+- 状态文件缺失时创建空状态；无法解析时停止写入，不能覆盖原文件。
 
-- 与本次 diff 有直接因果关系。
-- 文件和行号真实存在。
-- 能说明具体触发条件与后果。
-- 存在代码、调用链、测试或规则证据。
-- 修改建议具有可操作性。
-- 不与已有 MR 评论重复。
+### 3.3 日志
 
-建议评分：
+stdout 和 `reviewx.jsonl` 输出相同的 JSON Lines。每条记录按事件包含以下适用字段：
 
-```text
-总分 =
-  影响严重度 30%
-  + 证据与可复现性 25%
-  + 判断置信度 20%
-  + 影响范围 10%
-  + 修复可操作性 10%
-  + 规范匹配度 5%
-  - 重复/噪声惩罚
+```ts
+interface LogRecord {
+  time: string;
+  level: "info" | "error";
+  event: string;
+  run_id?: string;
+  repo_id?: string;
+  mr_iid?: string;
+  updated_at?: string;
+  result?: "pass" | "duplicate_of" | "new" | "publication_unknown" | "updated" | "closed" | "failed";
+  error?: string;
+  duplicate_of_comment_id?: string | null;
+  comment_id?: string | null;
+}
 ```
 
-默认发布阈值建议为 75/100。阈值、严重等级和不同专家权重应支持仓库级配置。
+## 4. CodeHub CLI 与 Git worktree
 
-## 14. CodeHub 发布
+### 4.1 CodeHub CLI 契约
 
-### 14.1 最终评论
-
-```markdown
-### [S1][correctness][transaction] 事务提交前提前发送成功事件
-
-**位置**：`src/payment/PaymentService.java:184-189`
-
-**问题**：当前代码在数据库事务确认提交前调用 `publishSuccess()`。当后续提交失败或事务回滚时，下游仍会收到成功事件，造成状态不一致。
-
-**建议**：将事件发送移动到事务提交后的回调；如果需要可靠投递，建议使用 transactional outbox，并增加事务回滚测试。
-
-**置信度**：94%
-
-**规则**：`JAVA-TX-004`
-
-<!-- reviewx:repo=payment-service;mr=128;head=a18c4e;finding=F-001;version=1 -->
-```
-
-### 14.2 Inline 评论
-
-CodeHub 支持 diff inline discussion 时，Publisher 传入：
-
-```text
-repo_id
-mr_iid
-base_sha
-head_sha
-file_path
-old_line / new_line
-body
-idempotency_key
-```
-
-不支持时，发布普通 MR 评论，并包含文件、行号和对应 commit 的代码链接。
-
-### 14.3 发布门禁
-
-- head SHA 仍然一致。
-- 文件和行号存在。
-- 严重等级和 Tag 属于允许集合。
-- 分数达到发布阈值。
-- 评论中不包含凭据或敏感信息。
-- CodeHub 中不存在同一 ReviewX 幂等标记。
-- 同一 head SHA 最多发布一条自动意见。
-
-## 15. CodeHub CLI 契约
-
-具体命令名可以调整，但适配层至少需要：
-
-```text
-codehub repo clone/fetch
-codehub mr list --state open --updated-after ... --json
-codehub mr get <iid> --json
-codehub mr diff <iid> --json
-codehub mr commits <iid> --json
-codehub mr comments <iid> --json
-codehub mr comment create <iid> --body-file ... --json
-codehub mr discussion create <iid> --position-file ... --body-file ... --json
-```
-
-CLI 必须具备：
-
-- 稳定 JSON Schema 和工具版本号。
-- 分页、超时、限流和重试。
-- 明确退出码和可分类错误。
-- TLS 证书校验。
-- 从环境或凭据存储读取 Token。
-- `--dry-run`。
-- 客户端请求 ID 或幂等键。
-
-读取 Token 和评论 Token 分离。Agent 只可使用读取命令；Publisher 才能使用写命令。
-
-统一适配器接口：
-
-```text
-list_mrs(repo, updated_after, state) -> MR[]
-get_mr(repo, iid) -> MR
-get_diff(repo, iid) -> Diff
-get_commits(repo, iid) -> Commit[]
-get_comments(repo, iid) -> Comment[]
-checkout(repo, base_sha, head_sha) -> Worktree
-create_comment(repo, iid, body, idempotency_key) -> Comment
-```
-
-## 16. 持久化与任务模型
-
-### 16.1 主要数据表
-
-```text
-repositories
-repository_snapshots
-merge_requests
-review_runs
-expert_runs
-findings
-publications
-review_cases
-report_runs
-```
-
-### 16.2 Review Run 关键字段
-
-```text
-run_id
-repo_id
-mr_iid
-base_sha
-head_sha
-knowledge_version
-policy_version
-reviewer_version
-status
-selected_finding_id
-opencode_session_ids
-started_at
-finished_at
-error
-```
-
-### 16.3 队列可靠性
-
-```text
-task_id
-task_type
-status
-attempt
-lease_owner
-lease_expires_at
-started_at
-finished_at
-error_type
-error_message
-```
-
-Worker 通过租约领取任务。进程死亡后租约到期，任务重新入队。任务重跑依赖幂等键，不依赖内存中的 Agent 上下文。
-
-## 17. Markdown 与结构化产物
-
-```text
-artifacts/
-├── repos/
-│   └── <repo>/
-│       ├── knowledge/<baseline-sha>/
-│       └── mrs/<iid>/<head-sha>/
-│           ├── review.md
-│           ├── selected-finding.json
-│           ├── experts/
-│           │   ├── design-review.json
-│           │   ├── business-review.json
-│           │   └── code-review.json
-│           └── execution.json
-├── cases/<year>/<case-id>.md
-└── reports/
-    ├── weekly/2026-W31.md
-    └── monthly/2026-07.md
-```
-
-所有人类可读产物使用 Markdown。任务状态、幂等键、筛选索引和指标保存在数据库或 JSON 中。
-
-统计计数由程序完成，报告 Agent 只负责解释趋势和生成建议。
-
-## 18. Review Web
-
-MVP 采用只读网页：
-
-| 页面 | 数据来源 |
-| --- | --- |
-| 总览 | Review Run、Expert Run 和周期指标 |
-| 任务进度 | 任务状态、当前阶段、耗时和错误 |
-| 检视历史 | Review Run、Selected Finding 和筛选索引 |
-| 检视详情 | `review.md` |
-| 案例库 | `case.md` |
-| 周报/月报 | 周期报告 Markdown |
-
-静态内容可以由 Astro/Vite 渲染。实时状态由小型 API 或 SSE 提供。人工反馈功能在第二阶段增加受认证的写接口。
-
-## 19. 并发、超时与成本控制
-
-```yaml
-concurrency:
-  max_mrs: 4
-  max_experts_per_mr: 3
-  max_total_sessions: 8
-
-timeouts:
-  expert_minutes: 10
-  judge_minutes: 5
-  review_minutes: 20
-```
-
-限制分三层：
-
-- 同时处理的 MR 数。
-- 单个 MR 同时运行的专家数。
-- 全系统 OpenCode session 总数。
-
-测试/安全专家可以按风险条件启用，而不是所有 MR 固定运行。
-
-## 20. 安全设计
-
-- CodeHub 读取 Token 与评论 Token 分离。
-- Agent 运行环境不注入评论 Token。
-- OpenCode Server 仅监听内部地址并启用认证。
-- MR 标题、描述、评论和代码视为不可信数据，防止 prompt injection。
-- 默认不执行 MR 自带脚本。
-- 必须运行测试时，使用无凭据、默认断网、有限 CPU/内存和执行时间的沙箱。
-- 日志和 Markdown 写入前进行凭据与敏感信息扫描。
-- worktree 按显式路径创建和清理，不使用未经验证的仓库名直接拼接路径。
-
-## 21. 部署
-
-```yaml
-services:
-  reviewd:
-    # scheduler + queue + repository + worktree + publisher
-
-  opencode:
-    # opencode serve
-
-  review-web:
-    # dashboard + Markdown renderer
-
-  database:
-    # MVP 可使用 SQLite；多实例部署使用 PostgreSQL
-```
-
-MVP 可以单机 Docker Compose 部署。扩展到多 Worker 时使用 PostgreSQL 和共享或可访问的 artifact storage，并保证同一仓库的 fetch/worktree 操作具有锁。
-
-## 22. 配置示例
-
-```yaml
-timezone: Asia/Hong_Kong
-
-repositories:
-  - id: payment-service
-    provider: codehub
-    repo_id: "123456"
-    schedule: "0 9 * * 1-5"
-    target_branches: [main]
-    ignore_labels: [skip-ai-review]
-
-review:
-  publish_mode: web
-  min_score: 75
-  max_changed_lines: 3000
-  rerun_on_new_head: true
-  experts:
-    - design-reviewer
-    - business-reviewer
-    - code-reviewer
-  standards:
-    - organization
-    - java
-    - payment-service
-
-reports:
-  periods: [7d, 30d]
-
-concurrency:
-  max_mrs: 4
-  max_experts_per_mr: 3
-  max_total_sessions: 8
-```
-
-配套管理 CLI：
+ReviewX 直接按以下固定契约调用 CodeHub CLI：
 
 ```bash
-reviewctl repo add <repo>
-reviewctl repo init <repo>
-reviewctl scan --since 24h
-reviewctl review <repo>#<mr-iid>
-reviewctl report --period 7d
-reviewctl retry <run-id>
-reviewctl serve
+codehub repo view <repo-id> --output json
+codehub mr list --project-id <repo-id> --state open --output json
+codehub mr view <mr-iid> --project-id <repo-id> --output json
+codehub mr commits <mr-iid> --project-id <repo-id> --output json
+codehub mr comment create <mr-iid> \
+  --project-id <repo-id> \
+  --body <markdown> \
+  --severity <suggestion|minor|major|fatal> \
+  --output json
 ```
 
-## 23. 需求与组件映射
+`repo_id` 等于 CodeHub Project ID。MR 的调用和状态主键是 `(repo_id, mr_iid)`；全局 `mr_id` 仅作为返回元数据，不得替代 IID。MR 使用 `state`、commit 使用 `sha`，评论成功结果使用 `comment_id`。
 
-| 产品需求 | 主要实现组件 |
+成功时 stdout 是直接 JSON 对象或数组；失败时 stdout 为空，stderr 是包含稳定 `code` 的 JSON 对象。ReviewX 同时校验退出码和错误 `code`，不能仅凭退出码分类。CodeHub 凭据使用 CLI 已有登录配置，不传给 Agent。
+
+`mr list` 的返回数组直接作为本轮 Open MR 集合，不增加分页或改用其他接口。首版接受 CodeHub CLI 结果可能非全量的限制。
+
+### 4.2 评论发布
+
+Workflow 使用 Node 子进程参数数组调用 `mr comment create`，把裁判生成的完整 Markdown 作为一个 `--body` 参数传入，不经过 shell 拼接。严重等级映射固定为：
+
+| ReviewX | CodeHub |
 | --- | --- |
-| PR-REP-* | Repository Cache、Knowledge Builder、Artifact Writer |
-| PR-MR-* | Scheduler、Queue、Worktree Manager |
-| PR-AI-* | Context Builder、Expert Agents、Normalizer、Review Judge |
-| PR-PUB-* | Publisher、CodeHub Adapter |
-| PR-DOC-* | Artifact Writer、Report Aggregator、Writer Agents |
-| PR-WEB-* | Review Web、Database、Artifact Storage |
+| Blocker | `fatal` |
+| Critical | `major` |
+| Major | `minor` |
+| Minor | `suggestion` |
 
-## 24. 实施顺序
+评论 Markdown 仍展示 ReviewX 原始等级。`WRITE_RESULT_UNKNOWN` 的处理规则见第 7.1 节。
 
-1. 完成 CodeHub CLI 的稳定 JSON 读取、评论发布和幂等能力。
-2. 实现仓库缓存、全量初始化和知识快照。
-3. 实现 `reviewd`、任务表、定时扫描和 worktree 管理。
-4. 接入代码正确性专家和证据裁判，跑通单 MR。
-5. 增加设计规范和业务规则专家。
-6. 生成检视、案例和 7 天报告。
-7. 提供只读网页。
-8. 使用 `dry-run` 完成真实 MR 校准后开放 CodeHub 自动回写。
-9. 增加人工反馈、30 天报告和增量知识更新。
+### 4.3 Git 与 worktree 生命周期
 
-## 25. 参考资料
+1. 仓库登记通过 `repo view` 验证 Project ID；缓存不存在时再次读取 `clone_urls`。
+2. 优先选择 SSH 地址，仅在 SSH 地址缺失时选择 HTTPS；选定地址的 Git clone 失败时不切换协议。
+3. 本地 Git clone 到 `runtime/repos/<repo-key>`；已有缓存时 fetch source 和 target 分支。
+4. 清理遗留 worktree，在 `runtime/worktrees/<repo-key>/<mr-iid>` 创建新 worktree 并切换最新 source 分支。
+5. 通过 `mr commits` 读取完整 commit 列表。
+6. 专家和裁判共享只读 worktree，自行用代码搜索和只读 Git 理解最终整体净变化。
+7. 无论成功或失败，都在结束路径中删除 worktree 和 run 临时目录。
 
-- [OpenCode CLI](https://dev.opencode.ai/docs/cli/)
-- [OpenCode Server](https://dev.opencode.ai/docs/server/)
+`repo-key` 由仓库 ID 安全编码生成。Git 认证依赖运行机器已有的 SSH 或 Git Credential 配置，与 CodeHub CLI 登录凭据相互独立。
+
+## 5. OpenCode Agent 与输出协议
+
+### 5.1 配置、调用与超时
+
+ReviewX 随程序分发四个 Agent：`design-reviewer`、`business-reviewer`、`code-reviewer` 和 `review-judge`。启动时设置：
+
+```text
+OPENCODE_CONFIG_DIR=<reviewx-opencode>
+OPENCODE_CONFIG_CONTENT=<ReviewX 强制权限配置>
+```
+
+`OPENCODE_CONFIG_DIR` 加载 ReviewX Agent；`OPENCODE_CONFIG_CONTENT` 以运行时配置覆盖项目配置，防止待检视仓库扩大权限。每次调用创建独立进程和会话：
+
+```bash
+opencode run \
+  --agent design-reviewer \
+  --dir <worktree> \
+  --file <run-dir>/expert-input.json \
+  --format json \
+  "检视当前 MR 的最终整体净变化，只输出约定 JSON。"
+```
+
+三个专家按设计、业务、代码顺序执行，全部成功后才调用裁判。每个进程最多运行 `--agent-timeout`；超时后 ReviewX 终止进程并判定本次 Review Run 失败。
+
+### 5.2 只读权限
+
+运行时配置明确拒绝未授权能力，再放行读取、搜索和四类只读 Git 命令：
+
+```yaml
+permission:
+  "*": deny
+  read: allow
+  glob: allow
+  grep: allow
+  list: allow
+  edit: deny
+  task: deny
+  lsp: deny
+  webfetch: deny
+  websearch: deny
+  external_directory: deny
+  bash:
+    "*": deny
+    "git status*": allow
+    "git log*": allow
+    "git show*": allow
+    "git diff*": allow
+```
+
+`edit: deny` 同时禁止 write、edit 和 apply_patch。Agent 不持有 CodeHub 凭据，也不能运行构建、测试、包管理或其他项目命令。
+
+### 5.3 输入输出协议
+
+专家输入只包含以 `repo_id`、`mr_iid` 标识的 MR 元数据、source/target 分支、worktree 路径和完整 commit 列表。裁判输入在此基础上增加三个专家结果，以及带发布状态和可空评论 ID 的历史问题。
+
+JSON wire format 使用 `snake_case`，规范类型如下：
+
+```ts
+type Severity = "Blocker" | "Critical" | "Major" | "Minor";
+type ExpertName = "design-reviewer" | "business-reviewer" | "code-reviewer";
+
+interface Evidence { file: string; line: number; description: string; }
+
+interface Finding {
+  title: string;
+  file: string;
+  start_line: number;
+  end_line: number;
+  severity: Severity;
+  tags: string[];
+  rule_ids: string[];
+  problem: string;
+  trigger: string;
+  impact: string;
+  evidence: Evidence[];
+  recommendation: string;
+  confidence: number;
+}
+
+interface ExpertResult { expert: ExpertName; verdict: "findings" | "pass" | "insufficient_evidence"; findings: Finding[]; }
+
+interface SelectedFinding extends Finding {
+  example_code: string;
+}
+
+type JudgeResult =
+  | { verdict: "pass" }
+  | { verdict: "duplicate_of"; duplicate_comment_id: string | null }
+  | { verdict: "new"; selected_finding: SelectedFinding; comment_markdown: string };
+```
+
+`pass` 和 `insufficient_evidence` 的专家结果不得包含候选问题。裁判每次只能返回联合类型中的一个分支；仅 `new` 包含符合 PRD 全部字段的评论 Markdown。
+
+`opencode run --format json` 返回 JSON 事件流。ReviewX 按事件顺序重建完整的最终 assistant 文本，再将其作为单个 JSON 对象解析和校验；不能只读取最后一个文本事件。以下情况均判定失败：
+
+- 子进程非零退出、超时或缺少最终响应。
+- JSON 无法解析、包含多个顶层对象或不符合对应类型。
+- 枚举、行号、置信度或裁判分支约束非法。
+
+## 6. 扫描、检视与发布流程
+
+一轮扫描顺序处理所有仓库和 MR：
+
+1. 重新加载已登记仓库，通过 `mr list --state open` 查询 Open MR。
+2. 只处理首次发现、此前失败或 `updated_at` 与游标不同的 MR。
+3. 按第 4 章准备缓存、worktree、分支和 commit 列表。
+4. 按第 5 章顺序调用三个专家和裁判。
+5. `pass` 或 `duplicate_of` 不发布评论，按第 3 章保存处理游标。
+6. `new` 在发布前通过 `mr view` 重新读取 MR；不是 Open 或 `updated_at` 已变化时放弃结果且不更新游标。
+7. MR 未变化时按第 4.2 节发布一条普通评论；成功后保存 `confirmed` 历史、评论 ID 和刷新后的 `updated_at`，结果未知时按第 7.1 节处理。
+
+每次 Review Run 最多发布一条新问题评论。Workflow 校验结构和执行裁判结果，不修改专家候选或代替 Agent 做语义判断。
+
+## 7. 失败、锁与执行边界
+
+### 7.1 失败与重跑
+
+CodeHub CLI/Git 命令失败、worktree 准备失败、Agent 失败或状态无法安全写入时，本次运行记为 `failed`，不发布评论、不更新处理游标。发布前 MR 已更新或关闭时分别记为 `updated` 或 `closed`。
+
+`WRITE_RESULT_UNKNOWN` 是唯一例外，必须根据 stderr 的错误 `code` 识别：
+
+1. 将本次问题摘要写入 `finding_history`，标记 `publication_status: "unknown"` 且 `comment_id: null`。
+2. 再调用一次 `mr view`；成功时保存其 `updated_at`，失败时保存检视开始时的 `updated_at`。
+3. 记录 `publication_unknown`，将该次 MR 更新视为已处理，不自动重试。
+4. 后续 MR 更新仍可检视；裁判必须把 `unknown` 历史参与语义去重，相同问题返回 `duplicate_of`，其 `duplicate_comment_id` 为 `null`。
+
+首版不做立即重试、阶段恢复或 Agent session 持久化。仍为 Open 的未完成 MR 会在下一轮从工作区准备阶段重新执行。
+
+### 7.2 锁和原子写入
+
+- `reviewx.run.lock` 保证单机只有一个扫描进程。
+- `state.lock` 只覆盖一次状态读改写，使运行中的 `repo add` 不会破坏状态。
+- 锁记录 PID 和创建时间；持有进程不存在时清理失效锁。
+- 获取状态锁超时则命令失败，禁止无锁写入。
+- 临时状态文件与目标文件位于同一目录，确保原子替换。
+
+这些机制只解决单机进程竞争，不提供多实例协调。
+
+### 7.3 执行边界
+
+ReviewX 只在 `runtime/` 下创建和删除缓存、worktree、临时文件、状态和日志。Agent 对目标仓库只读；只有 ReviewX 主进程能够调用 CodeHub 评论命令。
+
+## 8. 单机启动、验收与参考
+
+### 8.1 启动
+
+前置条件是 Node.js 22+、已配置 SSH 或 Git Credential 的 Git、已登录的 CodeHub CLI、可调用模型的 OpenCode CLI，以及随 ReviewX 部署的四个 Agent 配置。
+
+```bash
+reviewx repo add 123456
+reviewx run
+```
+
+运行状态通过 stdout 或 `runtime/reviewx.jsonl` 观察。
+
+### 8.2 架构验收
+
+1. `repo view` 能登记有效 Project ID；无效或重复 ID 被拒绝，运行中添加的仓库下一轮生效。
+2. MR 命令始终使用 Project ID 和 MR IID；仅 CLI 返回的首次、此前失败或 `updated_at` 变化的 Open MR 进入检视。
+3. CodeHub CLI 只执行第 4.1 节的五类命令；本地 Git 按 SSH 优先规则准备 clone/fetch 和 worktree，不生成 diff 包。
+4. 三个专家顺序执行；非零退出、非法结构或单个进程超过 20 分钟时停止本次运行。
+5. `new` 按固定 severity 映射发布；`pass` 和 `duplicate_of` 不发布评论。
+6. 检视期间 MR 更新或关闭时不评论；成功评论刷新 `updated_at`，`WRITE_RESULT_UNKNOWN` 记录未知历史且不自动重试。
+7. 所有代码托管操作都对应第 4.1 节的 CodeHub CLI 命令；并发命令不损坏状态，Agent 不能编辑代码、运行项目命令、访问网络或发布评论。
+
+### 8.3 官方参考
+
+- [CodeHub CLI 产品需求文档](https://github.com/BlackLotusAL/CodeHubX/blob/main/docs/PRD.md)
+- [OpenCode CLI](https://opencode.ai/docs/cli/)
+- [OpenCode Config](https://opencode.ai/docs/config/)
 - [OpenCode Agents](https://opencode.ai/docs/agents/)
-- [OpenCode Skills](https://opencode.ai/docs/skills)
-- [OpenCode Custom Tools](https://opencode.ai/docs/custom-tools/)
-- [OpenCode SDK source documentation](https://github.com/anomalyco/opencode/blob/dev/packages/web/src/content/docs/sdk.mdx)
+- [OpenCode Permissions](https://opencode.ai/docs/permissions/)
