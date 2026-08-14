@@ -1,0 +1,128 @@
+import { describe, expect, it } from "vitest";
+import {
+  expertResultSchema,
+  findingSchema,
+  judgeResultSchema,
+  normalizePositiveId,
+  severityToCodeHub,
+  stateSchema,
+  type SelectedFinding,
+} from "../../src/contracts.js";
+import { validateCommentMarkdown } from "../../src/comment.js";
+import { parseDuration } from "../../src/duration.js";
+
+export const selectedFinding: SelectedFinding = {
+  title: "事务提交前发送成功事件",
+  file: "src/payment.ts",
+  start_line: 10,
+  end_line: 12,
+  severity: "Critical",
+  tags: ["correctness", "transaction"],
+  rule_ids: ["TX-001"],
+  problem: "事务提交前已经发送成功事件。",
+  trigger: "事务随后回滚。",
+  impact: "下游状态与数据库不一致。",
+  evidence: [{ file: "src/payment.ts", line: 11, description: "提交前调用 publish。" }],
+  recommendation: "移动到提交后的回调。",
+  confidence: 94,
+  example_code: "afterCommit(() => publish());",
+};
+const { example_code: _exampleCode, ...baseFinding } = selectedFinding;
+
+export function findingComment(finding = selectedFinding): string {
+  return `### [${finding.severity}]${finding.tags.map((tag) => `[${tag}]`).join("")} ${finding.title}
+
+**位置**：\`${finding.file}:${finding.start_line}-${finding.end_line}\`
+
+**问题**：${finding.problem}
+
+**触发条件**：${finding.trigger}
+
+**影响**：${finding.impact}
+
+**修改建议**：${finding.recommendation}
+
+\`\`\`ts
+${finding.example_code}
+\`\`\`
+
+**置信度**：${finding.confidence}%
+
+**规则**：\`${finding.rule_ids[0]}\``;
+}
+
+describe("public contracts", () => {
+  it("normalizes IDs and parses supported durations", () => {
+    expect(normalizePositiveId("00042")).toBe("42");
+    expect(parseDuration("500ms", "--interval")).toBe(500);
+    expect(parseDuration("2s", "--interval")).toBe(2_000);
+    expect(parseDuration("3m", "--interval")).toBe(180_000);
+  });
+
+  it.each(["0", "-1", "abc", "1.5"])("rejects invalid ID %s", (value) => {
+    expect(() => normalizePositiveId(value)).toThrow();
+  });
+
+  it.each(["0s", "1h", "1.5s", "abc", "999999999999999999999m"])(
+    "rejects invalid duration %s",
+    (value) => expect(() => parseDuration(value, "--interval")).toThrow(),
+  );
+
+  it("enforces finding invariants and controlled tags", () => {
+    expect(findingSchema.parse(baseFinding)).toMatchObject({ severity: "Critical" });
+    expect(() => findingSchema.parse({ ...baseFinding, end_line: 9 })).toThrow();
+    expect(() => findingSchema.parse({ ...baseFinding, confidence: 101 })).toThrow();
+    expect(() => findingSchema.parse({ ...baseFinding, tags: ["style"] })).toThrow();
+    expect(() => findingSchema.parse({ ...baseFinding, file: "../secret" })).toThrow();
+    expect(
+      findingSchema.parse({ ...baseFinding, tags: ["domain:payment"] }).tags,
+    ).toEqual(["domain:payment"]);
+  });
+
+  it("enforces expert and judge discriminated unions", () => {
+    expect(
+      expertResultSchema.parse({ expert: "code-reviewer", verdict: "pass", findings: [] }),
+    ).toEqual({ expert: "code-reviewer", verdict: "pass", findings: [] });
+    expect(() =>
+      expertResultSchema.parse({
+        expert: "code-reviewer",
+        verdict: "pass",
+        findings: [baseFinding],
+      }),
+    ).toThrow();
+    expect(
+      judgeResultSchema.parse({ verdict: "duplicate_of", duplicate_comment_id: null }),
+    ).toEqual({ verdict: "duplicate_of", duplicate_comment_id: null });
+    expect(() => judgeResultSchema.parse({ verdict: "new" })).toThrow();
+  });
+
+  it("validates the required comment format against selected fields", () => {
+    expect(() => validateCommentMarkdown(findingComment(), selectedFinding)).not.toThrow();
+    expect(() =>
+      validateCommentMarkdown(findingComment().replace("94%", "93%"), selectedFinding),
+    ).toThrow();
+    expect(() =>
+      validateCommentMarkdown(findingComment().replace("```ts", "code:"), selectedFinding),
+    ).toThrow();
+  });
+
+  it("accepts empty rule IDs only when the comment says 无", () => {
+    const noRule = { ...selectedFinding, rule_ids: [] };
+    const comment = findingComment(noRule).replace("`undefined`", "无");
+    expect(() => validateCommentMarkdown(comment, noRule)).not.toThrow();
+  });
+
+  it("maps severity to CodeHub without changing the displayed severity", () => {
+    expect(severityToCodeHub).toEqual({
+      Blocker: "fatal",
+      Critical: "major",
+      Major: "minor",
+      Minor: "suggestion",
+    });
+  });
+
+  it("rejects extra or malformed state fields", () => {
+    expect(stateSchema.parse({ repositories: {} })).toEqual({ repositories: {} });
+    expect(() => stateSchema.parse({ repositories: {}, phase: "running" })).toThrow();
+  });
+});

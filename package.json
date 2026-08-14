@@ -1,0 +1,44 @@
+{
+  "name": "reviewx",
+  "version": "0.1.0",
+  "description": "Private, command-driven Merge Request review workflow powered by OpenCode agents.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.16.0",
+  "bin": {
+    "reviewx": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "opencode",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "vitest run tests/e2e",
+    "test:coverage": "vitest run --coverage",
+    "test:smoke": "tsx tests/smoke.ts",
+    "pack:check": "tsx scripts/pack-check.ts"
+  },
+  "dependencies": {
+    "cross-spawn": "7.0.6",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "6.0.6",
+    "@types/node": "22.20.1",
+    "@vitest/coverage-v8": "4.0.7",
+    "tsup": "8.5.1",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vitest": "4.0.7"
+  }
+}

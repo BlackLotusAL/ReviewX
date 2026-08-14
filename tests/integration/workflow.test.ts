@@ -1,0 +1,228 @@
+import { access, readFile } from "node:fs/promises";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  createWorkflowHarness,
+  finalComment,
+  finding,
+  type WorkflowHarness,
+} from "../helpers/harness.js";
+
+const active: WorkflowHarness[] = [];
+
+async function harness(result: Parameters<typeof createWorkflowHarness>[0]) {
+  const value = await createWorkflowHarness(result);
+  active.push(value);
+  return value;
+}
+
+async function missing(target: string) {
+  try {
+    await access(target);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+afterEach(async () => {
+  await Promise.all(active.splice(0).map((item) => item.cleanup()));
+});
+
+describe("full review workflow with real Git", () => {
+  it("processes the final multi-commit worktree once and persists pass", async () => {
+    const value = await harness({ verdict: "pass" });
+    await value.workflow.scanOnce();
+    const state = await value.state.read();
+    expect(state.repositories["1"]!.merge_requests["7"]).toEqual({
+      last_processed_updated_at: "2026-08-12T00:00:00Z",
+      finding_history: [],
+    });
+    expect(value.agents.agents).toEqual([
+      "design-reviewer",
+      "business-reviewer",
+      "code-reviewer",
+      "review-judge",
+    ]);
+    expect((value.agents.inputs[0] as { commits: unknown[] }).commits).toHaveLength(2);
+    expect(value.git.calls.some((call) => call.includes("diff"))).toBe(false);
+    expect(await missing(value.paths.worktrees)).toBe(false);
+    expect(await missing(`${value.paths.worktrees}/1/7`)).toBe(true);
+    expect(await missing(`${value.paths.runs}/${(JSON.parse(value.logs[1]!) as { run_id: string }).run_id}`)).toBe(true);
+
+    await value.workflow.scanOnce();
+    expect(value.agents.agents).toHaveLength(4);
+    expect(value.codeHub.comments).toHaveLength(0);
+  });
+
+  it("publishes one new comment, refreshes the cursor, and prevents its own loop", async () => {
+    const value = await harness({
+      verdict: "new",
+      selected_finding: finding,
+      comment_markdown: finalComment(),
+    });
+    process.env.CODEHUB_TEST_TOKEN = "must-not-leak";
+    try {
+      await value.workflow.scanOnce();
+    } finally {
+      delete process.env.CODEHUB_TEST_TOKEN;
+    }
+    expect(value.codeHub.comments).toEqual([{ body: finalComment(), severity: "major" }]);
+    const mrState = (await value.state.read()).repositories["1"]!.merge_requests["7"]!;
+    expect(mrState.last_processed_updated_at).toBe("2026-08-12T00:01:00Z");
+    expect(mrState.finding_history).toEqual([
+      {
+        summary: {
+          title: finding.title,
+          file: finding.file,
+          problem: finding.problem,
+        },
+        publication_status: "confirmed",
+        comment_id: "comment-1",
+      },
+    ]);
+    expect(value.agents.environments.every((env) => env.CODEHUB_TEST_TOKEN === undefined)).toBe(true);
+    const config = JSON.parse(value.agents.environments[0]!.OPENCODE_CONFIG_CONTENT!);
+    expect(config.permission["*"]).toBe("deny");
+    expect(config.permission.bash["git diff *"]).toBe("allow");
+
+    value.codeHub.listUpdatedAt = "2026-08-12T00:01:00Z";
+    await value.workflow.scanOnce();
+    expect(value.codeHub.comments).toHaveLength(1);
+    expect(value.agents.agents).toHaveLength(4);
+  });
+
+  it("persists duplicate_of without publishing", async () => {
+    const value = await harness({ verdict: "duplicate_of", duplicate_comment_id: "old-comment" });
+    await value.workflow.scanOnce();
+    expect(value.codeHub.comments).toHaveLength(0);
+    expect((await value.state.read()).repositories["1"]!.merge_requests["7"])
+      .toMatchObject({ last_processed_updated_at: "2026-08-12T00:00:00Z" });
+    const terminal = value.logs.map((line) => JSON.parse(line)).find((x) => x.event === "review_run_finished");
+    expect(terminal).toMatchObject({
+      result: "duplicate_of",
+      duplicate_of_comment_id: "old-comment",
+    });
+  });
+
+  it.each([
+    ["closed", "closed", "2026-08-12T00:00:00Z"],
+    ["updated", "opened", "2026-08-12T00:00:30Z"],
+  ] as const)("does not publish when the MR is %s", async (result, state, updatedAt) => {
+    const value = await harness({
+      verdict: "new",
+      selected_finding: finding,
+      comment_markdown: finalComment(),
+    });
+    value.codeHub.prePublishState = state;
+    value.codeHub.prePublishUpdatedAt = updatedAt;
+    await value.workflow.scanOnce();
+    expect(value.codeHub.comments).toHaveLength(0);
+    expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
+    const terminal = value.logs.map((line) => JSON.parse(line)).find((x) => x.event === "review_run_finished");
+    expect(terminal.result).toBe(result);
+  });
+
+  it("records WRITE_RESULT_UNKNOWN history and treats the update as processed", async () => {
+    const value = await harness({
+      verdict: "new",
+      selected_finding: finding,
+      comment_markdown: finalComment(),
+    });
+    value.codeHub.publication = "unknown";
+    await value.workflow.scanOnce();
+    const mrState = (await value.state.read()).repositories["1"]!.merge_requests["7"]!;
+    expect(mrState.last_processed_updated_at).toBe("2026-08-12T00:01:00Z");
+    expect(mrState.finding_history[0]).toMatchObject({
+      publication_status: "unknown",
+      comment_id: null,
+    });
+    const terminal = value.logs.map((line) => JSON.parse(line)).find((x) => x.event === "review_run_finished");
+    expect(terminal).toMatchObject({ result: "publication_unknown", comment_id: null });
+  });
+
+  it("leaves the cursor untouched on agent failure and retries from the beginning", async () => {
+    const value = await harness({ verdict: "pass" });
+    value.agents.invalidExpert = "business-reviewer";
+    await value.workflow.scanOnce();
+    expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
+    expect(value.agents.agents).toEqual(["design-reviewer", "business-reviewer"]);
+    value.agents.invalidExpert = undefined;
+    await value.workflow.scanOnce();
+    expect(value.agents.agents.slice(2)).toEqual([
+      "design-reviewer",
+      "business-reviewer",
+      "code-reviewer",
+      "review-judge",
+    ]);
+    expect((await value.state.read()).repositories["1"]!.merge_requests["7"])
+      .toMatchObject({ last_processed_updated_at: "2026-08-12T00:00:00Z" });
+    expect((await readFile(value.paths.log, "utf8")).trim().split(/\r?\n/u).length).toBe(
+      value.logs.length,
+    );
+  });
+
+  it("isolates repository scan failures and continues the scan lifecycle", async () => {
+    const value = await harness({ verdict: "pass" });
+    value.codeHub.listFailure = true;
+    await value.workflow.scanOnce();
+    expect(value.agents.agents).toEqual([]);
+    expect(value.logs.map((line) => JSON.parse(line).event)).toEqual([
+      "scan_started",
+      "repository_scan_failed",
+      "scan_finished",
+    ]);
+  });
+
+  it("ignores non-open list results and honors a pre-aborted scan", async () => {
+    const value = await harness({ verdict: "pass" });
+    value.codeHub.listState = "closed";
+    await value.workflow.scanOnce();
+    expect(value.agents.agents).toEqual([]);
+
+    const controller = new AbortController();
+    controller.abort();
+    const callCount = value.codeHub.calls.length;
+    await value.workflow.scanOnce(controller.signal);
+    expect(value.codeHub.calls).toHaveLength(callCount);
+  });
+
+  it("does not advance the cursor when comment publication fails", async () => {
+    const value = await harness({
+      verdict: "new",
+      selected_finding: finding,
+      comment_markdown: finalComment(),
+    });
+    value.codeHub.publication = "failure";
+    await value.workflow.scanOnce();
+    expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
+    const terminal = value.logs.map((line) => JSON.parse(line)).find((x) => x.event === "review_run_finished");
+    expect(terminal).toMatchObject({ result: "failed" });
+  });
+
+  it("uses the review start timestamp when unknown publication cannot refresh", async () => {
+    const value = await harness({
+      verdict: "new",
+      selected_finding: finding,
+      comment_markdown: finalComment(),
+    });
+    value.codeHub.publication = "unknown";
+    value.codeHub.refreshFailure = true;
+    await value.workflow.scanOnce();
+    const mrState = (await value.state.read()).repositories["1"]!.merge_requests["7"]!;
+    expect(mrState.last_processed_updated_at).toBe("2026-08-12T00:00:00Z");
+    expect(mrState.finding_history[0]).toMatchObject({ publication_status: "unknown" });
+  });
+
+  it("fails a new result whose Markdown does not match the finding", async () => {
+    const value = await harness({
+      verdict: "new",
+      selected_finding: finding,
+      comment_markdown: "not a valid review comment",
+    });
+    await value.workflow.scanOnce();
+    expect(value.codeHub.comments).toEqual([]);
+    expect(value.codeHub.viewCalls).toBe(0);
+    const terminal = value.logs.map((line) => JSON.parse(line)).find((x) => x.event === "review_run_finished");
+    expect(terminal).toMatchObject({ result: "failed" });
+  });
+});
