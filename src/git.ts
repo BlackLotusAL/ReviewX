@@ -1,7 +1,7 @@
 import { access, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { MergeRequest, Repository } from "./contracts.js";
-import { redactText, ReviewXError } from "./errors.js";
+import { errorMessage, redactText, ReviewXError } from "./errors.js";
 import { DefaultCommandRunner, type CommandRunner, type CommandResult } from "./process.js";
 import { assertPathWithin, type RuntimePaths } from "./runtime.js";
 
@@ -14,11 +14,22 @@ async function exists(target: string): Promise<boolean> {
   }
 }
 
-export function selectCloneUrl(repository: Repository): string {
+export interface CloneCandidate {
+  protocol: "SSH" | "HTTPS";
+  url: string;
+}
+
+export function selectCloneCandidates(repository: Repository): CloneCandidate[] {
+  const candidates: CloneCandidate[] = [];
   const ssh = repository.clone_urls.ssh;
-  if (typeof ssh === "string" && ssh.trim() !== "") return ssh;
-  const https = repository.clone_urls.https ?? repository.clone_urls.http;
-  if (typeof https === "string" && https.trim() !== "") return https;
+  if (typeof ssh === "string" && ssh.trim() !== "") {
+    candidates.push({ protocol: "SSH", url: ssh });
+  }
+  const https = repository.clone_urls.https;
+  if (typeof https === "string" && https.trim() !== "") {
+    candidates.push({ protocol: "HTTPS", url: https });
+  }
+  if (candidates.length > 0) return candidates;
   throw new ReviewXError("GIT_ERROR", `Repository ${repository.repo_id} has no usable clone URL.`);
 }
 
@@ -56,7 +67,10 @@ export class GitManager {
       ...(signal === undefined ? {} : { signal }),
     });
     if (!ignoreFailure && result.exitCode !== 0) {
-      const detail = redactText(result.stderr.trim().split(/\r?\n/u)[0] ?? "");
+      const stderrLines = result.stderr.trim().split(/\r?\n/u).filter((line) => line.trim() !== "");
+      const detail = redactText(
+        stderrLines.findLast((line) => /^fatal:/iu.test(line.trim())) ?? stderrLines.at(-1) ?? "",
+      );
       throw new ReviewXError(
         "GIT_ERROR",
         `Git command failed with exit code ${result.exitCode ?? "unknown"}${detail ? `: ${detail}` : "."}`,
@@ -86,11 +100,24 @@ export class GitManager {
         throw new ReviewXError("GIT_ERROR", `Repository metadata is required to clone ${repoId}.`);
       }
       await this.safeRemove(this.paths.repos, repoPath);
-      try {
-        await this.raw(["clone", selectCloneUrl(repository), repoPath], signal);
-      } catch (error) {
-        await this.safeRemove(this.paths.repos, repoPath);
-        throw error;
+      const failures: string[] = [];
+      const candidates = selectCloneCandidates(repository);
+      for (const [index, candidate] of candidates.entries()) {
+        try {
+          await this.raw(["clone", candidate.url, repoPath], signal);
+          break;
+        } catch (error) {
+          await this.safeRemove(this.paths.repos, repoPath);
+          if (!(error instanceof ReviewXError) || error.code !== "GIT_ERROR") throw error;
+          failures.push(`${candidate.protocol}: ${errorMessage(error)}`);
+          if (index === candidates.length - 1) {
+            throw new ReviewXError(
+              "GIT_ERROR",
+              `All Git clone attempts failed (${failures.join("; ")}).`,
+              { cause: error },
+            );
+          }
+        }
       }
     }
 

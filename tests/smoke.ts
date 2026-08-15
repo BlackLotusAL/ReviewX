@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { mergeRequestSchema, repositorySchema } from "../src/contracts.js";
+import { selectCloneCandidates } from "../src/git.js";
 import { z } from "zod";
 import { DefaultCommandRunner } from "../src/process.js";
 
@@ -66,10 +67,20 @@ try {
   if (list.exitCode !== 0) throw new Error("codehub mr list failed");
   z.array(mergeRequestSchema).parse(JSON.parse(list.stdout));
 
-  const cloneUrl = repository.clone_urls.ssh ?? repository.clone_urls.https ?? repository.clone_urls.http;
-  if (!cloneUrl) throw new Error("repository has no usable clone URL");
-  const git = await success(process.env.REVIEWX_GIT_BIN ?? "git", ["ls-remote", cloneUrl, "HEAD"]);
-  if (git.exitCode !== 0) throw new Error("read-only Git access failed");
+  const cloneCandidates = selectCloneCandidates(repository);
+  let gitAccessible = false;
+  for (const candidate of cloneCandidates) {
+    const git = await success(process.env.REVIEWX_GIT_BIN ?? "git", [
+      "ls-remote",
+      candidate.url,
+      "HEAD",
+    ]);
+    if (git.exitCode === 0) {
+      gitAccessible = true;
+      break;
+    }
+  }
+  if (!gitAccessible) throw new Error("read-only Git access failed for SSH and HTTPS");
 
   const configDir = fileURLToPath(new URL("../opencode/", import.meta.url));
   await access(path.join(configDir, "agents", "review-judge.md"));

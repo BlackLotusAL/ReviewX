@@ -17,7 +17,6 @@ export const cloneUrlsSchema = z
   .object({
     ssh: z.string().trim().min(1).nullable().optional(),
     https: z.string().trim().min(1).nullable().optional(),
-    http: z.string().trim().min(1).nullable().optional(),
   })
   .passthrough();
 

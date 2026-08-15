@@ -162,7 +162,7 @@ Workflow 使用 Node 子进程参数数组调用 `mr comment create`，把裁判
 ### 4.3 Git 与 worktree 生命周期
 
 1. 仓库登记通过 `repo view` 验证 Project ID；缓存不存在时再次读取 `clone_urls`。
-2. 优先选择 SSH 地址，仅在 SSH 地址缺失时选择 HTTPS；选定地址的 Git clone 失败时不切换协议。
+2. 优先使用 SSH 地址；SSH clone 返回失败时清理不完整目录并自动尝试 HTTPS。只有 SSH 与 HTTPS 均不可用或均失败时，本次检视才失败；不使用明文 HTTP 地址。
 3. 本地 Git clone 到 `runtime/repos/<repo-key>`；已有缓存时 fetch source 和 target 分支。
 4. 清理遗留 worktree，在 `runtime/worktrees/<repo-key>/<mr-iid>` 创建新 worktree 并切换最新 source 分支。
 5. 通过 `mr commits` 读取完整 commit 列表。
