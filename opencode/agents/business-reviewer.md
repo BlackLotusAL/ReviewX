@@ -36,4 +36,6 @@ Return exactly one raw JSON object without Markdown fences or prose. The first n
       ]
     }
 
-`findings` requires at least one item. `pass` and `insufficient_evidence` require an empty array. Confidence is an integer from 0 to 100. Tags must be controlled ReviewX tags or `domain:<name>`.
+`findings` requires at least one item. `pass` and `insufficient_evidence` require an empty array. Confidence is an integer from 0 to 100.
+
+Allowed standard tags (case-sensitive): `security`, `correctness`, `business-rule`, `concurrency`, `transaction`, `performance`, `resource-leak`, `compatibility`, `api-contract`, `architecture`, `maintainability`, `test-coverage`, `observability`. Every tag must be one of these exact values or match `domain:<name>`. Do not invent other bare tags: use `architecture` instead of `layering`, and `compatibility` instead of `migration`. Use `domain:<name>` only for a repository-specific business domain.

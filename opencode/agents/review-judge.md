@@ -65,4 +65,6 @@ minimal replacement code
 **规则**：`RULE-ID`
 ````
 
-Use `**规则**：无` when rule IDs are empty. Do not add numeric prefixes to severity. Use one or more controlled tags. The fenced code language and code must match the target source language.
+Use `**规则**：无` when rule IDs are empty. Do not add numeric prefixes to severity. The fenced code language and code must match the target source language.
+
+Allowed standard tags (case-sensitive): `security`, `correctness`, `business-rule`, `concurrency`, `transaction`, `performance`, `resource-leak`, `compatibility`, `api-contract`, `architecture`, `maintainability`, `test-coverage`, `observability`. Every tag must be one of these exact values or match `domain:<name>`. Do not preserve or invent other bare tags: use `architecture` instead of `layering`, and `compatibility` instead of `migration`. Use `domain:<name>` only for a repository-specific business domain.
