@@ -103,6 +103,28 @@ describe("OpenCode client", () => {
     await expect(client.runJudge("worktree", "input", 1)).resolves.toEqual({ verdict: "pass" });
   });
 
+  it("accepts an expert result after narrated analysis", async () => {
+    const result = {
+      expert: "design-reviewer",
+      verdict: "pass",
+      findings: [],
+    };
+    const runner = new AgentRunner(() => ({
+      exitCode: 0,
+      signal: null,
+      stdout: `${JSON.stringify({
+        type: "text",
+        part: { text: `The base is develop.\n\nLet me compose the JSON.\n\n${JSON.stringify(result)}` },
+      })}\n`,
+      stderr: "",
+    }));
+    const client = new OpenCodeClient(runner, "fake", "./opencode");
+
+    await expect(
+      client.runExpert("design-reviewer", "worktree", "input", 1),
+    ).resolves.toEqual(result);
+  });
+
   it("attributes malformed output to the responsible agent", async () => {
     const runner = new AgentRunner(() => ({
       exitCode: 0,

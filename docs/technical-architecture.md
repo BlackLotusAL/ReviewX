@@ -200,7 +200,7 @@ opencode run \
   "检视当前 MR 的最终整体净变化，只输出约定 JSON。"
 ```
 
-`--format json` 只保证 OpenCode 事件流为 JSONL。Agent 正文仍要求输出一个裸 JSON 对象；为兼容模型的展示习惯，workflow 会在裸 JSON 解析失败时提取正文中唯一的无语言或 `json` Markdown fenced block，并继续执行严格结构校验。常见围栏缩进、长度、反引号或波浪线形式以及围栏外说明文字可以兼容；多个 fenced block、无效 JSON 和无效结构仍判定失败。解析错误必须标明具体 Agent，且不得把原始正文写入日志。
+`--format json` 只保证 OpenCode 事件流为 JSONL。Agent 正文仍要求输出一个裸 JSON 对象；为兼容模型的展示习惯，workflow 会依次尝试解析完整裸 JSON、正文中唯一的无语言或 `json` Markdown fenced block，以及带有前置分析文字但位于正文末尾的完整 JSON 对象，然后继续执行严格结构校验。末尾 JSON 的边界识别会处理字符串和反斜杠转义，且不允许 JSON 后出现说明文字；多个 fenced block、连续多个 JSON、无效 JSON 和无效结构仍判定失败。解析错误必须标明具体 Agent，并按诊断日志规则记录脱敏、限长后的输出预览。
 
 三个专家按设计、业务、代码顺序执行，全部成功后才调用裁判。每个进程最多运行 `--agent-timeout`；超时后 ReviewX 终止进程并判定本次 Review Run 失败。
 

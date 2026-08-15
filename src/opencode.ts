@@ -126,6 +126,64 @@ function extractSingleJsonFence(value: string): string | undefined {
   return block!.content;
 }
 
+interface TrailingJsonObject {
+  start: number;
+  value: unknown;
+}
+
+function isUnescapedQuote(value: string, index: number): boolean {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 0;
+}
+
+function findTrailingJsonObject(value: string): TrailingJsonObject | undefined {
+  const end = value.trimEnd().length;
+  if (end === 0 || value[end - 1] !== "}") return undefined;
+
+  let depth = 0;
+  let inString = false;
+  for (let index = end - 1; index >= 0; index -= 1) {
+    const character = value[index]!;
+    if (character === '"' && isUnescapedQuote(value, index)) {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (character === "}") {
+      depth += 1;
+      continue;
+    }
+    if (character !== "{") continue;
+    depth -= 1;
+    if (depth < 0) return undefined;
+    if (depth !== 0) continue;
+
+    try {
+      const parsed = JSON.parse(value.slice(index, end)) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+      return { start: index, value: parsed };
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function parseTrailingJsonObject(value: string): unknown | undefined {
+  const trailing = findTrailingJsonObject(value);
+  if (!trailing) return undefined;
+
+  const prefix = value.slice(0, trailing.start).trimEnd();
+  if (findTrailingJsonObject(prefix)) {
+    // Keep rejecting consecutive JSON objects instead of silently choosing the last one.
+    return undefined;
+  }
+  return trailing.value;
+}
+
 function collectOpenCodeText(stdout: string): string {
   const textParts: string[] = [];
   for (const line of stdout.split(/\r?\n/u)) {
@@ -164,16 +222,19 @@ function parseAgentJsonText(combined: string): unknown {
   }
 
   const fenced = extractSingleJsonFence(combined);
-  if (fenced === undefined) {
-    throw new ReviewXError("AGENT_ERROR", "Agent final text is not one valid JSON object.");
+  if (fenced !== undefined) {
+    try {
+      return JSON.parse(fenced);
+    } catch (error) {
+      throw new ReviewXError("AGENT_ERROR", "Agent final text is not one valid JSON object.", {
+        cause: error,
+      });
+    }
   }
-  try {
-    return JSON.parse(fenced);
-  } catch (error) {
-    throw new ReviewXError("AGENT_ERROR", "Agent final text is not one valid JSON object.", {
-      cause: error,
-    });
-  }
+
+  const trailing = parseTrailingJsonObject(combined);
+  if (trailing !== undefined) return trailing;
+  throw new ReviewXError("AGENT_ERROR", "Agent final text is not one valid JSON object.");
 }
 
 export function parseOpenCodeText(stdout: string): unknown {

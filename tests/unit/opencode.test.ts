@@ -34,6 +34,32 @@ describe("OpenCode event parsing and permissions", () => {
     ).toEqual({ verdict: "pass" });
   });
 
+  it("extracts a trailing JSON object after analysis text split across events", () => {
+    const result = {
+      expert: "design-reviewer",
+      verdict: "findings",
+      findings: [{ body: 'Keep {value}, "quoted" text, and C:\\temp\\', confidence: 55 }],
+    };
+    expect(
+      parseOpenCodeText(
+        `${event(
+          "The base of this MR is develop. Let me inspect function { return \\\"value\\\"; }.\n\n",
+        )}\n${event(
+          `Let me compose the JSON.\n\n${JSON.stringify(result)}`,
+        )}\n`,
+      ),
+    ).toEqual(result);
+  });
+
+  it("allows whitespace but not prose after a trailing raw JSON object", () => {
+    expect(
+      parseOpenCodeText(`${event('Analysis first.\n{"verdict":"pass"}\n\t')}\n`),
+    ).toEqual({ verdict: "pass" });
+    expect(() =>
+      parseOpenCodeText(`${event('Analysis first.\n{"verdict":"pass"}\nDone.')}\n`),
+    ).toThrow();
+  });
+
   it.each([
     "plain text\n",
     `${JSON.stringify({ type: "step_start" })}\n`,
@@ -44,6 +70,8 @@ describe("OpenCode event parsing and permissions", () => {
     `${event("```json\n\n```")}\n`,
     `${event('```json\n{"verdict":"pass"}')}\n`,
     `${event('{"verdict":"pass"}{"verdict":"pass"}')}\n`,
+    `${event('Analysis.\n{"verdict":"pass"}\n{"verdict":"pass"}')}\n`,
+    `${event('Analysis.\n{"verdict":}')}\n`,
     `${JSON.stringify({ type: "text", part: {} })}\n`,
   ])("rejects malformed event output", (output) => {
     expect(() => parseOpenCodeText(output)).toThrow();
