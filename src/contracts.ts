@@ -273,6 +273,7 @@ export interface LogRecord {
   agent_output_source?: AgentOutputSource;
   agent_output_chars?: number;
   agent_output_truncated?: boolean;
+  agent_output_artifact?: string;
   duplicate_of_comment_id?: string | null;
   comment_id?: string | null;
 }

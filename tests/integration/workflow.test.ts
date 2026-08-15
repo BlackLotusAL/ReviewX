@@ -74,6 +74,40 @@ describe("full review workflow with real Git", () => {
     ).not.toHaveProperty("agent_output");
   });
 
+  it("persists artifacts while removing analysis fences before every terminal result", async () => {
+    const value = await harness({ verdict: "pass" });
+    value.agents.pollutedOutput = true;
+
+    await value.workflow.scanOnce();
+
+    const records = value.logs.map((line) => JSON.parse(line));
+    const runId = records.find((record) => record.event === "review_run_started").run_id as string;
+    expect(records.find((record) => record.event === "review_run_finished")).toMatchObject({
+      result: "pass",
+    });
+    const artifactNames = [
+      "01-design-reviewer",
+      "02-business-reviewer",
+      "03-code-reviewer",
+      "04-review-judge",
+    ];
+    for (const name of artifactNames) {
+      const directory = `${value.paths.agentOutputs}/${runId}/${name}`;
+      const metadata = JSON.parse(await readFile(`${directory}/metadata.json`, "utf8"));
+      expect(metadata).toMatchObject({
+        status: "succeeded",
+        strategy: "trailing_raw",
+        parse_status: "succeeded",
+        schema_status: "succeeded",
+      });
+      expect(await readFile(`${directory}/assistant.txt`, "utf8")).toContain("```diff");
+      expect(JSON.parse(await readFile(`${directory}/processed.txt`, "utf8"))).toBeTruthy();
+      expect(JSON.parse(await readFile(`${directory}/result.json`, "utf8"))).toBeTruthy();
+    }
+    expect(await missing(`${value.paths.runs}/${runId}`)).toBe(true);
+    expect(await missing(`${value.paths.agentOutputs}/${runId}`)).toBe(false);
+  });
+
   it("publishes one new comment, refreshes the cursor, and prevents its own loop", async () => {
     const value = await harness({
       verdict: "new",
@@ -185,6 +219,7 @@ describe("full review workflow with real Git", () => {
       agent_output_source: "opencode_stdout",
       agent_output_chars: 9,
       agent_output_truncated: false,
+      agent_output_artifact: expect.stringContaining("02-business-reviewer"),
     });
     value.agents.invalidExpert = undefined;
     await value.workflow.scanOnce();

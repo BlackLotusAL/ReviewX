@@ -1,5 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { OpenCodeClient } from "../../src/opencode.js";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { OpenCodeClient, type AgentRunOptions } from "../../src/opencode.js";
 import type { CommandOptions, CommandResult, CommandRunner } from "../../src/process.js";
 
 function output(value: unknown): string {
@@ -25,10 +28,26 @@ function success(value: unknown): CommandResult {
   return { exitCode: 0, signal: null, stdout: output(value), stderr: "" };
 }
 
-afterEach(() => {
+let artifactRoot: string;
+
+function runOptions(name: string, signal?: AbortSignal): AgentRunOptions {
+  return {
+    artifactDir: path.join(artifactRoot, name),
+    timeoutMs: 1234,
+    ...(signal === undefined ? {} : { signal }),
+  };
+}
+
+beforeEach(async () => {
+  artifactRoot = await mkdtemp(path.join(os.tmpdir(), "reviewx-agent-output-"));
+});
+
+afterEach(async () => {
   delete process.env.CODEHUB_TEST_TOKEN;
   delete process.env.DEVUC_ACCESS_TOKEN;
   delete process.env.PRIVATE_TOKEN;
+  delete process.env.REVIEWX_OPENCODE_MODEL;
+  await rm(artifactRoot, { recursive: true, force: true });
 });
 
 describe("OpenCode client", () => {
@@ -42,7 +61,12 @@ describe("OpenCode client", () => {
     const client = new OpenCodeClient(runner, "fake-opencode", "./opencode");
     const controller = new AbortController();
     await expect(
-      client.runExpert("design-reviewer", "C:/worktree", "C:/input.json", 1234, controller.signal),
+      client.runExpert(
+        "design-reviewer",
+        "C:/worktree",
+        "C:/input.json",
+        runOptions("design", controller.signal),
+      ),
     ).resolves.toMatchObject({ expert: "design-reviewer", verdict: "pass" });
 
     const call = runner.calls[0]!;
@@ -68,7 +92,7 @@ describe("OpenCode client", () => {
     );
     const client = new OpenCodeClient(runner, "fake", "./opencode");
     await expect(
-      client.runExpert("design-reviewer", "worktree", "input", 1),
+      client.runExpert("design-reviewer", "worktree", "input", runOptions("wrong-expert")),
     ).rejects.toThrowError(/returned result for business-reviewer/u);
   });
 
@@ -76,7 +100,7 @@ describe("OpenCode client", () => {
     const runner = new AgentRunner(() => success({ unexpected: true, token: "secret-value" }));
     const client = new OpenCodeClient(runner, "fake", "./opencode");
     await expect(
-      client.runExpert("code-reviewer", "worktree", "input", 1),
+      client.runExpert("code-reviewer", "worktree", "input", runOptions("invalid-expert")),
     ).rejects.toMatchObject({
       message: expect.stringMatching(/invalid result/u),
       details: {
@@ -86,7 +110,9 @@ describe("OpenCode client", () => {
         agent_output_truncated: false,
       },
     });
-    await expect(client.runJudge("worktree", "input", 1)).rejects.toMatchObject({
+    await expect(
+      client.runJudge("worktree", "input", runOptions("invalid-judge")),
+    ).rejects.toMatchObject({
       message: expect.stringMatching(/Judge returned an invalid result/u),
       details: {
         agent: "review-judge",
@@ -100,7 +126,19 @@ describe("OpenCode client", () => {
   it("accepts a valid judge result", async () => {
     const runner = new AgentRunner(() => success({ verdict: "pass" }));
     const client = new OpenCodeClient(runner, "fake", "./opencode");
-    await expect(client.runJudge("worktree", "input", 1)).resolves.toEqual({ verdict: "pass" });
+    await expect(
+      client.runJudge("worktree", "input", runOptions("valid-judge")),
+    ).resolves.toEqual({ verdict: "pass" });
+    expect(JSON.parse(await readFile(path.join(artifactRoot, "valid-judge", "metadata.json"), "utf8")))
+      .toMatchObject({
+        agent: "review-judge",
+        status: "succeeded",
+        strategy: "whole",
+        parse_status: "succeeded",
+        schema_status: "succeeded",
+      });
+    expect(JSON.parse(await readFile(path.join(artifactRoot, "valid-judge", "result.json"), "utf8")))
+      .toEqual({ verdict: "pass" });
   });
 
   it("accepts an expert result after narrated analysis", async () => {
@@ -121,7 +159,7 @@ describe("OpenCode client", () => {
     const client = new OpenCodeClient(runner, "fake", "./opencode");
 
     await expect(
-      client.runExpert("design-reviewer", "worktree", "input", 1),
+      client.runExpert("design-reviewer", "worktree", "input", runOptions("narrated")),
     ).resolves.toEqual(result);
   });
 
@@ -134,7 +172,7 @@ describe("OpenCode client", () => {
     }));
     const client = new OpenCodeClient(runner, "fake", "./opencode");
     await expect(
-      client.runExpert("business-reviewer", "worktree", "input", 1),
+      client.runExpert("business-reviewer", "worktree", "input", runOptions("malformed")),
     ).rejects.toMatchObject({
       message: expect.stringMatching(/OpenCode agent business-reviewer returned invalid output/u),
       details: {
@@ -158,7 +196,9 @@ describe("OpenCode client", () => {
       "fake",
       "./opencode",
     );
-    await expect(client.runJudge("worktree", "input", 1)).rejects.toMatchObject({
+    await expect(
+      client.runJudge("worktree", "input", runOptions("bad-jsonl")),
+    ).rejects.toMatchObject({
       details: {
         agent: "review-judge",
         agent_output: "not-jsonl\n",
@@ -174,9 +214,14 @@ describe("OpenCode client", () => {
     [{ exitCode: 4, signal: null, stdout: "", stderr: "" }, "4"],
   ] as const)("rejects non-zero OpenCode exits", async (result, exitText) => {
     const client = new OpenCodeClient(new AgentRunner(() => result), "fake", "./opencode");
-    await expect(client.runJudge("worktree", "input", 1)).rejects.toMatchObject({
+    await expect(
+      client.runJudge("worktree", "input", runOptions(`exit-${exitText}`)),
+    ).rejects.toMatchObject({
       message: expect.stringMatching(new RegExp(`exit code ${exitText}`, "u")),
-      details: undefined,
+      details: {
+        agent: "review-judge",
+        agent_output_artifact: path.join(artifactRoot, `exit-${exitText}`),
+      },
     });
   });
 

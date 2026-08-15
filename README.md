@@ -50,10 +50,13 @@ runtime/
 ├── reviewx.jsonl
 ├── repos/<repo-id>/
 ├── worktrees/<repo-id>/<mr-iid>/
-└── runs/<run-id>/
+├── runs/<run-id>/
+└── agent-output/<run-id>/<sequence>-<agent>/
 ```
 
 `state.json` 只保存仓库、MR 的 `last_processed_updated_at` 和历史问题摘要。每次 Agent 都是独立进程和会话；服务重启不会恢复中间阶段，未完成的 MR 会在后续扫描从头运行。
+
+每次 Agent 调用的原始 stdout/stderr、完整正文、截取候选、处理文本、Schema 结果和元数据都会永久保存在 `agent-output/`。其中可能包含未脱敏的源码和模型分析；请限制目录权限并自行清理历史产物。
 
 日志同时写入 stdout 和 JSONL 文件。每个 Review Run 使用稳定 `run_id`，终态 `result` 为 `pass`、`duplicate_of`、`new`、`publication_unknown`、`updated`、`closed` 或 `failed`。
 
@@ -74,9 +77,12 @@ pnpm test:coverage
 pnpm build
 pnpm pack:check
 pnpm test:smoke
+pnpm simulate:review
 ```
 
 自动化测试使用真实本地 Git 仓库和可编程伪 CodeHub/OpenCode CLI，不需要真实凭据。真实冒烟测试通过 `codehub --help` 探测 CLI，并检查 `auth status` 的 `configured` 状态；只有在 `codehub` 可用、已登录且设置 `REVIEWX_SMOKE_REPO_ID` 时继续执行读取类命令，绝不发布评论。
+
+`pnpm simulate:review` 创建本地 Git remote 和模拟 MR，使用真实 OpenCode 依次运行三个 Reviewer 与 Judge，但 CodeHub 调用全部由本地模拟器接收，不会发布外部评论。默认模型为 `deepseek/deepseek-chat`，可通过 `REVIEWX_SIMULATION_MODEL` 覆盖；产物保存在 `runtime/simulations/`。
 
 ## 首版边界
 

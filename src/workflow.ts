@@ -32,6 +32,7 @@ type TerminalRecord = Pick<
   | "agent_output_source"
   | "agent_output_chars"
   | "agent_output_truncated"
+  | "agent_output_artifact"
   | "duplicate_of_comment_id"
   | "comment_id"
 >;
@@ -43,10 +44,11 @@ type AgentDiagnosticRecord = Pick<
   | "agent_output_source"
   | "agent_output_chars"
   | "agent_output_truncated"
+  | "agent_output_artifact"
 >;
 
 function agentDiagnosticRecord(error: unknown): Partial<AgentDiagnosticRecord> {
-  if (!(error instanceof ReviewXError) || error.code !== "AGENT_ERROR" || !error.details) {
+  if (!(error instanceof ReviewXError) || !error.details) {
     return {};
   }
   const details = error.details;
@@ -55,25 +57,33 @@ function agentDiagnosticRecord(error: unknown): Partial<AgentDiagnosticRecord> {
   const source = details.agent_output_source;
   const characters = details.agent_output_chars;
   const truncated = details.agent_output_truncated;
+  const artifact = details.agent_output_artifact;
   if (
     (agent !== "design-reviewer" &&
       agent !== "business-reviewer" &&
       agent !== "code-reviewer" &&
-      agent !== "review-judge") ||
-    typeof output !== "string" ||
-    (source !== "assistant_text" && source !== "opencode_stdout") ||
-    typeof characters !== "number" ||
-    typeof truncated !== "boolean"
+      agent !== "review-judge")
   ) {
     return {};
   }
-  return {
-    agent,
-    agent_output: output,
-    agent_output_source: source,
-    agent_output_chars: characters,
-    agent_output_truncated: truncated,
-  };
+  const record: Partial<AgentDiagnosticRecord> = { agent };
+  if (typeof artifact === "string" && artifact !== "") {
+    record.agent_output_artifact = artifact;
+  }
+  if (
+    typeof output === "string" &&
+    (source === "assistant_text" || source === "opencode_stdout") &&
+    typeof characters === "number" &&
+    typeof truncated === "boolean"
+  ) {
+    Object.assign(record, {
+      agent_output: output,
+      agent_output_source: source,
+      agent_output_chars: characters,
+      agent_output_truncated: truncated,
+    });
+  }
+  return record;
 }
 
 function historyFromJudge(
@@ -248,14 +258,23 @@ export class ReviewWorkflow {
       await writeFile(expertInputPath, `${JSON.stringify(expertInput, null, 2)}\n`, "utf8");
 
       const expertResults = [];
-      for (const expert of experts) {
+      for (const [index, expert] of experts.entries()) {
+        const artifactDir = path.join(
+          this.paths.agentOutputs,
+          runId,
+          `${String(index + 1).padStart(2, "0")}-${expert}`,
+        );
+        assertPathWithin(this.paths.agentOutputs, artifactDir);
         expertResults.push(
           await this.openCode.runExpert(
             expert,
             worktreePath,
             expertInputPath,
-            this.agentTimeoutMs,
-            signal,
+            {
+              artifactDir,
+              timeoutMs: this.agentTimeoutMs,
+              ...(signal === undefined ? {} : { signal }),
+            },
           ),
         );
       }
@@ -269,11 +288,20 @@ export class ReviewWorkflow {
       });
       const judgeInputPath = path.join(runDir, "judge-input.json");
       await writeFile(judgeInputPath, `${JSON.stringify(judgeInput, null, 2)}\n`, "utf8");
+      const judgeArtifactDir = path.join(
+        this.paths.agentOutputs,
+        runId,
+        "04-review-judge",
+      );
+      assertPathWithin(this.paths.agentOutputs, judgeArtifactDir);
       const judge = await this.openCode.runJudge(
         worktreePath,
         judgeInputPath,
-        this.agentTimeoutMs,
-        signal,
+        {
+          artifactDir: judgeArtifactDir,
+          timeoutMs: this.agentTimeoutMs,
+          ...(signal === undefined ? {} : { signal }),
+        },
       );
       terminal = await this.applyJudge(repoId, mr, judge, signal);
     } catch (error) {

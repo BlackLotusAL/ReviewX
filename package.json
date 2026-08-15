@@ -26,6 +26,7 @@
     "test:e2e": "vitest run tests/e2e",
     "test:coverage": "vitest run --coverage",
     "test:smoke": "tsx tests/smoke.ts",
+    "simulate:review": "tsx scripts/simulate-review.ts",
     "pack:check": "tsx scripts/pack-check.ts"
   },
   "dependencies": {

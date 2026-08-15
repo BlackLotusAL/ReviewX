@@ -64,12 +64,20 @@ runtime/
 ├── reviewx.jsonl
 ├── repos/<repo-key>/
 ├── worktrees/<repo-key>/<mr-iid>/
-└── runs/<run-id>/
+├── runs/<run-id>/
     ├── expert-input.json
     └── judge-input.json
+└── agent-output/<run-id>/<sequence>-<agent>/
+    ├── stdout.jsonl
+    ├── stderr.txt
+    ├── assistant.txt
+    ├── candidate.txt
+    ├── processed.txt
+    ├── result.json
+    └── metadata.json
 ```
 
-`runs/` 只保存当前运行的临时输入；校验后的 Agent 输出和评论正文在内存中传递。运行结束后删除对应 run 目录和 worktree。日志不内建轮转，由运行环境处理。
+`runs/` 只保存当前运行的临时输入，运行结束后删除对应 run 目录和 worktree。每次 Agent 调用都把原始事件流、拼接正文、截取候选、实际转换文本、校验结果和处理元数据永久保存到 `agent-output/`。这些文件可能包含完整源码片段和模型分析，不做脱敏或自动清理；部署方必须限制目录访问并自行配置保留周期。日志同样不内建轮转。
 
 ### 3.2 状态
 
@@ -120,12 +128,13 @@ interface LogRecord {
   agent_output_source?: "assistant_text" | "opencode_stdout";
   agent_output_chars?: number;
   agent_output_truncated?: boolean;
+  agent_output_artifact?: string;
   duplicate_of_comment_id?: string | null;
   comment_id?: string | null;
 }
 ```
 
-仅当 OpenCode 退出成功、但事件流、Agent JSON 或结果 schema 无法校验时，失败的 `review_run_finished` 才附带 Agent 输出诊断。优先记录最终 assistant text；事件流本身损坏时记录 OpenCode stdout。输出先做凭据脱敏，再限制为 16 KiB；超限时保留首尾并通过 `agent_output_truncated` 标记。成功运行和明确的非零 Agent 退出不记录该正文。
+Agent 失败时，`review_run_finished.agent_output_artifact` 指向对应的持久产物目录。事件流、Agent JSON 或结果 schema 无法校验时还会附带输出预览：优先记录最终 assistant text；事件流本身损坏时记录 OpenCode stdout。预览先做凭据脱敏，再限制为 16 KiB；超限时保留首尾并通过 `agent_output_truncated` 标记。完整、未脱敏的正文只存在本地 artifact 目录。
 
 ## 4. CodeHub CLI 与 Git worktree
 
@@ -200,7 +209,9 @@ opencode run \
   "检视当前 MR 的最终整体净变化，只输出约定 JSON。"
 ```
 
-`--format json` 只保证 OpenCode 事件流为 JSONL。Agent 正文仍要求输出一个裸 JSON 对象；为兼容模型的展示习惯，workflow 会依次尝试解析完整裸 JSON、正文中唯一的无语言或 `json` Markdown fenced block，以及带有前置分析文字但位于正文末尾的完整 JSON 对象，然后继续执行严格结构校验。末尾 JSON 的边界识别会处理字符串和反斜杠转义，且不允许 JSON 后出现说明文字；多个 fenced block、连续多个 JSON、无效 JSON 和无效结构仍判定失败。解析错误必须标明具体 Agent，并按诊断日志规则记录脱敏、限长后的输出预览。
+`--format json` 只保证 OpenCode 事件流为 JSONL。Agent 正文仍要求输出一个裸 JSON 对象；后处理会依次识别完整裸 JSON、位于正文末尾的裸 JSON、位于末尾的无语言或 `json` fenced block，最后才使用全文唯一 fenced block 的旧兼容规则。末尾答案一旦确定，前置分析中的 fenced diff 和代码示例不参与计数。
+
+后处理先截取候选，再识别 JSON 字符串、转义和括号栈。仅当字符串已经闭合、括号无错配且结尾只缺结构闭合时，按逆序追加缺失的 `]`/`}`；尾逗号、非法转义、未闭合字符串和尾随说明文字不修复。转换后仍执行严格结果 schema 和来源 Agent 身份校验。每一步的原文、候选、处理文本与状态都写入 artifact 目录。
 
 三个专家按设计、业务、代码顺序执行，全部成功后才调用裁判。每个进程最多运行 `--agent-timeout`；超时后 ReviewX 终止进程并判定本次 Review Run 失败。
 
@@ -320,7 +331,7 @@ CodeHub CLI/Git 命令失败、worktree 准备失败、Agent 失败或状态无�
 
 ### 7.3 执行边界
 
-ReviewX 只在 `runtime/` 下创建和删除缓存、worktree、临时文件、状态和日志。Agent 对目标仓库只读；只有 ReviewX 主进程能够调用 CodeHub 评论命令。
+ReviewX 只在 `runtime/` 下创建和删除缓存、worktree、临时文件、状态、日志和持久 Agent 输出。Agent 对目标仓库只读；只有 ReviewX 主进程能够调用 CodeHub 评论命令。
 
 ## 8. 单机启动、验收与参考
 
@@ -344,6 +355,7 @@ reviewx run
 5. `new` 按固定 severity 映射发布；`pass` 和 `duplicate_of` 不发布评论。
 6. 检视期间 MR 更新或关闭时不评论；成功评论刷新 `updated_at`，`WRITE_RESULT_UNKNOWN` 记录未知历史且不自动重试。
 7. 所有代码托管操作都对应第 4.1 节的 CodeHub CLI 命令；并发命令不损坏状态，Agent 不能编辑代码、运行项目命令、访问网络或发布评论。
+8. 多个分析代码块不会阻止末尾结果解析；每个 Agent 的完整后处理产物可通过 `run_id` 在 `runtime/agent-output/` 定位。
 
 ### 8.3 官方参考
 

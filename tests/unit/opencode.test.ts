@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { processAgentOutputText } from "../../src/agent-output.js";
 import { openCodeInlineConfig, parseOpenCodeText } from "../../src/opencode.js";
 
 function event(text: string): string {
@@ -61,11 +62,49 @@ describe("OpenCode event parsing and permissions", () => {
   });
 
   it.each([
+    [
+      'Analysis.\n```ts\nconst value = { enabled: true };\n```\n```diff\n-old\n+new\n```\nResult:\n{"verdict":"pass"}',
+      "trailing_raw",
+    ],
+    [
+      'Analysis.\n```ts\nconst value = 1;\n```\nAnother example:\n```diff\n-old\n+new\n```\n```json\n{"verdict":"pass"}\n```',
+      "trailing_fence",
+    ],
+  ] as const)("ignores analysis fences before a terminal result", (text, strategy) => {
+    const processed = processAgentOutputText(text);
+    expect(processed).toMatchObject({ success: true, strategy, value: { verdict: "pass" } });
+    expect(parseOpenCodeText(`${event(text)}\n`)).toEqual({ verdict: "pass" });
+  });
+
+  it("repairs only missing structural closers", () => {
+    const repaired = processAgentOutputText(
+      'Analysis.\n{"expert":"design-reviewer","verdict":"findings","findings":[{"confidence":55}',
+    );
+    expect(repaired).toMatchObject({
+      success: true,
+      strategy: "trailing_raw",
+      appendedClosers: "]}",
+      value: {
+        expert: "design-reviewer",
+        verdict: "findings",
+        findings: [{ confidence: 55 }],
+      },
+    });
+  });
+
+  it.each([
+    'Analysis.\n{"verdict":"pass}',
+    'Analysis.\n{"verdict":"pass"]',
+    'Analysis.\n{"verdict":"pass",',
+  ])("does not repair unsafe or non-structural JSON damage", (text) => {
+    expect(processAgentOutputText(text)).toMatchObject({ success: false });
+  });
+
+  it.each([
     "plain text\n",
     `${JSON.stringify({ type: "step_start" })}\n`,
     `${JSON.stringify({ type: "error", error: {} })}\n`,
     `${event('```javascript\n{"verdict":"pass"}\n```')}\n`,
-    `${event('```json\n{"verdict":"pass"}\n```\n```json\n{"verdict":"pass"}\n```')}\n`,
     `${event('```json\n{"verdict":"pass"}{"verdict":"pass"}\n```')}\n`,
     `${event("```json\n\n```")}\n`,
     `${event('```json\n{"verdict":"pass"}')}\n`,

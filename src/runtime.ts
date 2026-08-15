@@ -9,6 +9,7 @@ export interface RuntimePaths {
   repos: string;
   worktrees: string;
   runs: string;
+  agentOutputs: string;
 }
 
 export function createRuntimePaths(statePath: string, logPath?: string): RuntimePaths {
@@ -23,6 +24,7 @@ export function createRuntimePaths(statePath: string, logPath?: string): Runtime
     repos: path.join(root, "repos"),
     worktrees: path.join(root, "worktrees"),
     runs: path.join(root, "runs"),
+    agentOutputs: path.join(root, "agent-output"),
   };
 }
 

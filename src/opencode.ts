@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
@@ -8,6 +9,7 @@ import {
   type ExpertResult,
   type JudgeResult,
 } from "./contracts.js";
+import { processAgentOutputText, type AgentOutputStrategy } from "./agent-output.js";
 import { diagnosticTextPreview, redactText, ReviewXError } from "./errors.js";
 import { DefaultCommandRunner, type CommandRunner } from "./process.js";
 
@@ -67,123 +69,6 @@ function sanitizedAgentEnv(configDir: string): NodeJS.ProcessEnv {
   return env;
 }
 
-interface OpenMarkdownFence {
-  delimiter: "`" | "~";
-  length: number;
-  language: string;
-  content: string[];
-}
-
-function extractSingleJsonFence(value: string): string | undefined {
-  const blocks: Array<{ language: string; content: string }> = [];
-  let open: OpenMarkdownFence | undefined;
-
-  for (const line of value.split(/\r?\n/u)) {
-    if (open) {
-      const closing = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*$/u.exec(line);
-      const closingRun = closing?.[1];
-      if (
-        closingRun &&
-        closingRun[0] === open.delimiter &&
-        closingRun.length >= open.length
-      ) {
-        blocks.push({ language: open.language, content: open.content.join("\n").trim() });
-        open = undefined;
-      } else {
-        open.content.push(line);
-      }
-      continue;
-    }
-
-    const opening = /^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
-    const openingRun = opening?.[1];
-    if (!openingRun) continue;
-    open = {
-      delimiter: openingRun[0] as "`" | "~",
-      length: openingRun.length,
-      language: (opening[2] ?? "").trim().toLowerCase(),
-      content: [],
-    };
-  }
-
-  if (open) {
-    throw new ReviewXError("AGENT_ERROR", "Agent output has an unterminated Markdown fence.");
-  }
-  if (blocks.length === 0) return undefined;
-  if (blocks.length !== 1) {
-    throw new ReviewXError(
-      "AGENT_ERROR",
-      "Agent output must contain exactly one Markdown fenced block.",
-    );
-  }
-  const [block] = blocks;
-  if (block!.language !== "" && block!.language !== "json") {
-    throw new ReviewXError(
-      "AGENT_ERROR",
-      "Agent output Markdown fence language must be empty or json.",
-    );
-  }
-  return block!.content;
-}
-
-interface TrailingJsonObject {
-  start: number;
-  value: unknown;
-}
-
-function isUnescapedQuote(value: string, index: number): boolean {
-  let backslashes = 0;
-  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) {
-    backslashes += 1;
-  }
-  return backslashes % 2 === 0;
-}
-
-function findTrailingJsonObject(value: string): TrailingJsonObject | undefined {
-  const end = value.trimEnd().length;
-  if (end === 0 || value[end - 1] !== "}") return undefined;
-
-  let depth = 0;
-  let inString = false;
-  for (let index = end - 1; index >= 0; index -= 1) {
-    const character = value[index]!;
-    if (character === '"' && isUnescapedQuote(value, index)) {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (character === "}") {
-      depth += 1;
-      continue;
-    }
-    if (character !== "{") continue;
-    depth -= 1;
-    if (depth < 0) return undefined;
-    if (depth !== 0) continue;
-
-    try {
-      const parsed = JSON.parse(value.slice(index, end)) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-      return { start: index, value: parsed };
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
-}
-
-function parseTrailingJsonObject(value: string): unknown | undefined {
-  const trailing = findTrailingJsonObject(value);
-  if (!trailing) return undefined;
-
-  const prefix = value.slice(0, trailing.start).trimEnd();
-  if (findTrailingJsonObject(prefix)) {
-    // Keep rejecting consecutive JSON objects instead of silently choosing the last one.
-    return undefined;
-  }
-  return trailing.value;
-}
-
 function collectOpenCodeText(stdout: string): string {
   const textParts: string[] = [];
   for (const line of stdout.split(/\r?\n/u)) {
@@ -214,62 +99,88 @@ function collectOpenCodeText(stdout: string): string {
   return textParts.join("").trim();
 }
 
-function parseAgentJsonText(combined: string): unknown {
-  try {
-    return JSON.parse(combined);
-  } catch {
-    // OpenCode's JSON format applies to its event stream, not the assistant's text format.
-  }
-
-  const fenced = extractSingleJsonFence(combined);
-  if (fenced !== undefined) {
-    try {
-      return JSON.parse(fenced);
-    } catch (error) {
-      throw new ReviewXError("AGENT_ERROR", "Agent final text is not one valid JSON object.", {
-        cause: error,
-      });
-    }
-  }
-
-  const trailing = parseTrailingJsonObject(combined);
-  if (trailing !== undefined) return trailing;
-  throw new ReviewXError("AGENT_ERROR", "Agent final text is not one valid JSON object.");
-}
-
 export function parseOpenCodeText(stdout: string): unknown {
-  return parseAgentJsonText(collectOpenCodeText(stdout));
+  const processed = processAgentOutputText(collectOpenCodeText(stdout));
+  if (!processed.success) {
+    throw new ReviewXError("AGENT_ERROR", processed.error);
+  }
+  return processed.value;
 }
 
 type AgentName = ExpertName | "review-judge";
 
-interface AgentInvocation {
-  value: unknown;
-  outputText: string;
+export interface AgentRunOptions {
+  artifactDir: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
 }
 
-function agentOutputDetails(agent: AgentName, output: string, source: AgentOutputSource) {
-  const preview = diagnosticTextPreview(output);
+interface AgentArtifactMetadata {
+  agent: AgentName;
+  status: "started" | "succeeded" | "failed";
+  started_at: string;
+  finished_at?: string;
+  model?: string;
+  exit_code?: number | null;
+  signal?: NodeJS.Signals | null;
+  stdout_chars?: number;
+  stderr_chars?: number;
+  assistant_chars?: number;
+  strategy?: AgentOutputStrategy;
+  candidate_chars?: number;
+  processed_chars?: number;
+  appended_closers?: string;
+  parse_status: "not_attempted" | "succeeded" | "failed";
+  schema_status: "not_attempted" | "succeeded" | "failed";
+  error?: string;
+}
+
+function agentOutputDetails(
+  agent: AgentName,
+  artifactDir: string,
+  output?: string,
+  source?: AgentOutputSource,
+) {
+  const preview = output === undefined ? undefined : diagnosticTextPreview(output);
   return {
     agent,
-    agent_output: preview.text,
-    agent_output_source: source,
-    agent_output_chars: preview.originalCharacters,
-    agent_output_truncated: preview.truncated,
+    agent_output_artifact: artifactDir,
+    ...(preview === undefined || source === undefined
+      ? {}
+      : {
+          agent_output: preview.text,
+          agent_output_source: source,
+          agent_output_chars: preview.originalCharacters,
+          agent_output_truncated: preview.truncated,
+        }),
   } as const;
 }
 
-function invalidAgentOutput(
+function attachAgentContext(
+  error: unknown,
   agent: AgentName,
-  message: string,
-  output: string,
-  source: AgentOutputSource,
-  cause?: unknown,
+  artifactDir: string,
+  output?: string,
+  source?: AgentOutputSource,
 ): ReviewXError {
-  return new ReviewXError("AGENT_ERROR", message, {
-    ...(cause === undefined ? {} : { cause }),
-    details: agentOutputDetails(agent, output, source),
+  const base =
+    error instanceof ReviewXError
+      ? error
+      : new ReviewXError("AGENT_ERROR", error instanceof Error ? error.message : String(error), {
+          cause: error,
+        });
+  return new ReviewXError(base.code, base.message, {
+    exitCode: base.exitCode,
+    cause: error,
+    details: {
+      ...base.details,
+      ...agentOutputDetails(agent, artifactDir, output, source),
+    },
   });
+}
+
+async function writeArtifact(directory: string, name: string, value: string): Promise<void> {
+  await writeFile(path.join(directory, name), value, { encoding: "utf8", mode: 0o600 });
 }
 
 export class OpenCodeClient {
@@ -281,70 +192,137 @@ export class OpenCodeClient {
     configDir =
       process.env.REVIEWX_OPENCODE_CONFIG_DIR ??
       fileURLToPath(new URL("../opencode/", import.meta.url)),
+    private readonly model = process.env.REVIEWX_OPENCODE_MODEL,
   ) {
     this.configDir = path.resolve(configDir);
   }
 
-  private async invoke(
-    agent: ExpertName | "review-judge",
+  private async invoke<T>(
+    agent: AgentName,
     worktreePath: string,
     inputPath: string,
-    timeoutMs: number,
-    signal?: AbortSignal,
-  ): Promise<AgentInvocation> {
-    const result = await this.runner.run(
-      this.executable,
-      [
-        "run",
-        "--pure",
-        "--agent",
-        agent,
-        "--dir",
-        worktreePath,
-        "--file",
-        inputPath,
-        "--format",
-        "json",
-        "检视当前 MR 的最终整体净变化，只输出约定 JSON。",
-      ],
-      {
-        cwd: worktreePath,
-        env: sanitizedAgentEnv(this.configDir),
-        timeoutMs,
-        ...(signal === undefined ? {} : { signal }),
-        maxOutputBytes: 20 * 1024 * 1024,
-      },
-    );
-    if (result.exitCode !== 0) {
-      const detail = redactText(result.stderr.trim().split(/\r?\n/u)[0] ?? "");
-      throw new ReviewXError(
-        "AGENT_ERROR",
-        `OpenCode agent ${agent} failed with exit code ${result.exitCode ?? "unknown"}${detail ? `: ${detail}` : "."}`,
-      );
-    }
-    let outputText: string;
+    options: AgentRunOptions,
+    validate: (value: unknown) => T,
+  ): Promise<T> {
+    const artifactDir = path.resolve(options.artifactDir);
+    const metadata: AgentArtifactMetadata = {
+      agent,
+      status: "started",
+      started_at: new Date().toISOString(),
+      ...(this.model === undefined ? {} : { model: this.model }),
+      parse_status: "not_attempted",
+      schema_status: "not_attempted",
+    };
+    let diagnosticOutput: string | undefined;
+    let diagnosticSource: AgentOutputSource | undefined;
     try {
-      outputText = collectOpenCodeText(result.stdout);
-    } catch (error) {
-      const detail = redactText(error instanceof Error ? error.message : String(error));
-      throw invalidAgentOutput(
-        agent,
-        `OpenCode agent ${agent} returned invalid output${detail ? `: ${detail}` : "."}`,
-        result.stdout,
-        "opencode_stdout",
-        error,
+      await mkdir(artifactDir, { recursive: true, mode: 0o700 });
+      const result = await this.runner.run(
+        this.executable,
+        [
+          "run",
+          "--pure",
+          "--agent",
+          agent,
+          "--dir",
+          worktreePath,
+          "--file",
+          inputPath,
+          "--format",
+          "json",
+          ...(this.model === undefined ? [] : ["--model", this.model]),
+          "检视当前 MR 的最终整体净变化，只输出约定 JSON。",
+        ],
+        {
+          cwd: worktreePath,
+          env: sanitizedAgentEnv(this.configDir),
+          timeoutMs: options.timeoutMs,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          maxOutputBytes: 20 * 1024 * 1024,
+        },
       );
-    }
-    try {
-      return { value: parseAgentJsonText(outputText), outputText };
+      metadata.exit_code = result.exitCode;
+      metadata.signal = result.signal;
+      metadata.stdout_chars = result.stdout.length;
+      metadata.stderr_chars = result.stderr.length;
+      await Promise.all([
+        writeArtifact(artifactDir, "stdout.jsonl", result.stdout),
+        writeArtifact(artifactDir, "stderr.txt", result.stderr),
+      ]);
+      diagnosticOutput = result.stdout;
+      diagnosticSource = "opencode_stdout";
+
+      if (result.exitCode !== 0) {
+        const detail = redactText(result.stderr.trim().split(/\r?\n/u)[0] ?? "");
+        throw new ReviewXError(
+          "AGENT_ERROR",
+          `OpenCode agent ${agent} failed with exit code ${result.exitCode ?? "unknown"}${detail ? `: ${detail}` : "."}`,
+        );
+      }
+
+      let outputText: string;
+      try {
+        outputText = collectOpenCodeText(result.stdout);
+      } catch (error) {
+        metadata.parse_status = "failed";
+        const detail = redactText(error instanceof Error ? error.message : String(error));
+        throw new ReviewXError(
+          "AGENT_ERROR",
+          `OpenCode agent ${agent} returned invalid output${detail ? `: ${detail}` : "."}`,
+          { cause: error },
+        );
+      }
+      diagnosticOutput = outputText;
+      diagnosticSource = "assistant_text";
+      metadata.assistant_chars = outputText.length;
+      await writeArtifact(artifactDir, "assistant.txt", outputText);
+
+      const processed = processAgentOutputText(outputText);
+      const attempt = processed.success ? processed : processed.attempt;
+      if (attempt) {
+        metadata.strategy = attempt.strategy;
+        metadata.candidate_chars = attempt.candidateText.length;
+        metadata.appended_closers = attempt.appendedClosers;
+        await writeArtifact(artifactDir, "candidate.txt", attempt.candidateText);
+        if (attempt.processedText !== undefined) {
+          metadata.processed_chars = attempt.processedText.length;
+          await writeArtifact(artifactDir, "processed.txt", attempt.processedText);
+        }
+      }
+      if (!processed.success) {
+        metadata.parse_status = "failed";
+        throw new ReviewXError(
+          "AGENT_ERROR",
+          `OpenCode agent ${agent} returned invalid output: ${processed.error}`,
+        );
+      }
+      metadata.parse_status = "succeeded";
+
+      let validated: T;
+      try {
+        validated = validate(processed.value);
+      } catch (error) {
+        metadata.schema_status = "failed";
+        throw error;
+      }
+      metadata.schema_status = "succeeded";
+      await writeArtifact(artifactDir, "result.json", `${JSON.stringify(validated, null, 2)}\n`);
+      metadata.status = "succeeded";
+      metadata.finished_at = new Date().toISOString();
+      await writeArtifact(artifactDir, "metadata.json", `${JSON.stringify(metadata, null, 2)}\n`);
+      return validated;
     } catch (error) {
-      const detail = redactText(error instanceof Error ? error.message : String(error));
-      throw invalidAgentOutput(
-        agent,
-        `OpenCode agent ${agent} returned invalid output${detail ? `: ${detail}` : "."}`,
-        outputText,
-        "assistant_text",
+      metadata.status = "failed";
+      metadata.finished_at = new Date().toISOString();
+      metadata.error = redactText(error instanceof Error ? error.message : String(error));
+      await mkdir(artifactDir, { recursive: true, mode: 0o700 });
+      await writeArtifact(artifactDir, "metadata.json", `${JSON.stringify(metadata, null, 2)}\n`);
+      throw attachAgentContext(
         error,
+        agent,
+        artifactDir,
+        diagnosticOutput,
+        diagnosticSource,
       );
     }
   }
@@ -353,59 +331,47 @@ export class OpenCodeClient {
     expert: ExpertName,
     worktreePath: string,
     inputPath: string,
-    timeoutMs: number,
-    signal?: AbortSignal,
+    options: AgentRunOptions,
   ): Promise<ExpertResult> {
-    const invocation = await this.invoke(expert, worktreePath, inputPath, timeoutMs, signal);
-    let result: ExpertResult;
-    try {
-      result = expertResultSchema.parse(invocation.value);
-    } catch (error) {
-      if (error instanceof ReviewXError) throw error;
-      throw invalidAgentOutput(
-        expert,
-        `Agent ${expert} returned an invalid result.`,
-        invocation.outputText,
-        "assistant_text",
-        error,
-      );
-    }
-    if (result.expert !== expert) {
-      throw invalidAgentOutput(
-        expert,
-        `Agent ${expert} returned result for ${result.expert}.`,
-        invocation.outputText,
-        "assistant_text",
-      );
-    }
-    return result;
+    return await this.invoke(expert, worktreePath, inputPath, options, (value) => {
+      let result: ExpertResult;
+      try {
+        result = expertResultSchema.parse(value);
+      } catch (error) {
+        throw new ReviewXError("AGENT_ERROR", `Agent ${expert} returned an invalid result.`, {
+          cause: error,
+        });
+      }
+      if (result.expert !== expert) {
+        throw new ReviewXError(
+          "AGENT_ERROR",
+          `Agent ${expert} returned result for ${result.expert}.`,
+        );
+      }
+      return result;
+    });
   }
 
   async runJudge(
     worktreePath: string,
     inputPath: string,
-    timeoutMs: number,
-    signal?: AbortSignal,
+    options: AgentRunOptions,
   ): Promise<JudgeResult> {
-    const invocation = await this.invoke(
+    return await this.invoke(
       "review-judge",
       worktreePath,
       inputPath,
-      timeoutMs,
-      signal,
+      options,
+      (value) => {
+        try {
+          return judgeResultSchema.parse(value);
+        } catch (error) {
+          throw new ReviewXError("AGENT_ERROR", "Judge returned an invalid result.", {
+            cause: error,
+          });
+        }
+      },
     );
-    try {
-      return judgeResultSchema.parse(invocation.value);
-    } catch (error) {
-      if (error instanceof ReviewXError) throw error;
-      throw invalidAgentOutput(
-        "review-judge",
-        "Judge returned an invalid result.",
-        invocation.outputText,
-        "assistant_text",
-        error,
-      );
-    }
   }
 }
 

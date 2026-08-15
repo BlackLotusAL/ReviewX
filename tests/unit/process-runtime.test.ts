@@ -55,6 +55,10 @@ describe("process, redaction, and runtime paths", () => {
     );
     const paths = createRuntimePaths("runtime/custom.json");
     expect(paths.log.endsWith("runtime\\reviewx.jsonl") || paths.log.endsWith("runtime/reviewx.jsonl")).toBe(true);
+    expect(
+      paths.agentOutputs.endsWith("runtime\\agent-output") ||
+        paths.agentOutputs.endsWith("runtime/agent-output"),
+    ).toBe(true);
     expect(() => assertPathWithin(paths.runs, paths.runs)).toThrow();
     expect(() => assertPathWithin(paths.runs, `${paths.runs}-outside`)).toThrow();
     expect(() => assertPathWithin(paths.runs, `${paths.runs}/child`)).not.toThrow();
