@@ -76,7 +76,7 @@ pnpm pack:check
 pnpm test:smoke
 ```
 
-自动化测试使用真实本地 Git 仓库和可编程伪 CodeHub/OpenCode CLI，不需要真实凭据。真实冒烟测试只有在 `codehub` 可用且设置 `REVIEWX_SMOKE_REPO_ID` 时执行，并且只调用读取类命令，绝不发布评论。
+自动化测试使用真实本地 Git 仓库和可编程伪 CodeHub/OpenCode CLI，不需要真实凭据。真实冒烟测试通过 `codehub --help` 探测 CLI，并检查 `auth status` 的 `configured` 状态；只有在 `codehub` 可用、已登录且设置 `REVIEWX_SMOKE_REPO_ID` 时继续执行读取类命令，绝不发布评论。
 
 ## 首版边界
 

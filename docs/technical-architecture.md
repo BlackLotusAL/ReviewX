@@ -142,6 +142,8 @@ codehub mr comment create <mr-iid> \
 
 成功时 stdout 是直接 JSON 对象或数组；失败时 stdout 为空，stderr 是包含稳定 `code` 的 JSON 对象。ReviewX 同时校验退出码和错误 `code`，不能仅凭退出码分类。CodeHub 凭据使用 CLI 已有登录配置，不传给 Agent。
 
+CodeHub CLI 会把服务端缺失的投影字段输出为 `null`。ReviewX 接受仓库展示字段、MR 的全局 ID/标题/草稿标记、Commit 元数据和评论解决状态为 `null`；MR 的 `repo_id`、`iid`、`state`、源/目标分支和 `updated_at` 仍是工作流必需字段，缺失时按无效输出失败。Commit 列表只用于帮助 Agent 理解意图和演进，元数据缺失不阻断最终 worktree 检视。
+
 `mr list` 的返回数组直接作为本轮 Open MR 集合，不增加分页或改用其他接口。首版接受 CodeHub CLI 结果可能非全量的限制。
 
 ### 4.2 评论发布
@@ -288,7 +290,7 @@ type JudgeResult =
 
 CodeHub CLI/Git 命令失败、worktree 准备失败、Agent 失败或状态无法安全写入时，本次运行记为 `failed`，不发布评论、不更新处理游标。发布前 MR 已更新或关闭时分别记为 `updated` 或 `closed`。
 
-`WRITE_RESULT_UNKNOWN` 是唯一例外，必须根据 stderr 的错误 `code` 识别：
+`WRITE_RESULT_UNKNOWN` 是唯一例外。它既可以来自 stderr 的稳定错误 `code`，也可以由退出成功但 `comment_id` 为 `null` 的评论结果触发；后者表示 CLI 无法提供足够证据确认写入结果：
 
 1. 将本次问题摘要写入 `finding_history`，标记 `publication_status: "unknown"` 且 `comment_id: null`。
 2. 再调用一次 `mr view`；成功时保存其 `updated_at`，失败时保存检视开始时的 `updated_at`。

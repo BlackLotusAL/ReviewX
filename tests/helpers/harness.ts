@@ -81,7 +81,7 @@ export class ScriptedCodeHubRunner implements CommandRunner {
   prePublishUpdatedAt = "2026-08-12T00:00:00Z";
   refreshUpdatedAt = "2026-08-12T00:01:00Z";
   prePublishState = "opened";
-  publication: "success" | "unknown" | "failure" = "success";
+  publication: "success" | "unknown" | "missing_id" | "failure" = "success";
   listState = "opened";
   listFailure = false;
   refreshFailure = false;
@@ -118,11 +118,11 @@ export class ScriptedCodeHubRunner implements CommandRunner {
       if (this.publication === "unknown") return failed("WRITE_RESULT_UNKNOWN", "unknown result");
       if (this.publication === "failure") return failed("HTTP_ERROR", "forbidden");
       return ok({
-        comment_id: "comment-1",
+        comment_id: this.publication === "missing_id" ? null : "comment-1",
         repo_id: this.repository.repo_id,
         mr_iid: this.mergeRequest.iid,
         severity: call[severityIndex + 1],
-        resolved: false,
+        resolved: this.publication === "missing_id" ? null : false,
         web_url: null,
       });
     }

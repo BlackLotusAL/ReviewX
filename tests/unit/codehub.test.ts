@@ -107,6 +107,82 @@ describe("CodeHub fixed CLI contract", () => {
     });
   });
 
+  it("accepts documented nullable metadata from successful commands", async () => {
+    const runner = new HandlerRunner((args) => {
+      if (args[0] === "repo") {
+        return result({
+          repo_id: "1",
+          full_name: null,
+          clone_urls: { ssh: null, https: "https://example.test/g/r.git" },
+          archived: null,
+          updated_at: null,
+          default_branch: null,
+          web_url: null,
+        });
+      }
+      if (args[1] === "list" || args[1] === "view") {
+        return result(
+          args[1] === "list"
+            ? [{ ...mr, mr_id: null, title: null, is_draft: null }]
+            : { ...mr, mr_id: null, title: null, is_draft: null },
+        );
+      }
+      if (args[1] === "commits") {
+        return result([
+          {
+            sha: null,
+            title: null,
+            message: null,
+            author: null,
+            committer: null,
+            authored_at: null,
+            committed_at: null,
+            parent_shas: null,
+          },
+        ]);
+      }
+      return result({
+        comment_id: "c1",
+        repo_id: "1",
+        mr_iid: "2",
+        severity: "major",
+        resolved: null,
+        web_url: null,
+      });
+    });
+    const client = new CodeHubClient(runner);
+    await expect(client.repoView("1")).resolves.toMatchObject({ full_name: null });
+    await expect(client.mrList("1")).resolves.toEqual([
+      expect.objectContaining({ mr_id: null, title: null, is_draft: null }),
+    ]);
+    await expect(client.mrView("1", "2")).resolves.toMatchObject({ mr_id: null });
+    await expect(client.mrCommits("1", "2")).resolves.toEqual([
+      expect.objectContaining({ sha: null, parent_shas: null }),
+    ]);
+    await expect(client.createComment("1", "2", "body", "major")).resolves.toMatchObject({
+      comment_id: "c1",
+      resolved: null,
+    });
+  });
+
+  it("classifies a successful comment response without an ID as unknown", async () => {
+    const client = new CodeHubClient(
+      new HandlerRunner(() =>
+        result({
+          comment_id: null,
+          repo_id: "1",
+          mr_iid: "2",
+          severity: "major",
+          resolved: null,
+          web_url: null,
+        }),
+      ),
+    );
+    await expect(client.createComment("1", "2", "body", "major")).rejects.toMatchObject({
+      externalCode: "WRITE_RESULT_UNKNOWN",
+    });
+  });
+
   it.each([
     [{ exitCode: 1, signal: null, stdout: "", stderr: "plain failure" }, "UNCLASSIFIED_ERROR"],
     [{ exitCode: 0, signal: null, stdout: "{}", stderr: "warning" }, "INVALID_OUTPUT"],

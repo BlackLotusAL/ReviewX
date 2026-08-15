@@ -24,10 +24,10 @@ export const cloneUrlsSchema = z
 export const repositorySchema = z
   .object({
     repo_id: positiveIdSchema,
-    full_name: z.string().optional(),
+    full_name: z.string().nullish(),
     clone_urls: cloneUrlsSchema,
-    archived: z.boolean().optional(),
-    updated_at: z.string().optional(),
+    archived: z.boolean().nullish(),
+    updated_at: z.string().nullish(),
     default_branch: z.string().nullable().optional(),
     web_url: z.string().nullable().optional(),
   })
@@ -37,11 +37,11 @@ export type Repository = z.infer<typeof repositorySchema>;
 export const mergeRequestSchema = z
   .object({
     repo_id: positiveIdSchema,
-    mr_id: positiveIdSchema,
+    mr_id: positiveIdSchema.nullable(),
     iid: positiveIdSchema,
-    title: z.string(),
+    title: z.string().nullable(),
     state: z.string(),
-    is_draft: z.boolean(),
+    is_draft: z.boolean().nullable(),
     author: z.unknown(),
     source_branch: nonEmpty,
     target_branch: nonEmpty,
@@ -53,26 +53,33 @@ export type MergeRequest = z.infer<typeof mergeRequestSchema>;
 
 export const commitSchema = z
   .object({
-    sha: nonEmpty,
-    title: z.string(),
-    message: z.string(),
+    sha: nonEmpty.nullable(),
+    title: z.string().nullable(),
+    message: z.string().nullable(),
     author: z.unknown(),
     committer: z.unknown(),
     authored_at: z.string().nullable(),
     committed_at: z.string().nullable(),
-    parent_shas: z.array(z.string()),
+    parent_shas: z.array(z.string()).nullable(),
   })
   .passthrough();
 export type Commit = z.infer<typeof commitSchema>;
 
-export const commentResultSchema = z
+export const commentCommandOutputSchema = z
   .object({
-    comment_id: nonEmpty,
+    comment_id: nonEmpty.nullable(),
     repo_id: positiveIdSchema,
     mr_iid: positiveIdSchema,
     severity: z.enum(["suggestion", "minor", "major", "fatal"]),
-    resolved: z.boolean(),
+    resolved: z.boolean().nullable(),
     web_url: z.string().nullable(),
+  })
+  .passthrough();
+
+export const commentResultSchema = z
+  .object({
+    ...commentCommandOutputSchema.shape,
+    comment_id: nonEmpty,
   })
   .passthrough();
 export type CommentResult = z.infer<typeof commentResultSchema>;

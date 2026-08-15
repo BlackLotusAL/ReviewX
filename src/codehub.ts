@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   codeHubErrorSchema,
+  commentCommandOutputSchema,
   commentResultSchema,
   commitSchema,
   mergeRequestSchema,
@@ -113,7 +114,7 @@ export class CodeHubClient {
     severity: "suggestion" | "minor" | "major" | "fatal",
     signal?: AbortSignal,
   ): Promise<CommentResult> {
-    return await this.json(
+    const result = await this.json(
       [
         "mr",
         "comment",
@@ -128,8 +129,15 @@ export class CodeHubClient {
         "--output",
         "json",
       ],
-      commentResultSchema,
+      commentCommandOutputSchema,
       signal,
     );
+    if (result.comment_id === null) {
+      throw new CodeHubCommandError(
+        "WRITE_RESULT_UNKNOWN",
+        "CodeHub CLI reported comment success without a comment ID.",
+      );
+    }
+    return commentResultSchema.parse(result);
   }
 }

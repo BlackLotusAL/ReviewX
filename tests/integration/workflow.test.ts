@@ -122,23 +122,32 @@ describe("full review workflow with real Git", () => {
     expect(terminal.result).toBe(result);
   });
 
-  it("records WRITE_RESULT_UNKNOWN history and treats the update as processed", async () => {
-    const value = await harness({
-      verdict: "new",
-      selected_finding: finding,
-      comment_markdown: finalComment(),
-    });
-    value.codeHub.publication = "unknown";
-    await value.workflow.scanOnce();
-    const mrState = (await value.state.read()).repositories["1"]!.merge_requests["7"]!;
-    expect(mrState.last_processed_updated_at).toBe("2026-08-12T00:01:00Z");
-    expect(mrState.finding_history[0]).toMatchObject({
-      publication_status: "unknown",
-      comment_id: null,
-    });
-    const terminal = value.logs.map((line) => JSON.parse(line)).find((x) => x.event === "review_run_finished");
-    expect(terminal).toMatchObject({ result: "publication_unknown", comment_id: null });
-  });
+  it.each(["unknown", "missing_id"] as const)(
+    "records %s publication history and treats the update as processed",
+    async (publication) => {
+      const value = await harness({
+        verdict: "new",
+        selected_finding: finding,
+        comment_markdown: finalComment(),
+      });
+      value.codeHub.publication = publication;
+      await value.workflow.scanOnce();
+      const mrState = (await value.state.read()).repositories["1"]!.merge_requests["7"]!;
+      expect(mrState.last_processed_updated_at).toBe("2026-08-12T00:01:00Z");
+      expect(mrState.finding_history[0]).toMatchObject({
+        publication_status: "unknown",
+        comment_id: null,
+      });
+      const terminal = value.logs
+        .map((line) => JSON.parse(line))
+        .find((x) => x.event === "review_run_finished");
+      expect(terminal).toMatchObject({ result: "publication_unknown", comment_id: null });
+      value.codeHub.listUpdatedAt = "2026-08-12T00:01:00Z";
+      await value.workflow.scanOnce();
+      expect(value.codeHub.comments).toHaveLength(1);
+      expect(value.agents.agents).toHaveLength(4);
+    },
+  );
 
   it("leaves the cursor untouched on agent failure and retries from the beginning", async () => {
     const value = await harness({ verdict: "pass" });

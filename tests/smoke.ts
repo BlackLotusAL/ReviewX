@@ -8,19 +8,20 @@ import { DefaultCommandRunner } from "../src/process.js";
 const runner = new DefaultCommandRunner();
 const codehub = process.env.REVIEWX_CODEHUB_BIN ?? "codehub";
 const opencode = process.env.REVIEWX_OPENCODE_BIN ?? "opencode";
+const authStatusSchema = z.object({ configured: z.boolean() });
 
 async function success(command: string, args: string[], env = process.env) {
   return await runner.run(command, args, { env, timeoutMs: 60_000 });
 }
 
-let version;
+let probe;
 try {
-  version = await success(codehub, ["--version"]);
+  probe = await success(codehub, ["--help"]);
 } catch {
   process.stdout.write("SKIP: codehub is not installed or executable.\n");
   process.exit(0);
 }
-if (version.exitCode !== 0) {
+if (probe.exitCode !== 0) {
   process.stdout.write("SKIP: codehub is not available.\n");
   process.exit(0);
 }
@@ -33,6 +34,17 @@ if (!repoId) {
 
 const auth = await success(codehub, ["auth", "status", "--output", "json"]);
 if (auth.exitCode !== 0) {
+  process.stdout.write("SKIP: codehub is not authenticated.\n");
+  process.exit(0);
+}
+let authStatus;
+try {
+  authStatus = authStatusSchema.parse(JSON.parse(auth.stdout));
+} catch {
+  process.stderr.write("Live smoke check failed: codehub auth status returned invalid JSON.\n");
+  process.exit(1);
+}
+if (!authStatus.configured) {
   process.stdout.write("SKIP: codehub is not authenticated.\n");
   process.exit(0);
 }

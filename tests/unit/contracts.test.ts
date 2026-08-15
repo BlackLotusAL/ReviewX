@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  commitSchema,
   expertResultSchema,
   findingSchema,
   judgeResultSchema,
+  mergeRequestSchema,
   normalizePositiveId,
+  repositorySchema,
   severityToCodeHub,
   stateSchema,
   type SelectedFinding,
@@ -66,6 +69,67 @@ describe("public contracts", () => {
   it.each(["0s", "1h", "1.5s", "abc", "999999999999999999999m"])(
     "rejects invalid duration %s",
     (value) => expect(() => parseDuration(value, "--interval")).toThrow(),
+  );
+
+  it("accepts CodeHub nullable descriptive metadata", () => {
+    expect(
+      repositorySchema.parse({
+        repo_id: "1",
+        full_name: null,
+        clone_urls: { ssh: null, https: "https://example.test/repo.git" },
+        archived: null,
+        updated_at: null,
+        default_branch: null,
+        web_url: null,
+      }),
+    ).toMatchObject({ full_name: null, archived: null, updated_at: null });
+    expect(
+      mergeRequestSchema.parse({
+        repo_id: "1",
+        mr_id: null,
+        iid: "2",
+        title: null,
+        state: "opened",
+        is_draft: null,
+        author: null,
+        source_branch: "feature",
+        target_branch: "main",
+        updated_at: "2026-08-12T00:00:00Z",
+        web_url: null,
+      }),
+    ).toMatchObject({ mr_id: null, title: null, is_draft: null });
+    expect(
+      commitSchema.parse({
+        sha: null,
+        title: null,
+        message: null,
+        author: null,
+        committer: null,
+        authored_at: null,
+        committed_at: null,
+        parent_shas: null,
+      }),
+    ).toMatchObject({ sha: null, title: null, message: null, parent_shas: null });
+  });
+
+  it.each(["repo_id", "iid", "state", "source_branch", "target_branch", "updated_at"])(
+    "rejects a null operational MR field %s",
+    (field) => {
+      const mergeRequest = {
+        repo_id: "1",
+        mr_id: null,
+        iid: "2",
+        title: null,
+        state: "opened",
+        is_draft: null,
+        author: null,
+        source_branch: "feature",
+        target_branch: "main",
+        updated_at: "2026-08-12T00:00:00Z",
+        web_url: null,
+      };
+      expect(() => mergeRequestSchema.parse({ ...mergeRequest, [field]: null })).toThrow();
+    },
   );
 
   it("enforces finding invariants and controlled tags", () => {
