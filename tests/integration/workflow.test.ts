@@ -54,7 +54,7 @@ describe("full review workflow with real Git", () => {
     expect(value.codeHub.comments).toHaveLength(0);
   });
 
-  it("accepts fenced JSON from every expert and the judge", async () => {
+  it("extracts prose-wrapped fenced JSON from every expert and the judge", async () => {
     const value = await harness({ verdict: "pass" });
     value.agents.fencedOutput = true;
 

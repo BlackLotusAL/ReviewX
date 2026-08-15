@@ -164,7 +164,9 @@ export class ScriptedAgentRunner implements CommandRunner {
         ? this.judgeResult
         : { expert: agent, verdict: "pass", findings: [] };
     const rawJson = JSON.stringify(output);
-    const json = this.fencedOutput ? `\`\`\`json\n${rawJson}\n\`\`\`` : rawJson;
+    const json = this.fencedOutput
+      ? `Review result follows.\n  \`\`\`\` json\n${rawJson}\n  \`\`\`\`\nEnd of result.`
+      : rawJson;
     const split = Math.floor(json.length / 2);
     const stdout = [json.slice(0, split), json.slice(split)]
       .map((text) => JSON.stringify({ type: "text", part: { text } }))

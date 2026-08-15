@@ -66,6 +66,65 @@ function sanitizedAgentEnv(configDir: string): NodeJS.ProcessEnv {
   return env;
 }
 
+interface OpenMarkdownFence {
+  delimiter: "`" | "~";
+  length: number;
+  language: string;
+  content: string[];
+}
+
+function extractSingleJsonFence(value: string): string | undefined {
+  const blocks: Array<{ language: string; content: string }> = [];
+  let open: OpenMarkdownFence | undefined;
+
+  for (const line of value.split(/\r?\n/u)) {
+    if (open) {
+      const closing = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*$/u.exec(line);
+      const closingRun = closing?.[1];
+      if (
+        closingRun &&
+        closingRun[0] === open.delimiter &&
+        closingRun.length >= open.length
+      ) {
+        blocks.push({ language: open.language, content: open.content.join("\n").trim() });
+        open = undefined;
+      } else {
+        open.content.push(line);
+      }
+      continue;
+    }
+
+    const opening = /^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+    const openingRun = opening?.[1];
+    if (!openingRun) continue;
+    open = {
+      delimiter: openingRun[0] as "`" | "~",
+      length: openingRun.length,
+      language: (opening[2] ?? "").trim().toLowerCase(),
+      content: [],
+    };
+  }
+
+  if (open) {
+    throw new ReviewXError("AGENT_ERROR", "Agent output has an unterminated Markdown fence.");
+  }
+  if (blocks.length === 0) return undefined;
+  if (blocks.length !== 1) {
+    throw new ReviewXError(
+      "AGENT_ERROR",
+      "Agent output must contain exactly one Markdown fenced block.",
+    );
+  }
+  const [block] = blocks;
+  if (block!.language !== "" && block!.language !== "json") {
+    throw new ReviewXError(
+      "AGENT_ERROR",
+      "Agent output Markdown fence language must be empty or json.",
+    );
+  }
+  return block!.content;
+}
+
 export function parseOpenCodeText(stdout: string): unknown {
   const textParts: string[] = [];
   for (const line of stdout.split(/\r?\n/u)) {
@@ -94,19 +153,18 @@ export function parseOpenCodeText(stdout: string): unknown {
     throw new ReviewXError("AGENT_ERROR", "OpenCode returned no final assistant text.");
   }
   const combined = textParts.join("").trim();
-  let jsonText = combined;
-  if (combined.startsWith("```") || combined.endsWith("```")) {
-    const fenced = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/iu.exec(combined);
-    if (!fenced) {
-      throw new ReviewXError(
-        "AGENT_ERROR",
-        "Agent output has an invalid Markdown fence wrapper.",
-      );
-    }
-    jsonText = fenced[1]!.trim();
+  try {
+    return JSON.parse(combined);
+  } catch {
+    // OpenCode's JSON format applies to its event stream, not the assistant's text format.
+  }
+
+  const fenced = extractSingleJsonFence(combined);
+  if (fenced === undefined) {
+    throw new ReviewXError("AGENT_ERROR", "Agent final text is not one valid JSON object.");
   }
   try {
-    return JSON.parse(jsonText);
+    return JSON.parse(fenced);
   } catch (error) {
     throw new ReviewXError("AGENT_ERROR", "Agent final text is not one valid JSON object.", {
       cause: error,

@@ -17,8 +17,21 @@ describe("OpenCode event parsing and permissions", () => {
     '```json\n{"verdict":"pass"}\n```',
     '```JSON\r\n{"verdict":"pass"}\r\n```',
     '```\n{"verdict":"pass"}\n```',
-  ])("accepts one complete JSON Markdown fence wrapper", (text) => {
+    'Result follows.\n```json\n{"verdict":"pass"}\n```\nEnd of result.',
+    '  ```` json\n{"verdict":"pass"}\n  ````',
+    '~~~JSON\n{"verdict":"pass"}\n~~~',
+  ])("extracts one JSON Markdown fenced block", (text) => {
     expect(parseOpenCodeText(`${event(text)}\n`)).toEqual({ verdict: "pass" });
+  });
+
+  it("extracts a fenced result split across OpenCode text events", () => {
+    expect(
+      parseOpenCodeText(
+        `${event("Result follows.\n```json\n{\"verdict\":")}\n${event(
+          '"pass"}\n```\nEnd of result.',
+        )}\n`,
+      ),
+    ).toEqual({ verdict: "pass" });
   });
 
   it.each([
@@ -26,9 +39,10 @@ describe("OpenCode event parsing and permissions", () => {
     `${JSON.stringify({ type: "step_start" })}\n`,
     `${JSON.stringify({ type: "error", error: {} })}\n`,
     `${event('```javascript\n{"verdict":"pass"}\n```')}\n`,
-    `${event('before\n```json\n{"verdict":"pass"}\n```')}\n`,
-    `${event('```json\n{"verdict":"pass"}\n```\nafter')}\n`,
     `${event('```json\n{"verdict":"pass"}\n```\n```json\n{"verdict":"pass"}\n```')}\n`,
+    `${event('```json\n{"verdict":"pass"}{"verdict":"pass"}\n```')}\n`,
+    `${event("```json\n\n```")}\n`,
+    `${event('```json\n{"verdict":"pass"}')}\n`,
     `${event('{"verdict":"pass"}{"verdict":"pass"}')}\n`,
     `${JSON.stringify({ type: "text", part: {} })}\n`,
   ])("rejects malformed event output", (output) => {
