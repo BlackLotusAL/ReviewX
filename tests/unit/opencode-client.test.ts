@@ -73,14 +73,28 @@ describe("OpenCode client", () => {
   });
 
   it("wraps invalid expert and judge schemas", async () => {
-    const runner = new AgentRunner(() => success({ unexpected: true }));
+    const runner = new AgentRunner(() => success({ unexpected: true, token: "secret-value" }));
     const client = new OpenCodeClient(runner, "fake", "./opencode");
     await expect(
       client.runExpert("code-reviewer", "worktree", "input", 1),
-    ).rejects.toThrowError(/invalid result/u);
-    await expect(client.runJudge("worktree", "input", 1)).rejects.toThrowError(
-      /Judge returned an invalid result/u,
-    );
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/invalid result/u),
+      details: {
+        agent: "code-reviewer",
+        agent_output: '{"unexpected":true,"token":"***"}',
+        agent_output_source: "assistant_text",
+        agent_output_truncated: false,
+      },
+    });
+    await expect(client.runJudge("worktree", "input", 1)).rejects.toMatchObject({
+      message: expect.stringMatching(/Judge returned an invalid result/u),
+      details: {
+        agent: "review-judge",
+        agent_output: '{"unexpected":true,"token":"***"}',
+        agent_output_source: "assistant_text",
+        agent_output_truncated: false,
+      },
+    });
   });
 
   it("accepts a valid judge result", async () => {
@@ -99,7 +113,38 @@ describe("OpenCode client", () => {
     const client = new OpenCodeClient(runner, "fake", "./opencode");
     await expect(
       client.runExpert("business-reviewer", "worktree", "input", 1),
-    ).rejects.toThrowError(/OpenCode agent business-reviewer returned invalid output/u);
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/OpenCode agent business-reviewer returned invalid output/u),
+      details: {
+        agent: "business-reviewer",
+        agent_output: "not-json",
+        agent_output_source: "assistant_text",
+        agent_output_chars: 8,
+        agent_output_truncated: false,
+      },
+    });
+  });
+
+  it("falls back to raw OpenCode stdout when its event stream is malformed", async () => {
+    const client = new OpenCodeClient(
+      new AgentRunner(() => ({
+        exitCode: 0,
+        signal: null,
+        stdout: "not-jsonl\n",
+        stderr: "",
+      })),
+      "fake",
+      "./opencode",
+    );
+    await expect(client.runJudge("worktree", "input", 1)).rejects.toMatchObject({
+      details: {
+        agent: "review-judge",
+        agent_output: "not-jsonl\n",
+        agent_output_source: "opencode_stdout",
+        agent_output_chars: 10,
+        agent_output_truncated: false,
+      },
+    });
   });
 
   it.each([
@@ -107,9 +152,10 @@ describe("OpenCode client", () => {
     [{ exitCode: 4, signal: null, stdout: "", stderr: "" }, "4"],
   ] as const)("rejects non-zero OpenCode exits", async (result, exitText) => {
     const client = new OpenCodeClient(new AgentRunner(() => result), "fake", "./opencode");
-    await expect(client.runJudge("worktree", "input", 1)).rejects.toThrowError(
-      new RegExp(`exit code ${exitText}`, "u"),
-    );
+    await expect(client.runJudge("worktree", "input", 1)).rejects.toMatchObject({
+      message: expect.stringMatching(new RegExp(`exit code ${exitText}`, "u")),
+      details: undefined,
+    });
   });
 
   it("constructs with the packaged default configuration", () => {

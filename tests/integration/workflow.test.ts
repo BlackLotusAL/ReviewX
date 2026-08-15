@@ -69,6 +69,9 @@ describe("full review workflow with real Git", () => {
     expect(
       value.logs.map((line) => JSON.parse(line)).find((record) => record.event === "review_run_finished"),
     ).toMatchObject({ result: "pass" });
+    expect(
+      value.logs.map((line) => JSON.parse(line)).find((record) => record.event === "review_run_finished"),
+    ).not.toHaveProperty("agent_output");
   });
 
   it("publishes one new comment, refreshes the cursor, and prevents its own loop", async () => {
@@ -172,6 +175,17 @@ describe("full review workflow with real Git", () => {
     await value.workflow.scanOnce();
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
     expect(value.agents.agents).toEqual(["design-reviewer", "business-reviewer"]);
+    expect(
+      value.logs.map((line) => JSON.parse(line)).find((record) =>
+        record.event === "review_run_finished" && record.result === "failed"
+      ),
+    ).toMatchObject({
+      agent: "business-reviewer",
+      agent_output: "not-json\n",
+      agent_output_source: "opencode_stdout",
+      agent_output_chars: 9,
+      agent_output_truncated: false,
+    });
     value.agents.invalidExpert = undefined;
     await value.workflow.scanOnce();
     expect(value.agents.agents.slice(2)).toEqual([

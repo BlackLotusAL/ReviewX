@@ -14,7 +14,7 @@ import {
 } from "./contracts.js";
 import { CodeHubClient, CodeHubCommandError } from "./codehub.js";
 import { validateCommentMarkdown } from "./comment.js";
-import { errorMessage } from "./errors.js";
+import { errorMessage, ReviewXError } from "./errors.js";
 import { GitManager } from "./git.js";
 import { JsonlLogger } from "./logger.js";
 import { OpenCodeClient } from "./opencode.js";
@@ -25,8 +25,56 @@ const experts: ExpertName[] = ["design-reviewer", "business-reviewer", "code-rev
 
 type TerminalRecord = Pick<
   LogRecord,
-  "result" | "error" | "duplicate_of_comment_id" | "comment_id"
+  | "result"
+  | "error"
+  | "agent"
+  | "agent_output"
+  | "agent_output_source"
+  | "agent_output_chars"
+  | "agent_output_truncated"
+  | "duplicate_of_comment_id"
+  | "comment_id"
 >;
+
+type AgentDiagnosticRecord = Pick<
+  LogRecord,
+  | "agent"
+  | "agent_output"
+  | "agent_output_source"
+  | "agent_output_chars"
+  | "agent_output_truncated"
+>;
+
+function agentDiagnosticRecord(error: unknown): Partial<AgentDiagnosticRecord> {
+  if (!(error instanceof ReviewXError) || error.code !== "AGENT_ERROR" || !error.details) {
+    return {};
+  }
+  const details = error.details;
+  const agent = details.agent;
+  const output = details.agent_output;
+  const source = details.agent_output_source;
+  const characters = details.agent_output_chars;
+  const truncated = details.agent_output_truncated;
+  if (
+    (agent !== "design-reviewer" &&
+      agent !== "business-reviewer" &&
+      agent !== "code-reviewer" &&
+      agent !== "review-judge") ||
+    typeof output !== "string" ||
+    (source !== "assistant_text" && source !== "opencode_stdout") ||
+    typeof characters !== "number" ||
+    typeof truncated !== "boolean"
+  ) {
+    return {};
+  }
+  return {
+    agent,
+    agent_output: output,
+    agent_output_source: source,
+    agent_output_chars: characters,
+    agent_output_truncated: truncated,
+  };
+}
 
 function historyFromJudge(
   judge: Extract<JudgeResult, { verdict: "new" }>,
@@ -229,7 +277,11 @@ export class ReviewWorkflow {
       );
       terminal = await this.applyJudge(repoId, mr, judge, signal);
     } catch (error) {
-      terminal = { result: "failed", error: errorMessage(error) };
+      terminal = {
+        result: "failed",
+        error: errorMessage(error),
+        ...agentDiagnosticRecord(error),
+      };
     } finally {
       try {
         await this.git.cleanup(repoId, mr.iid);

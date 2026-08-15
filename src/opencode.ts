@@ -3,11 +3,12 @@ import path from "node:path";
 import {
   expertResultSchema,
   judgeResultSchema,
+  type AgentOutputSource,
   type ExpertName,
   type ExpertResult,
   type JudgeResult,
 } from "./contracts.js";
-import { redactText, ReviewXError } from "./errors.js";
+import { diagnosticTextPreview, redactText, ReviewXError } from "./errors.js";
 import { DefaultCommandRunner, type CommandRunner } from "./process.js";
 
 const readonlyPermissions = {
@@ -125,7 +126,7 @@ function extractSingleJsonFence(value: string): string | undefined {
   return block!.content;
 }
 
-export function parseOpenCodeText(stdout: string): unknown {
+function collectOpenCodeText(stdout: string): string {
   const textParts: string[] = [];
   for (const line of stdout.split(/\r?\n/u)) {
     if (line.trim() === "") continue;
@@ -152,7 +153,10 @@ export function parseOpenCodeText(stdout: string): unknown {
   if (textParts.length === 0) {
     throw new ReviewXError("AGENT_ERROR", "OpenCode returned no final assistant text.");
   }
-  const combined = textParts.join("").trim();
+  return textParts.join("").trim();
+}
+
+function parseAgentJsonText(combined: string): unknown {
   try {
     return JSON.parse(combined);
   } catch {
@@ -170,6 +174,41 @@ export function parseOpenCodeText(stdout: string): unknown {
       cause: error,
     });
   }
+}
+
+export function parseOpenCodeText(stdout: string): unknown {
+  return parseAgentJsonText(collectOpenCodeText(stdout));
+}
+
+type AgentName = ExpertName | "review-judge";
+
+interface AgentInvocation {
+  value: unknown;
+  outputText: string;
+}
+
+function agentOutputDetails(agent: AgentName, output: string, source: AgentOutputSource) {
+  const preview = diagnosticTextPreview(output);
+  return {
+    agent,
+    agent_output: preview.text,
+    agent_output_source: source,
+    agent_output_chars: preview.originalCharacters,
+    agent_output_truncated: preview.truncated,
+  } as const;
+}
+
+function invalidAgentOutput(
+  agent: AgentName,
+  message: string,
+  output: string,
+  source: AgentOutputSource,
+  cause?: unknown,
+): ReviewXError {
+  return new ReviewXError("AGENT_ERROR", message, {
+    ...(cause === undefined ? {} : { cause }),
+    details: agentOutputDetails(agent, output, source),
+  });
 }
 
 export class OpenCodeClient {
@@ -191,7 +230,7 @@ export class OpenCodeClient {
     inputPath: string,
     timeoutMs: number,
     signal?: AbortSignal,
-  ): Promise<unknown> {
+  ): Promise<AgentInvocation> {
     const result = await this.runner.run(
       this.executable,
       [
@@ -222,14 +261,29 @@ export class OpenCodeClient {
         `OpenCode agent ${agent} failed with exit code ${result.exitCode ?? "unknown"}${detail ? `: ${detail}` : "."}`,
       );
     }
+    let outputText: string;
     try {
-      return parseOpenCodeText(result.stdout);
+      outputText = collectOpenCodeText(result.stdout);
     } catch (error) {
       const detail = redactText(error instanceof Error ? error.message : String(error));
-      throw new ReviewXError(
-        "AGENT_ERROR",
+      throw invalidAgentOutput(
+        agent,
         `OpenCode agent ${agent} returned invalid output${detail ? `: ${detail}` : "."}`,
-        { cause: error },
+        result.stdout,
+        "opencode_stdout",
+        error,
+      );
+    }
+    try {
+      return { value: parseAgentJsonText(outputText), outputText };
+    } catch (error) {
+      const detail = redactText(error instanceof Error ? error.message : String(error));
+      throw invalidAgentOutput(
+        agent,
+        `OpenCode agent ${agent} returned invalid output${detail ? `: ${detail}` : "."}`,
+        outputText,
+        "assistant_text",
+        error,
       );
     }
   }
@@ -241,23 +295,29 @@ export class OpenCodeClient {
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<ExpertResult> {
+    const invocation = await this.invoke(expert, worktreePath, inputPath, timeoutMs, signal);
+    let result: ExpertResult;
     try {
-      const result = expertResultSchema.parse(
-        await this.invoke(expert, worktreePath, inputPath, timeoutMs, signal),
-      );
-      if (result.expert !== expert) {
-        throw new ReviewXError(
-          "AGENT_ERROR",
-          `Agent ${expert} returned result for ${result.expert}.`,
-        );
-      }
-      return result;
+      result = expertResultSchema.parse(invocation.value);
     } catch (error) {
       if (error instanceof ReviewXError) throw error;
-      throw new ReviewXError("AGENT_ERROR", `Agent ${expert} returned an invalid result.`, {
-        cause: error,
-      });
+      throw invalidAgentOutput(
+        expert,
+        `Agent ${expert} returned an invalid result.`,
+        invocation.outputText,
+        "assistant_text",
+        error,
+      );
     }
+    if (result.expert !== expert) {
+      throw invalidAgentOutput(
+        expert,
+        `Agent ${expert} returned result for ${result.expert}.`,
+        invocation.outputText,
+        "assistant_text",
+      );
+    }
+    return result;
   }
 
   async runJudge(
@@ -266,13 +326,24 @@ export class OpenCodeClient {
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<JudgeResult> {
+    const invocation = await this.invoke(
+      "review-judge",
+      worktreePath,
+      inputPath,
+      timeoutMs,
+      signal,
+    );
     try {
-      return judgeResultSchema.parse(
-        await this.invoke("review-judge", worktreePath, inputPath, timeoutMs, signal),
-      );
+      return judgeResultSchema.parse(invocation.value);
     } catch (error) {
       if (error instanceof ReviewXError) throw error;
-      throw new ReviewXError("AGENT_ERROR", "Judge returned an invalid result.", { cause: error });
+      throw invalidAgentOutput(
+        "review-judge",
+        "Judge returned an invalid result.",
+        invocation.outputText,
+        "assistant_text",
+        error,
+      );
     }
   }
 }

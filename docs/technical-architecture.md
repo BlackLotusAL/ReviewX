@@ -115,10 +115,17 @@ interface LogRecord {
   updated_at?: string;
   result?: "pass" | "duplicate_of" | "new" | "publication_unknown" | "updated" | "closed" | "failed";
   error?: string;
+  agent?: "design-reviewer" | "business-reviewer" | "code-reviewer" | "review-judge";
+  agent_output?: string;
+  agent_output_source?: "assistant_text" | "opencode_stdout";
+  agent_output_chars?: number;
+  agent_output_truncated?: boolean;
   duplicate_of_comment_id?: string | null;
   comment_id?: string | null;
 }
 ```
+
+仅当 OpenCode 退出成功、但事件流、Agent JSON 或结果 schema 无法校验时，失败的 `review_run_finished` 才附带 Agent 输出诊断。优先记录最终 assistant text；事件流本身损坏时记录 OpenCode stdout。输出先做凭据脱敏，再限制为 16 KiB；超限时保留首尾并通过 `agent_output_truncated` 标记。成功运行和明确的非零 Agent 退出不记录该正文。
 
 ## 4. CodeHub CLI 与 Git worktree
 

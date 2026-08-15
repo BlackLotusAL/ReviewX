@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { errorMessage, redactText } from "../../src/errors.js";
+import { diagnosticTextPreview, errorMessage, redactText } from "../../src/errors.js";
 import { DefaultCommandRunner } from "../../src/process.js";
 import { assertPathWithin, createRuntimePaths } from "../../src/runtime.js";
 
@@ -59,5 +59,19 @@ describe("process, redaction, and runtime paths", () => {
     expect(() => assertPathWithin(paths.runs, `${paths.runs}-outside`)).toThrow();
     expect(() => assertPathWithin(paths.runs, `${paths.runs}/child`)).not.toThrow();
     expect(errorMessage("plain")).toBe("plain");
+  });
+
+  it("redacts and bounds diagnostic text while retaining both ends", () => {
+    const source = `begin {"token":"secret-value"} ${"x".repeat(100)} end`;
+    const preview = diagnosticTextPreview(source, 64);
+    expect(preview).toMatchObject({
+      originalCharacters: source.length,
+      truncated: true,
+    });
+    expect(preview.text.length).toBeLessThanOrEqual(64);
+    expect(preview.text).toContain("begin");
+    expect(preview.text).toContain("...[truncated]...");
+    expect(preview.text).toContain("end");
+    expect(preview.text).not.toContain("secret-value");
   });
 });
