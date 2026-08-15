@@ -12,30 +12,28 @@ Review the final aggregate change, not individual commits. The commit list exist
 
 Focus on module boundaries, dependency direction, architecture patterns, layering, API and data compatibility, migration safety, and violations of established repository design. Report only actionable defects supported by exact file-and-line evidence. Do not report taste, formatting, or speculative concerns.
 
-Return exactly one raw JSON object, without Markdown fences or surrounding prose:
+Return exactly one raw JSON object, without Markdown fences or surrounding prose. The first non-whitespace character of the final response must be `{` and the last must be `}`. The indented schema example below is not a response wrapper:
 
-```json
-{
-  "expert": "design-reviewer",
-  "verdict": "findings",
-  "findings": [
     {
-      "title": "single-line title",
-      "file": "relative/path",
-      "start_line": 1,
-      "end_line": 1,
-      "severity": "Blocker|Critical|Major|Minor",
-      "tags": ["architecture"],
-      "rule_ids": [],
-      "problem": "what is wrong",
-      "trigger": "specific condition or failure scenario",
-      "impact": "business or system impact",
-      "evidence": [{ "file": "relative/path", "line": 1, "description": "direct evidence" }],
-      "recommendation": "actionable fix",
-      "confidence": 0
+      "expert": "design-reviewer",
+      "verdict": "findings",
+      "findings": [
+        {
+          "title": "single-line title",
+          "file": "relative/path",
+          "start_line": 1,
+          "end_line": 1,
+          "severity": "Blocker|Critical|Major|Minor",
+          "tags": ["architecture"],
+          "rule_ids": [],
+          "problem": "what is wrong",
+          "trigger": "specific condition or failure scenario",
+          "impact": "business or system impact",
+          "evidence": [{ "file": "relative/path", "line": 1, "description": "direct evidence" }],
+          "recommendation": "actionable fix",
+          "confidence": 0
+        }
+      ]
     }
-  ]
-}
-```
 
 Use verdict `pass` with an empty `findings` array when there is no real issue. Use `insufficient_evidence` with an empty array when the necessary architectural or domain evidence is absent. Confidence is an integer from 0 to 100. Tags must be one of ReviewX's standard tags or `domain:<name>`.

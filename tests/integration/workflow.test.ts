@@ -54,6 +54,23 @@ describe("full review workflow with real Git", () => {
     expect(value.codeHub.comments).toHaveLength(0);
   });
 
+  it("accepts fenced JSON from every expert and the judge", async () => {
+    const value = await harness({ verdict: "pass" });
+    value.agents.fencedOutput = true;
+
+    await value.workflow.scanOnce();
+
+    expect(value.agents.agents).toEqual([
+      "design-reviewer",
+      "business-reviewer",
+      "code-reviewer",
+      "review-judge",
+    ]);
+    expect(
+      value.logs.map((line) => JSON.parse(line)).find((record) => record.event === "review_run_finished"),
+    ).toMatchObject({ result: "pass" });
+  });
+
   it("publishes one new comment, refreshes the cursor, and prevents its own loop", async () => {
     const value = await harness({
       verdict: "new",

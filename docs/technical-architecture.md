@@ -193,6 +193,8 @@ opencode run \
   "检视当前 MR 的最终整体净变化，只输出约定 JSON。"
 ```
 
+`--format json` 只保证 OpenCode 事件流为 JSONL。Agent 正文仍要求输出一个裸 JSON 对象；为兼容模型的展示习惯，workflow 可精确解包完整包裹正文的一层无语言或 `json` Markdown 围栏，但围栏外文字、多个对象和无效结构仍判定失败。解析错误必须标明具体 Agent，且不得把原始正文写入日志。
+
 三个专家按设计、业务、代码顺序执行，全部成功后才调用裁判。每个进程最多运行 `--agent-timeout`；超时后 ReviewX 终止进程并判定本次 Review Run 失败。
 
 ### 5.2 只读权限

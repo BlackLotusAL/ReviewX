@@ -89,6 +89,19 @@ describe("OpenCode client", () => {
     await expect(client.runJudge("worktree", "input", 1)).resolves.toEqual({ verdict: "pass" });
   });
 
+  it("attributes malformed output to the responsible agent", async () => {
+    const runner = new AgentRunner(() => ({
+      exitCode: 0,
+      signal: null,
+      stdout: `${JSON.stringify({ type: "text", part: { text: "not-json" } })}\n`,
+      stderr: "",
+    }));
+    const client = new OpenCodeClient(runner, "fake", "./opencode");
+    await expect(
+      client.runExpert("business-reviewer", "worktree", "input", 1),
+    ).rejects.toThrowError(/OpenCode agent business-reviewer returned invalid output/u);
+  });
+
   it.each([
     [{ exitCode: null, signal: "SIGTERM", stdout: "", stderr: "token=secret\n" }, "unknown"],
     [{ exitCode: 4, signal: null, stdout: "", stderr: "" }, "4"],

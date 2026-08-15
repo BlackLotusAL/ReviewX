@@ -135,6 +135,7 @@ export class ScriptedAgentRunner implements CommandRunner {
   readonly inputs: unknown[] = [];
   readonly environments: NodeJS.ProcessEnv[] = [];
   invalidExpert: string | undefined;
+  fencedOutput = false;
 
   constructor(public judgeResult: JudgeResult) {}
 
@@ -162,7 +163,8 @@ export class ScriptedAgentRunner implements CommandRunner {
       agent === "review-judge"
         ? this.judgeResult
         : { expert: agent, verdict: "pass", findings: [] };
-    const json = JSON.stringify(output);
+    const rawJson = JSON.stringify(output);
+    const json = this.fencedOutput ? `\`\`\`json\n${rawJson}\n\`\`\`` : rawJson;
     const split = Math.floor(json.length / 2);
     const stdout = [json.slice(0, split), json.slice(split)]
       .map((text) => JSON.stringify({ type: "text", part: { text } }))

@@ -94,11 +94,19 @@ export function parseOpenCodeText(stdout: string): unknown {
     throw new ReviewXError("AGENT_ERROR", "OpenCode returned no final assistant text.");
   }
   const combined = textParts.join("").trim();
+  let jsonText = combined;
   if (combined.startsWith("```") || combined.endsWith("```")) {
-    throw new ReviewXError("AGENT_ERROR", "Agent output must be raw JSON without Markdown fences.");
+    const fenced = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/iu.exec(combined);
+    if (!fenced) {
+      throw new ReviewXError(
+        "AGENT_ERROR",
+        "Agent output has an invalid Markdown fence wrapper.",
+      );
+    }
+    jsonText = fenced[1]!.trim();
   }
   try {
-    return JSON.parse(combined);
+    return JSON.parse(jsonText);
   } catch (error) {
     throw new ReviewXError("AGENT_ERROR", "Agent final text is not one valid JSON object.", {
       cause: error,
@@ -156,7 +164,16 @@ export class OpenCodeClient {
         `OpenCode agent ${agent} failed with exit code ${result.exitCode ?? "unknown"}${detail ? `: ${detail}` : "."}`,
       );
     }
-    return parseOpenCodeText(result.stdout);
+    try {
+      return parseOpenCodeText(result.stdout);
+    } catch (error) {
+      const detail = redactText(error instanceof Error ? error.message : String(error));
+      throw new ReviewXError(
+        "AGENT_ERROR",
+        `OpenCode agent ${agent} returned invalid output${detail ? `: ${detail}` : "."}`,
+        { cause: error },
+      );
+    }
   }
 
   async runExpert(

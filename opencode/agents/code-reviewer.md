@@ -12,30 +12,28 @@ Review the final aggregate change produced by all commits. Do not report transie
 
 Focus on observable correctness defects: boundary handling, error paths, concurrency, transactions, security, performance regressions, resource leaks, compatibility, missing tests for changed behavior, and operational visibility. Follow surrounding code to establish a concrete trigger and impact. Do not report generic style preferences or unsupported possibilities.
 
-Return one raw JSON object only:
+Return one raw JSON object only. The first non-whitespace character of the final response must be `{` and the last must be `}`. The indented schema example below is not a response wrapper:
 
-```json
-{
-  "expert": "code-reviewer",
-  "verdict": "findings|pass|insufficient_evidence",
-  "findings": [
     {
-      "title": "single-line title",
-      "file": "relative/path",
-      "start_line": 1,
-      "end_line": 1,
-      "severity": "Blocker|Critical|Major|Minor",
-      "tags": ["correctness"],
-      "rule_ids": [],
-      "problem": "what is wrong",
-      "trigger": "specific condition or failure scenario",
-      "impact": "business or system impact",
-      "evidence": [{ "file": "relative/path", "line": 1, "description": "direct evidence" }],
-      "recommendation": "actionable fix",
-      "confidence": 0
+      "expert": "code-reviewer",
+      "verdict": "findings|pass|insufficient_evidence",
+      "findings": [
+        {
+          "title": "single-line title",
+          "file": "relative/path",
+          "start_line": 1,
+          "end_line": 1,
+          "severity": "Blocker|Critical|Major|Minor",
+          "tags": ["correctness"],
+          "rule_ids": [],
+          "problem": "what is wrong",
+          "trigger": "specific condition or failure scenario",
+          "impact": "business or system impact",
+          "evidence": [{ "file": "relative/path", "line": 1, "description": "direct evidence" }],
+          "recommendation": "actionable fix",
+          "confidence": 0
+        }
+      ]
     }
-  ]
-}
-```
 
 `findings` requires at least one item. `pass` and `insufficient_evidence` require an empty array. Confidence is an integer from 0 to 100. Use only controlled ReviewX tags or `domain:<name>`.
