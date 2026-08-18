@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createWorkflowHarness,
@@ -24,6 +24,18 @@ async function missing(target: string) {
   }
 }
 
+function eventName(line: string): string {
+  const match = /^\[[^\]]+\] \[[A-Z]+\] \[([a-z_]+)\]/u.exec(line);
+  if (!match?.[1]) throw new Error(`Invalid log line: ${line}`);
+  return match[1];
+}
+
+function findLog(logs: string[], event: string): string {
+  const line = logs.find((candidate) => eventName(candidate) === event);
+  if (!line) throw new Error(`Missing ${event} log.`);
+  return line;
+}
+
 afterEach(async () => {
   await Promise.all(active.splice(0).map((item) => item.cleanup()));
 });
@@ -47,7 +59,7 @@ describe("full review workflow with real Git", () => {
     expect(value.git.calls.some((call) => call.includes("diff"))).toBe(false);
     expect(await missing(value.paths.worktrees)).toBe(false);
     expect(await missing(`${value.paths.worktrees}/1/7`)).toBe(true);
-    expect(await missing(`${value.paths.runs}/${(JSON.parse(value.logs[1]!) as { run_id: string }).run_id}`)).toBe(true);
+    expect(await readdir(value.paths.runs)).toEqual([]);
 
     await value.workflow.scanOnce();
     expect(value.agents.agents).toHaveLength(4);
@@ -66,12 +78,21 @@ describe("full review workflow with real Git", () => {
       "code-reviewer",
       "review-judge",
     ]);
-    expect(
-      value.logs.map((line) => JSON.parse(line)).find((record) => record.event === "review_run_finished"),
-    ).toMatchObject({ result: "pass" });
-    expect(
-      value.logs.map((line) => JSON.parse(line)).find((record) => record.event === "review_run_finished"),
-    ).not.toHaveProperty("agent_output");
+    for (const agent of value.agents.agents) {
+      expect(
+        value.logs.some(
+          (line) => eventName(line) === "agent_started" && line.includes(`Agent ${agent} started`),
+        ),
+      ).toBe(true);
+      expect(
+        value.logs.some(
+          (line) => eventName(line) === "agent_finished" && line.includes(`Agent ${agent} finished`),
+        ),
+      ).toBe(true);
+    }
+    const terminal = findLog(value.logs, "review_run_finished");
+    expect(terminal).toContain("result pass");
+    expect(terminal).not.toContain("agent_output");
   });
 
   it("persists artifacts while removing analysis fences before every terminal result", async () => {
@@ -80,11 +101,12 @@ describe("full review workflow with real Git", () => {
 
     await value.workflow.scanOnce();
 
-    const records = value.logs.map((line) => JSON.parse(line));
-    const runId = records.find((record) => record.event === "review_run_started").run_id as string;
-    expect(records.find((record) => record.event === "review_run_finished")).toMatchObject({
-      result: "pass",
-    });
+    const runIds = await readdir(value.paths.agentOutputs);
+    expect(runIds).toHaveLength(1);
+    const runId = runIds[0]!;
+    expect(findLog(value.logs, "review_run_finished")).toContain("result pass");
+    expect(value.logs.join("")).toContain(runId.replaceAll("-", "").slice(0, 8));
+    expect(value.logs.join("")).not.toContain(runId);
     const artifactNames = [
       "01-design-reviewer",
       "02-business-reviewer",
@@ -135,6 +157,8 @@ describe("full review workflow with real Git", () => {
       },
     ]);
     expect(value.agents.environments.every((env) => env.CODEHUB_TEST_TOKEN === undefined)).toBe(true);
+    expect(value.logs.join("")).not.toContain("must-not-leak");
+    expect(value.logs.join("")).not.toContain(finalComment());
     const config = JSON.parse(value.agents.environments[0]!.OPENCODE_CONFIG_CONTENT!);
     expect(config.permission["*"]).toBe("deny");
     expect(config.permission.bash["git diff *"]).toBe("allow");
@@ -151,11 +175,9 @@ describe("full review workflow with real Git", () => {
     expect(value.codeHub.comments).toHaveLength(0);
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"])
       .toMatchObject({ last_processed_updated_at: "2026-08-12T00:00:00Z" });
-    const terminal = value.logs.map((line) => JSON.parse(line)).find((x) => x.event === "review_run_finished");
-    expect(terminal).toMatchObject({
-      result: "duplicate_of",
-      duplicate_of_comment_id: "old-comment",
-    });
+    const terminal = findLog(value.logs, "review_run_finished");
+    expect(terminal).toContain("result duplicate_of");
+    expect(terminal).toContain("duplicate comment old-comment");
   });
 
   it.each([
@@ -172,8 +194,9 @@ describe("full review workflow with real Git", () => {
     await value.workflow.scanOnce();
     expect(value.codeHub.comments).toHaveLength(0);
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
-    const terminal = value.logs.map((line) => JSON.parse(line)).find((x) => x.event === "review_run_finished");
-    expect(terminal.result).toBe(result);
+    const terminal = findLog(value.logs, "review_run_finished");
+    expect(terminal).toContain(`[WARN] [review_run_finished]`);
+    expect(terminal).toContain(`result ${result}`);
   });
 
   it.each(["unknown", "missing_id"] as const)(
@@ -192,10 +215,9 @@ describe("full review workflow with real Git", () => {
         publication_status: "unknown",
         comment_id: null,
       });
-      const terminal = value.logs
-        .map((line) => JSON.parse(line))
-        .find((x) => x.event === "review_run_finished");
-      expect(terminal).toMatchObject({ result: "publication_unknown", comment_id: null });
+      const terminal = findLog(value.logs, "review_run_finished");
+      expect(terminal).toContain("[WARN] [review_run_finished]");
+      expect(terminal).toContain("result publication_unknown");
       value.codeHub.listUpdatedAt = "2026-08-12T00:01:00Z";
       await value.workflow.scanOnce();
       expect(value.codeHub.comments).toHaveLength(1);
@@ -209,18 +231,11 @@ describe("full review workflow with real Git", () => {
     await value.workflow.scanOnce();
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
     expect(value.agents.agents).toEqual(["design-reviewer", "business-reviewer"]);
-    expect(
-      value.logs.map((line) => JSON.parse(line)).find((record) =>
-        record.event === "review_run_finished" && record.result === "failed"
-      ),
-    ).toMatchObject({
-      agent: "business-reviewer",
-      agent_output: "not-json\n",
-      agent_output_source: "opencode_stdout",
-      agent_output_chars: 9,
-      agent_output_truncated: false,
-      agent_output_artifact: expect.stringContaining("02-business-reviewer"),
-    });
+    const failedAgent = findLog(value.logs, "agent_failed");
+    expect(failedAgent).toContain("Agent business-reviewer failed");
+    expect(failedAgent).not.toContain("not-json");
+    expect(failedAgent).not.toContain("agent-output");
+    expect(findLog(value.logs, "review_run_finished")).toContain("result failed");
     value.agents.invalidExpert = undefined;
     await value.workflow.scanOnce();
     expect(value.agents.agents.slice(2)).toEqual([
@@ -241,11 +256,27 @@ describe("full review workflow with real Git", () => {
     value.codeHub.listFailure = true;
     await value.workflow.scanOnce();
     expect(value.agents.agents).toEqual([]);
-    expect(value.logs.map((line) => JSON.parse(line).event)).toEqual([
+    expect(value.logs.map(eventName)).toEqual([
       "scan_started",
+      "repository_scan_started",
       "repository_scan_failed",
       "scan_finished",
     ]);
+    expect(findLog(value.logs, "repository_scan_failed")).toContain(
+      "[WARN] [repository_scan_failed]",
+    );
+  });
+
+  it("warns on cleanup failure without changing a successful review result", async () => {
+    const value = await harness({ verdict: "pass" });
+    value.git.cleanupFailure = true;
+
+    await value.workflow.scanOnce();
+
+    expect(findLog(value.logs, "cleanup_failed")).toContain("[WARN] [cleanup_failed]");
+    const terminal = findLog(value.logs, "review_run_finished");
+    expect(terminal).toContain("[INFO] [review_run_finished]");
+    expect(terminal).toContain("result pass");
   });
 
   it("ignores non-open list results and honors a pre-aborted scan", async () => {
@@ -270,8 +301,8 @@ describe("full review workflow with real Git", () => {
     value.codeHub.publication = "failure";
     await value.workflow.scanOnce();
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
-    const terminal = value.logs.map((line) => JSON.parse(line)).find((x) => x.event === "review_run_finished");
-    expect(terminal).toMatchObject({ result: "failed" });
+    expect(findLog(value.logs, "comment_publish_failed")).toContain("forbidden");
+    expect(findLog(value.logs, "review_run_finished")).toContain("result failed");
   });
 
   it("uses the review start timestamp when unknown publication cannot refresh", async () => {
@@ -297,7 +328,7 @@ describe("full review workflow with real Git", () => {
     await value.workflow.scanOnce();
     expect(value.codeHub.comments).toEqual([]);
     expect(value.codeHub.viewCalls).toBe(0);
-    const terminal = value.logs.map((line) => JSON.parse(line)).find((x) => x.event === "review_run_finished");
-    expect(terminal).toMatchObject({ result: "failed" });
+    expect(findLog(value.logs, "comment_publish_failed")).toContain("comment_markdown");
+    expect(findLog(value.logs, "review_run_finished")).toContain("result failed");
   });
 });

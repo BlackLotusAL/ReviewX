@@ -16,7 +16,7 @@ import type {
   SelectedFinding,
 } from "../../src/contracts.js";
 import { GitManager } from "../../src/git.js";
-import { JsonlLogger } from "../../src/logger.js";
+import { TextLogger } from "../../src/logger.js";
 import { OpenCodeClient } from "../../src/opencode.js";
 import { createRuntimePaths } from "../../src/runtime.js";
 import { StateStore } from "../../src/state.js";
@@ -180,6 +180,8 @@ export class ScriptedAgentRunner implements CommandRunner {
 
 export class RecordingGitRunner implements CommandRunner {
   readonly calls: string[][] = [];
+  cleanupFailure = false;
+  private worktreePruneCount = 0;
   private readonly delegate = new DefaultCommandRunner();
 
   async run(
@@ -188,6 +190,12 @@ export class RecordingGitRunner implements CommandRunner {
     options?: CommandOptions,
   ): Promise<CommandResult> {
     this.calls.push([...args]);
+    if (args.includes("worktree") && args.includes("prune")) {
+      this.worktreePruneCount += 1;
+      if (this.cleanupFailure && this.worktreePruneCount > 1) {
+        throw new Error("cleanup failed");
+      }
+    }
     return await this.delegate.run(command, args, options);
   }
 }
@@ -287,7 +295,7 @@ export async function createWorkflowHarness(judgeResult: JudgeResult): Promise<W
   const gitManager = new GitManager(paths, gitRunner, "git", 30_000);
   const openCode = new OpenCodeClient(agentRunner, "opencode", path.resolve("opencode"));
   const logs: string[] = [];
-  const logger = new JsonlLogger(paths.log, (line) => logs.push(line));
+  const logger = new TextLogger(paths.log, (line) => logs.push(line));
   const workflow = new ReviewWorkflow(
     paths,
     state,

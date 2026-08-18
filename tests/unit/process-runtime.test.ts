@@ -54,7 +54,14 @@ describe("process, redaction, and runtime paths", () => {
       "https://***@example.test token=*** private-token=***",
     );
     const paths = createRuntimePaths("runtime/custom.json");
-    expect(paths.log.endsWith("runtime\\reviewx.jsonl") || paths.log.endsWith("runtime/reviewx.jsonl")).toBe(true);
+    expect(paths.log.endsWith("runtime\\reviewx.log") || paths.log.endsWith("runtime/reviewx.log")).toBe(true);
+    expect(createRuntimePaths("runtime/custom.json", "runtime/events.LOG").log).toMatch(/events\.LOG$/u);
+    expect(() => createRuntimePaths("runtime/custom.json", "runtime/events.jsonl")).toThrowError(
+      /\.log extension/u,
+    );
+    expect(() => createRuntimePaths("runtime/custom.json", "runtime/events")).toThrowError(
+      /\.log extension/u,
+    );
     expect(
       paths.agentOutputs.endsWith("runtime\\agent-output") ||
         paths.agentOutputs.endsWith("runtime/agent-output"),

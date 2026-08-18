@@ -1,4 +1,5 @@
 import path from "node:path";
+import { ReviewXError } from "./errors.js";
 
 export interface RuntimePaths {
   root: string;
@@ -15,12 +16,18 @@ export interface RuntimePaths {
 export function createRuntimePaths(statePath: string, logPath?: string): RuntimePaths {
   const state = path.resolve(statePath);
   const root = path.dirname(state);
+  const log = path.resolve(logPath ?? path.join(root, "reviewx.log"));
+  if (path.extname(log).toLowerCase() !== ".log") {
+    throw new ReviewXError("INVALID_ARGUMENT", "Log path must use the .log extension.", {
+      exitCode: 2,
+    });
+  }
   return {
     root,
     state,
     stateLock: path.join(root, "state.lock"),
     runLock: path.join(root, "reviewx.run.lock"),
-    log: path.resolve(logPath ?? path.join(root, "reviewx.jsonl")),
+    log,
     repos: path.join(root, "repos"),
     worktrees: path.join(root, "worktrees"),
     runs: path.join(root, "runs"),

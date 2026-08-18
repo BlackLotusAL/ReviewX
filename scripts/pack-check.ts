@@ -91,7 +91,7 @@ process.exit(2);
     await access(path.join(installRoot, "node_modules", "reviewx", "opencode", "agents", `${agent}.md`));
   }
 
-  const logPath = path.join(temp, "packed-runtime", "reviewx.jsonl");
+  const logPath = path.join(temp, "packed-runtime", "reviewx.log");
   const installedCli = path.join(installRoot, "node_modules", "reviewx", "dist", "cli.js");
   const child = crossSpawn(
     process.execPath,
@@ -116,18 +116,15 @@ process.exit(2);
   );
   const stderr: Buffer[] = [];
   child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
-  await waitForText(logPath, /"scan_finished"/u);
+  await waitForText(logPath, /\[INFO\] \[scan_finished\]/u);
   const closed = new Promise<void>((resolve, reject) => {
     child.once("error", reject);
     child.once("close", () => resolve());
   });
   child.kill("SIGTERM");
   await closed;
-  const logRecords = (await readFile(logPath, "utf8"))
-    .trim()
-    .split(/\r?\n/u)
-    .map((line) => JSON.parse(line) as { event?: string });
-  if (!logRecords.some((record) => record.event === "scan_started")) {
+  const logLines = (await readFile(logPath, "utf8")).trim().split(/\r?\n/u);
+  if (!logLines.some((line) => line.includes("[INFO] [scan_started]"))) {
     throw new Error(`Packed CLI did not start a scan: ${Buffer.concat(stderr).toString("utf8")}`);
   }
   process.stdout.write("Package install check passed.\n");

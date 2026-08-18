@@ -252,32 +252,6 @@ export type ReviewResult = z.infer<typeof reviewResultSchema>;
 
 export type AgentOutputSource = "assistant_text" | "opencode_stdout";
 
-export interface LogRecord {
-  time: string;
-  level: "info" | "error";
-  event:
-    | "scan_started"
-    | "repository_scan_failed"
-    | "review_run_started"
-    | "review_run_finished"
-    | "scan_finished"
-    | "runtime_error";
-  run_id?: string;
-  repo_id?: string;
-  mr_iid?: string;
-  updated_at?: string;
-  result?: ReviewResult;
-  error?: string;
-  agent?: ExpertName | "review-judge";
-  agent_output?: string;
-  agent_output_source?: AgentOutputSource;
-  agent_output_chars?: number;
-  agent_output_truncated?: boolean;
-  agent_output_artifact?: string;
-  duplicate_of_comment_id?: string | null;
-  comment_id?: string | null;
-}
-
 export const severityToCodeHub = {
   Blocker: "fatal",
   Critical: "major",

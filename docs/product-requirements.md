@@ -86,8 +86,9 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 | PR-OUT-001 | 每次 Review Run 最多向对应 MR 发布一条 `new` 问题的普通评论，不提供草稿或 inline 评论模式 |
 | PR-OUT-002 | 不同更新发现的不同问题允许分别评论；`PASS`、`duplicate_of`、已更新、已关闭或失败的运行不得发布评论 |
 | PR-OUT-003 | 评论必须包含待修改文件和行号或明确代码范围 |
-| PR-LOG-001 | 每个 Review Run 使用稳定 `run_id` 写入可机器解析的日志文件 |
-| PR-LOG-002 | 日志记录仓库 ID、MR ID、`updated_at`、结果或错误、`new`/`duplicate_of` 判断和评论 ID |
+| PR-LOG-001 | 每个 Review Run 使用稳定 UUID；文本日志使用其前 8 位短引用，并以 `[ISO-8601 UTC 时间] [LEVEL] [event]` 作为固定前缀 |
+| PR-LOG-002 | 日志详情记录仓库 ID、MR ID、`updated_at`、结果或错误、`new`/`duplicate_of` 判断和评论 ID |
+| PR-LOG-003 | 日志记录扫描、worktree、commit、每个 Agent、评论发布、状态保存和清理的关键步骤、结果与耗时，不记录 Agent 原始输出或评论正文 |
 
 ## 5. MR 评论规范
 

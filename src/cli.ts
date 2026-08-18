@@ -10,7 +10,7 @@ const usage = `ReviewX ${VERSION}
 
 Usage:
   reviewx repo add <repo-id> [--state runtime/state.json]
-  reviewx run [--interval 10m] [--agent-timeout 20m] [--state runtime/state.json] [--log runtime/reviewx.jsonl]
+  reviewx run [--interval 10m] [--agent-timeout 20m] [--state runtime/state.json] [--log runtime/reviewx.log]
   reviewx --help
   reviewx --version
 `;

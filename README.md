@@ -35,10 +35,10 @@ reviewx repo add 123456 --state /srv/reviewx/state.json
 ```bash
 reviewx run
 reviewx run --interval 10m --agent-timeout 20m
-reviewx run --state /srv/reviewx/state.json --log /var/log/reviewx.jsonl
+reviewx run --state /srv/reviewx/state.json --log /var/log/reviewx.log
 ```
 
-时长只接受正整数加 `ms`、`s` 或 `m`。自定义 `--state` 时，其父目录即 runtime 根目录；未指定 `--log` 时，日志也写入该目录。
+时长只接受正整数加 `ms`、`s` 或 `m`。自定义 `--state` 时，其父目录即 runtime 根目录；未指定 `--log` 时，日志也写入该目录。自定义日志路径必须使用 `.log` 后缀（大小写不敏感）。
 
 ## Runtime
 
@@ -47,7 +47,7 @@ runtime/
 ├── state.json
 ├── state.lock
 ├── reviewx.run.lock
-├── reviewx.jsonl
+├── reviewx.log
 ├── repos/<repo-id>/
 ├── worktrees/<repo-id>/<mr-iid>/
 ├── runs/<run-id>/
@@ -58,7 +58,13 @@ runtime/
 
 每次 Agent 调用的原始 stdout/stderr、完整正文、截取候选、处理文本、Schema 结果和元数据都会永久保存在 `agent-output/`。其中可能包含未脱敏的源码和模型分析；请限制目录权限并自行清理历史产物。
 
-日志同时写入 stdout 和 JSONL 文件。每个 Review Run 使用稳定 `run_id`，终态 `result` 为 `pass`、`duplicate_of`、`new`、`publication_unknown`、`updated`、`closed` 或 `failed`。
+日志同时写入 stdout 和文本 `.log` 文件，每行使用 `[ISO-8601 UTC 时间] [LEVEL] [event] 英文详情`。每个 Review Run 内部使用完整 UUID，日志只显示去掉连字符后的前 8 位短引用；终态 `result` 为 `pass`、`duplicate_of`、`new`、`publication_unknown`、`updated`、`closed` 或 `failed`。
+
+```text
+[2026-08-15T10:20:30.123Z] [INFO] [agent_started] Agent design-reviewer started for review run 550e8400 on repository 123, MR 45.
+```
+
+运行日志记录扫描、worktree、commit、Agent、评论发布、状态保存和清理等关键阶段及耗时，但不记录 Agent 原始输出或评论正文。完整 Agent 产物只保存在访问受限的 `agent-output/`。
 
 ## 可靠性与故障恢复
 

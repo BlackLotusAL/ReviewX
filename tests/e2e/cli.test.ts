@@ -110,9 +110,21 @@ describe("built CLI", () => {
   it("runs immediately, rejects a second instance, and exits cleanly on SIGTERM", async () => {
     const runtime = path.join(root, "run");
     const statePath = path.join(runtime, "state.json");
-    const logPath = path.join(runtime, "events.jsonl");
+    const logPath = path.join(runtime, "events.log");
     await mkdir(runtime, { recursive: true });
     await writeFile(statePath, '{"repositories":{}}\n', "utf8");
+    const invalidLog = await command([
+      "run",
+      "--interval",
+      "5s",
+      "--state",
+      statePath,
+      "--log",
+      path.join(runtime, "events.jsonl"),
+    ]);
+    expect(invalidLog.exitCode).toBe(2);
+    expect(JSON.parse(invalidLog.stderr)).toMatchObject({ code: "INVALID_ARGUMENT" });
+
     const child = spawn(
       process.execPath,
       [cli, "run", "--interval", "5s", "--state", statePath, "--log", logPath],
@@ -125,7 +137,7 @@ describe("built CLI", () => {
     );
     const stdout: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    await waitForFileText(logPath, /"scan_finished"/u);
+    await waitForFileText(logPath, /\[INFO\] \[scan_finished\]/u);
     const second = await command([
       "run",
       "--interval",
@@ -133,7 +145,7 @@ describe("built CLI", () => {
       "--state",
       statePath,
       "--log",
-      path.join(runtime, "second.jsonl"),
+      path.join(runtime, "second.log"),
     ]);
     expect(second.exitCode).toBe(1);
     expect(JSON.parse(second.stderr)).toMatchObject({ code: "LOCK_ERROR" });
@@ -157,7 +169,7 @@ describe("built CLI", () => {
         "--state",
         statePath,
         "--log",
-        path.join(runtime, "recovery.jsonl"),
+        path.join(runtime, "recovery.log"),
       ]);
       expect(recovered.exitCode).toBe(1);
     }

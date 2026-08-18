@@ -4,7 +4,7 @@ import path from "node:path";
 import { CodeHubClient } from "../src/codehub.js";
 import type { Commit, MergeRequest, Repository } from "../src/contracts.js";
 import { GitManager } from "../src/git.js";
-import { JsonlLogger } from "../src/logger.js";
+import { TextLogger } from "../src/logger.js";
 import { OpenCodeClient } from "../src/opencode.js";
 import {
   DefaultCommandRunner,
@@ -161,7 +161,7 @@ async function main(): Promise<void> {
   };
   const state = new StateStore(paths.state, paths.stateLock);
   await state.addRepository(repository.repo_id);
-  const logger = new JsonlLogger(paths.log);
+  const logger = new TextLogger(paths.log);
   const codeHub = new CodeHubClient(
     new SimulationCodeHubRunner(repository, mergeRequest, [commit]),
     "simulation-codehub",
@@ -192,19 +192,21 @@ async function main(): Promise<void> {
 
   await workflow.scanOnce();
   await logger.flush();
-  const records = (await readFile(paths.log, "utf8"))
-    .trim()
-    .split(/\r?\n/u)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  const started = records.find((record) => record.event === "review_run_started");
-  const finished = records.find((record) => record.event === "review_run_finished");
-  if (!started || typeof started.run_id !== "string" || !finished) {
+  const logLines = (await readFile(paths.log, "utf8")).trim().split(/\r?\n/u);
+  const started = logLines.find((line) => line.includes("[review_run_started]"));
+  const finished = logLines.find((line) => line.includes("[review_run_finished]"));
+  if (!started || !finished) {
     throw new Error("Simulation did not produce a complete review run.");
   }
-  if (finished.result === "failed") {
-    throw new Error(`Simulation review failed: ${String(finished.error ?? "unknown error")}`);
+  if (finished.includes("result failed")) {
+    throw new Error(`Simulation review failed: ${finished}`);
   }
-  const artifactRoot = path.join(paths.agentOutputs, started.run_id);
+  const runIds = await readdir(paths.agentOutputs);
+  if (runIds.length !== 1 || runIds[0] === undefined) {
+    throw new Error(`Expected one review artifact root, found ${runIds.length}.`);
+  }
+  const runId = runIds[0];
+  const artifactRoot = path.join(paths.agentOutputs, runId);
   const artifactDirectories = await readdir(artifactRoot);
   if (artifactDirectories.length !== 4) {
     throw new Error(`Expected four Agent artifact directories, found ${artifactDirectories.length}.`);
@@ -219,8 +221,8 @@ async function main(): Promise<void> {
       {
         simulation_dir: simulationRoot,
         model,
-        run_id: started.run_id,
-        result: finished.result,
+        run_id: runId,
+        result: finished.match(/result ([a-z_]+)/u)?.[1] ?? "unknown",
         agent_output_dir: artifactRoot,
       },
       null,

@@ -54,21 +54,21 @@ describe("application services", () => {
   it("runs immediate empty scans until aborted and releases its lock", async () => {
     const temp = await root();
     const state = path.join(temp, "state.json");
-    const log = path.join(temp, "log.jsonl");
+    const log = path.join(temp, "log.log");
     await writeFile(state, '{"repositories":{}}\n', "utf8");
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 35);
     await runService({ statePath: state, logPath: log, intervalMs: 10, agentTimeoutMs: 100, signal: controller.signal });
     clearTimeout(timer);
-    expect(await readFile(log, "utf8")).toContain('"scan_finished"');
+    expect(await readFile(log, "utf8")).toContain("[INFO] [scan_finished]");
     await expect(readFile(path.join(temp, "reviewx.run.lock"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("logs fatal state errors and still releases the run lock", async () => {
     const temp = await root();
     const state = path.join(temp, "state.json");
-    const log = path.join(temp, "log.jsonl");
+    const log = path.join(temp, "log.log");
     await writeFile(state, "broken", "utf8");
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     await expect(
@@ -80,7 +80,7 @@ describe("application services", () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toMatchObject({ code: "STATE_ERROR" });
-    expect(await readFile(log, "utf8")).toContain('"runtime_error"');
+    expect(await readFile(log, "utf8")).toContain("[ERROR] [runtime_error]");
     await expect(readFile(path.join(temp, "reviewx.run.lock"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 

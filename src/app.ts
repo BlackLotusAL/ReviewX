@@ -1,10 +1,10 @@
 import path from "node:path";
 import { CodeHubClient } from "./codehub.js";
 import { normalizePositiveId } from "./contracts.js";
-import { ReviewXError } from "./errors.js";
+import { errorMessage, ReviewXError } from "./errors.js";
 import { GitManager } from "./git.js";
 import { FileLock } from "./lock.js";
-import { JsonlLogger } from "./logger.js";
+import { TextLogger } from "./logger.js";
 import { OpenCodeClient } from "./opencode.js";
 import { createRuntimePaths } from "./runtime.js";
 import { StateStore } from "./state.js";
@@ -60,7 +60,7 @@ export async function runService(options: {
 }): Promise<void> {
   const paths = createRuntimePaths(options.statePath, options.logPath);
   const runLock = await FileLock.acquire(paths.runLock, { failFast: true });
-  const logger = new JsonlLogger(paths.log);
+  const logger = new TextLogger(paths.log);
   const state = new StateStore(paths.state, paths.stateLock);
   const codeHub = new CodeHubClient();
   const git = new GitManager(paths);
@@ -82,7 +82,7 @@ export async function runService(options: {
         await logger.write({
           level: "error",
           event: "runtime_error",
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage(error),
         });
         throw error;
       }
