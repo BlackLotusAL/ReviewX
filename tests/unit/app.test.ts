@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { addRepository, defaultStatePath, runService } from "../../src/app.js";
+import { addRepository, defaultStatePath, runScanLoop, runService } from "../../src/app.js";
 import { CodeHubClient } from "../../src/codehub.js";
 import type { CommandResult, CommandRunner } from "../../src/process.js";
 
@@ -82,6 +82,35 @@ describe("application services", () => {
     ).rejects.toMatchObject({ code: "STATE_ERROR" });
     expect(await readFile(log, "utf8")).toContain("[ERROR] [runtime_error]");
     await expect(readFile(path.join(temp, "reviewx.run.lock"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("stops after failures occur for the configured number of consecutive scans", async () => {
+    const scanOnce = vi.fn(async () => ({
+      repositoryCount: 1,
+      pendingReviewCount: 1,
+      completedReviewCount: 0,
+      failureCount: 1,
+    }));
+    const write = vi.fn(async () => undefined);
+
+    await expect(
+      runScanLoop({
+        scanner: { scanOnce },
+        logger: { write },
+        intervalMs: 1,
+        maxConsecutiveFailures: 3,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({ code: "REPEATED_FAILURES" });
+
+    expect(scanOnce).toHaveBeenCalledTimes(3);
+    expect(write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "error",
+        event: "runtime_error",
+        error: expect.stringContaining("3 consecutive scans"),
+      }),
+    );
   });
 
   it("derives the default runtime state from cwd", () => {

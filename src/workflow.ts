@@ -32,6 +32,13 @@ interface TerminalRecord {
   comment_id?: string | null;
 }
 
+export interface ScanSummary {
+  repositoryCount: number;
+  pendingReviewCount: number;
+  completedReviewCount: number;
+  failureCount: number;
+}
+
 function elapsedSince(startedAt: number): number {
   return Math.max(0, Date.now() - startedAt);
 }
@@ -42,6 +49,25 @@ function terminalLevel(result: ReviewResult): LogLevel {
     return "warn";
   }
   return "info";
+}
+
+function hasNewerUpdate(cursor: string | undefined, updatedAt: string): boolean {
+  if (cursor === undefined) return true;
+  const cursorTime = Date.parse(cursor);
+  const updatedTime = Date.parse(updatedAt);
+  if (Number.isFinite(cursorTime) && Number.isFinite(updatedTime)) {
+    return updatedTime > cursorTime;
+  }
+  return updatedAt !== cursor;
+}
+
+function isSameUpdate(left: string, right: string): boolean {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) {
+    return leftTime === rightTime;
+  }
+  return left === right;
 }
 
 function historyFromJudge(
@@ -71,7 +97,7 @@ export class ReviewWorkflow {
     private readonly agentTimeoutMs: number,
   ) {}
 
-  async scanOnce(signal?: AbortSignal): Promise<void> {
+  async scanOnce(signal?: AbortSignal): Promise<ScanSummary> {
     const scanStartedAt = Date.now();
     await this.logger.write({ level: "info", event: "scan_started" });
     const snapshot = await this.state.read();
@@ -110,11 +136,11 @@ export class ReviewWorkflow {
         const latest = await this.state.read();
         const cursor = latest.repositories[repoId]?.merge_requests[mr.iid]
           ?.last_processed_updated_at;
-        if (cursor === mr.updated_at) continue;
+        if (!hasNewerUpdate(cursor, mr.updated_at)) continue;
         repositoryPendingCount += 1;
         pendingReviewCount += 1;
-        const result = await this.review(repoId, mr, signal);
-        if (result === "failed") {
+        const terminal = await this.review(repoId, mr, signal);
+        if (terminal.result === "failed") {
           failureCount += 1;
         } else {
           completedReviewCount += 1;
@@ -140,6 +166,12 @@ export class ReviewWorkflow {
       failure_count: failureCount,
       duration_ms: elapsedSince(scanStartedAt),
     });
+    return {
+      repositoryCount: repositoryIds.length,
+      pendingReviewCount,
+      completedReviewCount,
+      failureCount,
+    };
   }
 
   private async saveCursor(
@@ -220,6 +252,15 @@ export class ReviewWorkflow {
     });
   }
 
+  private async saveReviewReport(runId: string, markdown: string): Promise<void> {
+    const reportDirectory = path.join(this.paths.agentOutputs, runId);
+    const reportPath = path.join(reportDirectory, "review.md");
+    assertPathWithin(this.paths.agentOutputs, reportDirectory);
+    assertPathWithin(this.paths.agentOutputs, reportPath);
+    await mkdir(reportDirectory, { recursive: true });
+    await writeFile(reportPath, markdown, "utf8");
+  }
+
   private async applyJudge(
     runId: string,
     repoId: string,
@@ -277,7 +318,7 @@ export class ReviewWorkflow {
       });
       return { result: "closed" };
     }
-    if (latest.updated_at !== mr.updated_at) {
+    if (!isSameUpdate(latest.updated_at, mr.updated_at)) {
       await this.logger.write({
         level: "warn",
         event: "comment_publish_skipped",
@@ -289,6 +330,8 @@ export class ReviewWorkflow {
       });
       return { result: "updated" };
     }
+
+    await this.saveReviewReport(runId, judge.comment_markdown);
 
     let published: CommentResult;
     try {
@@ -347,14 +390,20 @@ export class ReviewWorkflow {
       comment_id: published.comment_id,
       duration_ms: elapsedSince(publishStartedAt),
     });
+    let updatedAt = mr.updated_at;
+    try {
+      const refreshed = await this.codeHub.mrView(repoId, mr.iid, signal);
+      updatedAt = refreshed.updated_at;
+    } catch {
+      // The confirmed comment must still mark this MR version as processed.
+    }
     await this.appendHistory(
       runId,
       repoId,
       mr.iid,
       historyFromJudge(judge, "confirmed", published.comment_id),
+      updatedAt,
     );
-    const refreshed = await this.codeHub.mrView(repoId, mr.iid, signal);
-    await this.saveCursor(runId, repoId, mr.iid, refreshed.updated_at);
     return { result: "new", comment_id: published.comment_id };
   }
 
@@ -468,7 +517,11 @@ export class ReviewWorkflow {
     });
   }
 
-  private async review(repoId: string, mr: MergeRequest, signal?: AbortSignal): Promise<ReviewResult> {
+  private async review(
+    repoId: string,
+    mr: MergeRequest,
+    signal?: AbortSignal,
+  ): Promise<TerminalRecord> {
     const runStartedAt = Date.now();
     const runId = randomUUID();
     const runDir = path.join(this.paths.runs, runId);
@@ -665,6 +718,6 @@ export class ReviewWorkflow {
       duration_ms: elapsedSince(runStartedAt),
       ...finalRecord,
     });
-    return finalRecord.result;
+    return finalRecord;
   }
 }

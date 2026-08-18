@@ -124,6 +124,17 @@ describe("built CLI", () => {
     ]);
     expect(invalidLog.exitCode).toBe(2);
     expect(JSON.parse(invalidLog.stderr)).toMatchObject({ code: "INVALID_ARGUMENT" });
+    const invalidFailureLimit = await command([
+      "run",
+      "--max-consecutive-failures",
+      "0",
+      "--state",
+      statePath,
+      "--log",
+      path.join(runtime, "invalid-limit.log"),
+    ]);
+    expect(invalidFailureLimit.exitCode).toBe(2);
+    expect(JSON.parse(invalidFailureLimit.stderr)).toMatchObject({ code: "INVALID_ARGUMENT" });
 
     const child = spawn(
       process.execPath,

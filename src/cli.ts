@@ -1,6 +1,11 @@
 import { parseArgs } from "node:util";
 import path from "node:path";
-import { addRepository, defaultStatePath, runService } from "./app.js";
+import {
+  addRepository,
+  DEFAULT_MAX_CONSECUTIVE_FAILURES,
+  defaultStatePath,
+  runService,
+} from "./app.js";
 import { parseDuration } from "./duration.js";
 import { errorMessage, ReviewXError } from "./errors.js";
 
@@ -10,7 +15,7 @@ const usage = `ReviewX ${VERSION}
 
 Usage:
   reviewx repo add <repo-id> [--state runtime/state.json]
-  reviewx run [--interval 10m] [--agent-timeout 20m] [--state runtime/state.json] [--log runtime/reviewx.log]
+  reviewx run [--interval 10m] [--agent-timeout 20m] [--max-consecutive-failures 3] [--state runtime/state.json] [--log runtime/reviewx.log]
   reviewx --help
   reviewx --version
 `;
@@ -27,6 +32,13 @@ function optionString(value: unknown, optionName: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") invalid(`${optionName} requires one string value.`);
   return value;
+}
+
+function positiveInteger(value: string, optionName: string): number {
+  if (!/^[1-9]\d*$/u.test(value)) invalid(`${optionName} requires a positive integer.`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) invalid(`${optionName} is too large.`);
+  return parsed;
 }
 
 async function repoCommand(argv: string[]): Promise<number> {
@@ -59,6 +71,10 @@ async function runCommand(argv: string[]): Promise<number> {
       options: {
         interval: { type: "string", default: "10m" },
         "agent-timeout": { type: "string", default: "20m" },
+        "max-consecutive-failures": {
+          type: "string",
+          default: String(DEFAULT_MAX_CONSECUTIVE_FAILURES),
+        },
         state: { type: "string" },
         log: { type: "string" },
       },
@@ -81,6 +97,11 @@ async function runCommand(argv: string[]): Promise<number> {
     optionString(parsed.values["agent-timeout"], "--agent-timeout") ?? "20m",
     "--agent-timeout",
   );
+  const maxConsecutiveFailures = positiveInteger(
+    optionString(parsed.values["max-consecutive-failures"], "--max-consecutive-failures") ??
+      String(DEFAULT_MAX_CONSECUTIVE_FAILURES),
+    "--max-consecutive-failures",
+  );
   const controller = new AbortController();
   let interrupted = false;
   const interrupt = () => {
@@ -95,6 +116,7 @@ async function runCommand(argv: string[]): Promise<number> {
       ...(logPath === undefined ? {} : { logPath }),
       intervalMs,
       agentTimeoutMs,
+      maxConsecutiveFailures,
       signal: controller.signal,
     });
   } finally {

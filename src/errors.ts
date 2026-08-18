@@ -9,7 +9,8 @@ export type ReviewXErrorCode =
   | "CODEHUB_ERROR"
   | "GIT_ERROR"
   | "AGENT_ERROR"
-  | "LOG_ERROR";
+  | "LOG_ERROR"
+  | "REPEATED_FAILURES";
 
 export class ReviewXError extends Error {
   readonly code: ReviewXErrorCode;

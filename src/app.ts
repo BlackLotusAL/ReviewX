@@ -8,7 +8,17 @@ import { TextLogger } from "./logger.js";
 import { OpenCodeClient } from "./opencode.js";
 import { createRuntimePaths } from "./runtime.js";
 import { StateStore } from "./state.js";
-import { ReviewWorkflow } from "./workflow.js";
+import { ReviewWorkflow, type ScanSummary } from "./workflow.js";
+
+export const DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
+
+interface Scanner {
+  scanOnce(signal?: AbortSignal): Promise<ScanSummary>;
+}
+
+interface RuntimeLogger {
+  write(record: { level: "error"; event: "runtime_error"; error: string }): Promise<void>;
+}
 
 export async function addRepository(
   rawRepoId: string,
@@ -51,11 +61,48 @@ function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void
   });
 }
 
+export async function runScanLoop(options: {
+  scanner: Scanner;
+  logger: RuntimeLogger;
+  intervalMs: number;
+  maxConsecutiveFailures: number;
+  signal: AbortSignal;
+}): Promise<void> {
+  let consecutiveFailureCount = 0;
+  while (!options.signal.aborted) {
+    try {
+      const summary = await options.scanner.scanOnce(options.signal);
+      if (summary.failureCount === 0) {
+        consecutiveFailureCount = 0;
+      } else {
+        consecutiveFailureCount += 1;
+        if (consecutiveFailureCount >= options.maxConsecutiveFailures) {
+          throw new ReviewXError(
+            "REPEATED_FAILURES",
+            `Errors occurred in ${consecutiveFailureCount} consecutive scans; stopping ReviewX.`,
+          );
+        }
+      }
+    } catch (error) {
+      await options.logger.write({
+        level: "error",
+        event: "runtime_error",
+        error: errorMessage(error),
+      });
+      throw error;
+    }
+    if (!options.signal.aborted) {
+      await abortableDelay(options.intervalMs, options.signal);
+    }
+  }
+}
+
 export async function runService(options: {
   statePath: string;
   logPath?: string;
   intervalMs: number;
   agentTimeoutMs: number;
+  maxConsecutiveFailures?: number;
   signal: AbortSignal;
 }): Promise<void> {
   const paths = createRuntimePaths(options.statePath, options.logPath);
@@ -75,21 +122,14 @@ export async function runService(options: {
     options.agentTimeoutMs,
   );
   try {
-    while (!options.signal.aborted) {
-      try {
-        await workflow.scanOnce(options.signal);
-      } catch (error) {
-        await logger.write({
-          level: "error",
-          event: "runtime_error",
-          error: errorMessage(error),
-        });
-        throw error;
-      }
-      if (!options.signal.aborted) {
-        await abortableDelay(options.intervalMs, options.signal);
-      }
-    }
+    await runScanLoop({
+      scanner: workflow,
+      logger,
+      intervalMs: options.intervalMs,
+      maxConsecutiveFailures:
+        options.maxConsecutiveFailures ?? DEFAULT_MAX_CONSECUTIVE_FAILURES,
+      signal: options.signal,
+    });
   } finally {
     await logger.flush();
     await runLock.release();

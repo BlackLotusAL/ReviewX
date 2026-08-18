@@ -14,7 +14,7 @@ ReviewX 是一个可私有化部署、由命令接入的 MR 自动检视系统�
 ### 1.1 核心目标
 
 1. 通过命令添加需要持续跟踪的 CodeHub 仓库 ID。
-2. 自动检视首次发现、此前失败或 `updated_at` 发生变化的 Open MR。
+2. 自动检视首次发现、此前失败或 `updated_at` 严格变新的 Open MR。
 3. 由设计、业务和代码专家独立检视 MR 的最终整体净变化。
 4. 由裁判 Agent 选择一个最高价值问题或返回 `PASS`，并避免重复发布历史问题。
 5. 每次 MR 更新最多发布一条新问题评论；不同更新发现的不同问题可以分别评论。
@@ -37,7 +37,7 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 ## 3. 核心流程
 
 1. 管理员通过命令添加仓库 ID；workflow 验证仓库存在性和读取权限，拒绝无效或重复 ID，并持久化有效记录。
-2. Workflow 定时查询已登记仓库的 Open MR，仅为首次发现、此前失败或 `updated_at` 已变化的 MR 创建 Review Run。
+2. Workflow 定时查询已登记仓库的 Open MR，仅为首次发现、此前失败或 `updated_at` 严格变新的 MR 创建 Review Run；等价时间格式或暂时返回的旧时间不触发重复检视。
 3. Workflow clone 或 fetch 仓库，创建隔离工作区并切换到 MR source 分支，然后读取 source/target 分支信息和 commit 列表。
 4. 设计、业务和代码专家直接读取工作区，基于 MR 的最终整体净变化独立输出结构化候选问题。
 5. 裁判 Agent 结合候选问题、工作区和该 MR 的历史 ReviewX 问题，输出 `PASS`、`duplicate_of` 或一个 `new` 问题。
@@ -59,13 +59,14 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 
 | 编号 | 需求 |
 | --- | --- |
-| PR-WF-001 | 仅为首次发现、此前失败或 `updated_at` 已变化的 Open MR 创建 Review Run |
+| PR-WF-001 | 仅为首次发现、此前失败或 `updated_at` 严格变新的 Open MR 创建 Review Run；等价或暂时回退的时间不重复检视 |
 | PR-WF-002 | 检视前完成仓库 clone/fetch、隔离工作区创建、source 分支切换和 commit 列表读取 |
 | PR-WF-003 | Workflow 不得预先整理或摘要 diff，也不得按单个 commit 拆分检视任务 |
 | PR-WF-004 | Workflow 调用三个专家和裁判 Agent，并校验其结构化输出；语义判断由 Agent 完成 |
 | PR-WF-005 | 同一个 MR 同时最多运行一个 Review Run |
 | PR-WF-006 | 发布前确认 MR 仍为 Open 且 `updated_at` 未变化；发布后刷新并保存最新 `updated_at` |
 | PR-WF-007 | 失败或中断的运行不更新 `last_processed_updated_at`，后续扫描从头重新检视 |
+| PR-WF-008 | 扫描连续存在错误并达到配置阈值时终止服务，默认阈值为 3 轮；无错误的一轮重置计数 |
 
 ### 4.3 Agent 检视与裁判
 
@@ -86,6 +87,7 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 | PR-OUT-001 | 每次 Review Run 最多向对应 MR 发布一条 `new` 问题的普通评论，不提供草稿或 inline 评论模式 |
 | PR-OUT-002 | 不同更新发现的不同问题允许分别评论；`PASS`、`duplicate_of`、已更新、已关闭或失败的运行不得发布评论 |
 | PR-OUT-003 | 评论必须包含待修改文件和行号或明确代码范围 |
+| PR-OUT-004 | `new` 问题发送给 CodeHub 的 Markdown 原文保存到对应 Agent 结果目录的 `review.md` |
 | PR-LOG-001 | 每个 Review Run 使用稳定 UUID；文本日志使用其前 8 位短引用，并以 `[ISO-8601 UTC 时间] [LEVEL] [event]` 作为固定前缀 |
 | PR-LOG-002 | 日志详情记录仓库 ID、MR ID、`updated_at`、结果或错误、`new`/`duplicate_of` 判断和评论 ID |
 | PR-LOG-003 | 日志记录扫描、worktree、commit、每个 Agent、评论发布、状态保存和清理的关键步骤、结果与耗时，不记录 Agent 原始输出或评论正文 |
@@ -186,5 +188,6 @@ observability
 | Workflow 准备环境 | 完成 clone/fetch、工作区创建、source 分支切换和 commit 列表读取，不生成 diff 摘要或逐 commit 任务 |
 | 检视多 commit MR | Agent 基于最终整体净变化检视，前序 commit 中已被后续修复的问题不输出 |
 | 裁判与评论 | `new` 问题发布一条包含全部必填字段和代码示例的普通 MR 评论；`PASS` 和 `duplicate_of` 不评论 |
+| 本地意见文档 | `new` 问题的 CodeHub 评论 Markdown 原文保存到对应 Agent 结果目录的 `review.md` |
 | MR 在检视期间变化 | MR 更新或关闭时不发布当前结果；不同更新发现的不同新问题允许分别评论 |
-| 失败、重启或自身评论 | 失败和中断任务在后续扫描从头执行；相同问题不重复发布；ReviewX 评论造成的 `updated_at` 变化不触发循环 |
+| 失败、重启或自身评论 | 失败和中断任务在后续扫描从头执行；连续错误达到阈值时服务终止；相同问题不重复发布；ReviewX 评论造成的 `updated_at` 变化不触发循环 |

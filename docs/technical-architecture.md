@@ -19,7 +19,7 @@
 6. Workflow 只准备仓库、worktree、分支和 commit 列表，不生成 diff 上下文包。
 7. Agent 只读工作区，不运行项目代码；评论凭据只属于 Workflow。
 
-首版不包含通用代码托管平台适配层、Webhook、多实例、Web 页面、inline 评论、知识库、报告或阶段恢复。
+首版不包含通用代码托管平台适配层、Webhook、多实例、Web 页面、inline 评论、知识库、汇总报告或阶段恢复。
 
 ## 2. 运行拓扑与命令
 
@@ -42,6 +42,7 @@ reviewx repo add <repo-id> [--state runtime/state.json]
 reviewx run \
   [--interval 10m] \
   [--agent-timeout 20m] \
+  [--max-consecutive-failures 3] \
   [--state runtime/state.json] \
   [--log runtime/reviewx.log]
 ```
@@ -51,6 +52,8 @@ reviewx run \
 `reviewx run` 获取单实例进程锁，启动后立即扫描一次，每轮结束后等待 `--interval` 再扫描。默认间隔为 10 分钟；一轮未结束时不启动下一轮。
 
 `--agent-timeout` 是每个专家或裁判子进程的独立超时，默认 20 分钟，不是整个 MR 的总超时。
+
+`--max-consecutive-failures` 是扫描错误触发服务终止前允许连续出现的轮数，默认 3；无错误的一轮会重置计数。
 
 ## 3. Runtime、状态与日志
 
@@ -67,17 +70,19 @@ runtime/
 ├── runs/<run-id>/
     ├── expert-input.json
     └── judge-input.json
-└── agent-output/<run-id>/<sequence>-<agent>/
-    ├── stdout.jsonl
-    ├── stderr.txt
-    ├── assistant.txt
-    ├── candidate.txt
-    ├── processed.txt
-    ├── result.json
-    └── metadata.json
+└── agent-output/<run-id>/
+    ├── review.md
+    └── <sequence>-<agent>/
+        ├── stdout.jsonl
+        ├── stderr.txt
+        ├── assistant.txt
+        ├── candidate.txt
+        ├── processed.txt
+        ├── result.json
+        └── metadata.json
 ```
 
-`runs/` 只保存当前运行的临时输入，运行结束后删除对应 run 目录和 worktree。每次 Agent 调用都把原始事件流、拼接正文、截取候选、实际转换文本、校验结果和处理元数据永久保存到 `agent-output/`。这些文件可能包含完整源码片段和模型分析，不做脱敏或自动清理；部署方必须限制目录访问并自行配置保留周期。日志同样不内建轮转。
+`runs/` 只保存当前运行的临时输入，运行结束后删除对应 run 目录和 worktree。每次 Agent 调用都把原始事件流、拼接正文、截取候选、实际转换文本、校验结果和处理元数据永久保存到 `agent-output/`；产生新意见时，发往 CodeHub 的 Markdown 原文另存为 `<run-id>/review.md`。这些文件可能包含完整源码片段和模型分析，不做脱敏或自动清理；部署方必须限制目录访问并自行配置保留周期。日志同样不内建轮转。
 
 ### 3.2 状态
 
@@ -286,7 +291,7 @@ type JudgeResult =
 一轮扫描顺序处理所有仓库和 MR：
 
 1. 重新加载已登记仓库，通过 `mr list --state open` 查询 Open MR。
-2. 只处理首次发现、此前失败或 `updated_at` 与游标不同的 MR。
+2. 只处理首次发现、此前失败或 `updated_at` 严格晚于游标的 MR；同一时刻的不同格式和列表接口暂时返回的旧时间不触发检视。
 3. 按第 4 章准备缓存、worktree、分支和 commit 列表。
 4. 按第 5 章顺序调用三个专家和裁判。
 5. `pass` 或 `duplicate_of` 不发布评论，按第 3 章保存处理游标。
@@ -309,6 +314,8 @@ CodeHub CLI/Git 命令失败、worktree 准备失败、Agent 失败或状态无�
 4. 后续 MR 更新仍可检视；裁判必须把 `unknown` 历史参与语义去重，相同问题返回 `duplicate_of`，其 `duplicate_comment_id` 为 `null`。
 
 首版不做立即重试、阶段恢复或 Agent session 持久化。仍为 Open 的未完成 MR 会在下一轮从工作区准备阶段重新执行。
+
+扫描连续存在错误并达到 `--max-consecutive-failures` 阈值时，服务抛出 `REPEATED_FAILURES` 并终止；无错误的一轮会重置连续计数。
 
 ### 7.2 锁和原子写入
 

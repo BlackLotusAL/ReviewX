@@ -61,6 +61,7 @@ describe("full review workflow with real Git", () => {
     expect(await missing(`${value.paths.worktrees}/1/7`)).toBe(true);
     expect(await readdir(value.paths.runs)).toEqual([]);
 
+    value.codeHub.listUpdatedAt = "2026-08-11T19:00:00-05:00";
     await value.workflow.scanOnce();
     expect(value.agents.agents).toHaveLength(4);
     expect(value.codeHub.comments).toHaveLength(0);
@@ -159,11 +160,16 @@ describe("full review workflow with real Git", () => {
     expect(value.agents.environments.every((env) => env.CODEHUB_TEST_TOKEN === undefined)).toBe(true);
     expect(value.logs.join("")).not.toContain("must-not-leak");
     expect(value.logs.join("")).not.toContain(finalComment());
+    const runIds = await readdir(value.paths.agentOutputs);
+    expect(runIds).toHaveLength(1);
+    expect(await readFile(`${value.paths.agentOutputs}/${runIds[0]!}/review.md`, "utf8")).toBe(
+      finalComment(),
+    );
     const config = JSON.parse(value.agents.environments[0]!.OPENCODE_CONFIG_CONTENT!);
     expect(config.permission["*"]).toBe("deny");
     expect(config.permission.bash["git diff *"]).toBe("allow");
 
-    value.codeHub.listUpdatedAt = "2026-08-12T00:01:00Z";
+    // A temporarily stale list response must not make the already processed MR run again.
     await value.workflow.scanOnce();
     expect(value.codeHub.comments).toHaveLength(1);
     expect(value.agents.agents).toHaveLength(4);

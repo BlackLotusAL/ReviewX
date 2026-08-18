@@ -34,7 +34,7 @@ reviewx repo add 123456 --state /srv/reviewx/state.json
 
 ```bash
 reviewx run
-reviewx run --interval 10m --agent-timeout 20m
+reviewx run --interval 10m --agent-timeout 20m --max-consecutive-failures 3
 reviewx run --state /srv/reviewx/state.json --log /var/log/reviewx.log
 ```
 
@@ -51,12 +51,14 @@ runtime/
 ├── repos/<repo-id>/
 ├── worktrees/<repo-id>/<mr-iid>/
 ├── runs/<run-id>/
-└── agent-output/<run-id>/<sequence>-<agent>/
+└── agent-output/<run-id>/
+    ├── review.md
+    └── <sequence>-<agent>/
 ```
 
 `state.json` 只保存仓库、MR 的 `last_processed_updated_at` 和历史问题摘要。每次 Agent 都是独立进程和会话；服务重启不会恢复中间阶段，未完成的 MR 会在后续扫描从头运行。
 
-每次 Agent 调用的原始 stdout/stderr、完整正文、截取候选、处理文本、Schema 结果和元数据都会永久保存在 `agent-output/`。其中可能包含未脱敏的源码和模型分析；请限制目录权限并自行清理历史产物。
+每次 Agent 调用的原始 stdout/stderr、完整正文、截取候选、处理文本、Schema 结果和元数据都会永久保存在 `agent-output/`。产生新检视意见时，发送给 CodeHub 的 Markdown 原文同时保存为对应 `<run-id>/review.md`。其中可能包含未脱敏的源码和模型分析；请限制目录权限并自行清理历史产物。
 
 日志同时写入 stdout 和文本 `.log` 文件，每行使用 `[ISO-8601 UTC 时间] [LEVEL] [event] 英文详情`。每个 Review Run 内部使用完整 UUID，日志只显示去掉连字符后的前 8 位短引用；终态 `result` 为 `pass`、`duplicate_of`、`new`、`publication_unknown`、`updated`、`closed` 或 `failed`。
 
@@ -70,7 +72,8 @@ runtime/
 
 - `reviewx.run.lock` 保证单机只有一个扫描进程；死亡 PID 的遗留锁会自动清理。
 - 状态在锁内重新读取并以同目录临时文件原子替换；损坏状态不会被覆盖。
-- `pass`、`duplicate_of` 和成功/未知发布会推进游标；失败、MR 更新或关闭不会推进。
+- `pass`、`duplicate_of` 和成功/未知发布会推进游标；仅当 CodeHub 返回严格更新的 `updated_at` 时才再次检视，等价时间格式或暂时回退的列表数据会被忽略。
+- 连续 3 轮扫描存在错误后服务会终止并返回失败；可用 `--max-consecutive-failures` 调整阈值，无错误的一轮会重置计数。失败、MR 更新或关闭不会推进游标。
 - 已确认评论和结果未知的评论都会进入语义去重历史。
 - worktree 与 run 输入目录在成功、失败和信号中断后清理；仓库缓存保留供后续 fetch。
 
