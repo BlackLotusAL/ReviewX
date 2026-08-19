@@ -1,58 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   commitSchema,
-  expertResultSchema,
-  findingSchema,
-  judgeResultSchema,
+  judgeDecisionSchema,
   mergeRequestSchema,
   normalizePositiveId,
   repositorySchema,
   severityToCodeHub,
   stateSchema,
-  type SelectedFinding,
 } from "../../src/contracts.js";
-import { validateCommentMarkdown } from "../../src/comment.js";
 import { parseDuration, parseInterval } from "../../src/duration.js";
-
-export const selectedFinding: SelectedFinding = {
-  title: "事务提交前发送成功事件",
-  file: "src/payment.ts",
-  start_line: 10,
-  end_line: 12,
-  severity: "Critical",
-  tags: ["correctness", "transaction"],
-  rule_ids: ["TX-001"],
-  problem: "事务提交前已经发送成功事件。",
-  trigger: "事务随后回滚。",
-  impact: "下游状态与数据库不一致。",
-  evidence: [{ file: "src/payment.ts", line: 11, description: "提交前调用 publish。" }],
-  recommendation: "移动到提交后的回调。",
-  confidence: 94,
-  example_code: "afterCommit(() => publish());",
-};
-const { example_code: _exampleCode, ...baseFinding } = selectedFinding;
-
-export function findingComment(finding = selectedFinding): string {
-  return `### [${finding.severity}]${finding.tags.map((tag) => `[${tag}]`).join("")} ${finding.title}
-
-**位置**：\`${finding.file}:${finding.start_line}-${finding.end_line}\`
-
-**问题**：${finding.problem}
-
-**触发条件**：${finding.trigger}
-
-**影响**：${finding.impact}
-
-**修改建议**：${finding.recommendation}
-
-\`\`\`ts
-${finding.example_code}
-\`\`\`
-
-**置信度**：${finding.confidence}%
-
-**规则**：\`${finding.rule_ids[0]}\``;
-}
 
 describe("public contracts", () => {
   it("normalizes IDs and parses supported durations", () => {
@@ -140,61 +96,68 @@ describe("public contracts", () => {
     },
   );
 
-  it("enforces finding invariants and controlled tags", () => {
-    expect(findingSchema.parse(baseFinding)).toMatchObject({ severity: "Critical" });
-    expect(() => findingSchema.parse({ ...baseFinding, end_line: 9 })).toThrow();
-    expect(() => findingSchema.parse({ ...baseFinding, confidence: 101 })).toThrow();
-    expect(() => findingSchema.parse({ ...baseFinding, tags: ["style"] })).toThrow();
-    expect(() => findingSchema.parse({ ...baseFinding, file: "../secret" })).toThrow();
+  it("enforces the minimal strict Judge decision union", () => {
+    expect(judgeDecisionSchema.parse({ verdict: "pass" })).toEqual({ verdict: "pass" });
     expect(
-      findingSchema.parse({ ...baseFinding, tags: ["domain:payment"] }).tags,
-    ).toEqual(["domain:payment"]);
+      judgeDecisionSchema.parse({ verdict: "duplicate_of", duplicate_comment_id: null }),
+    ).toEqual({ verdict: "duplicate_of", duplicate_comment_id: null });
+    expect(judgeDecisionSchema.parse({ verdict: "new", severity: "Critical" })).toEqual({
+      verdict: "new",
+      severity: "Critical",
+    });
+    expect(() => judgeDecisionSchema.parse({ verdict: "new" })).toThrow();
+    expect(() => judgeDecisionSchema.parse({ verdict: "new", severity: "High" })).toThrow();
+    expect(() => judgeDecisionSchema.parse({ verdict: "pass", explanation: "extra" })).toThrow();
   });
 
-  it("enforces expert and judge discriminated unions", () => {
-    expect(
-      expertResultSchema.parse({ expert: "code-reviewer", verdict: "pass", findings: [] }),
-    ).toEqual({ expert: "code-reviewer", verdict: "pass", findings: [] });
+  it("accepts legacy and Markdown history while rejecting malformed state", () => {
+    const state = stateSchema.parse({
+      repositories: {
+        "1": {
+          merge_requests: {
+            "2": {
+              finding_history: [
+                {
+                  summary: { title: "Legacy", file: "a.ts", problem: "problem" },
+                  publication_status: "confirmed",
+                  comment_id: "old",
+                },
+                {
+                  review_markdown: "# Current review",
+                  publication_status: "unknown",
+                  comment_id: null,
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    expect(state.repositories["1"]!.merge_requests["2"]!.finding_history).toHaveLength(2);
+    expect(() => stateSchema.parse({ repositories: {}, phase: "running" })).toThrow();
     expect(() =>
-      expertResultSchema.parse({
-        expert: "code-reviewer",
-        verdict: "pass",
-        findings: [baseFinding],
+      stateSchema.parse({
+        repositories: {
+          "1": {
+            merge_requests: {
+              "2": {
+                finding_history: [
+                  { review_markdown: "", publication_status: "confirmed", comment_id: null },
+                ],
+              },
+            },
+          },
+        },
       }),
     ).toThrow();
-    expect(
-      judgeResultSchema.parse({ verdict: "duplicate_of", duplicate_comment_id: null }),
-    ).toEqual({ verdict: "duplicate_of", duplicate_comment_id: null });
-    expect(() => judgeResultSchema.parse({ verdict: "new" })).toThrow();
   });
 
-  it("validates the required comment format against selected fields", () => {
-    expect(() => validateCommentMarkdown(findingComment(), selectedFinding)).not.toThrow();
-    expect(() =>
-      validateCommentMarkdown(findingComment().replace("94%", "93%"), selectedFinding),
-    ).toThrow();
-    expect(() =>
-      validateCommentMarkdown(findingComment().replace("```ts", "code:"), selectedFinding),
-    ).toThrow();
-  });
-
-  it("accepts empty rule IDs only when the comment says 无", () => {
-    const noRule = { ...selectedFinding, rule_ids: [] };
-    const comment = findingComment(noRule).replace("`undefined`", "无");
-    expect(() => validateCommentMarkdown(comment, noRule)).not.toThrow();
-  });
-
-  it("maps severity to CodeHub without changing the displayed severity", () => {
+  it("maps severity to CodeHub", () => {
     expect(severityToCodeHub).toEqual({
       Blocker: "fatal",
       Critical: "major",
       Major: "minor",
       Minor: "suggestion",
     });
-  });
-
-  it("rejects extra or malformed state fields", () => {
-    expect(stateSchema.parse({ repositories: {} })).toEqual({ repositories: {} });
-    expect(() => stateSchema.parse({ repositories: {}, phase: "running" })).toThrow();
   });
 });

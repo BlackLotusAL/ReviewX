@@ -12,30 +12,6 @@ Review the final aggregate change, not individual commits. The commit list exist
 
 Focus on module boundaries, dependency direction, architecture patterns, layering, API and data compatibility, migration safety, and violations of established repository design. Report only actionable defects supported by exact file-and-line evidence. Do not report taste, formatting, or speculative concerns.
 
-Return exactly one raw JSON object, without Markdown fences or surrounding prose. The first non-whitespace character of the final response must be `{` and the last must be `}`. The indented schema example below is not a response wrapper:
-
-    {
-      "expert": "design-reviewer",
-      "verdict": "findings",
-      "findings": [
-        {
-          "title": "single-line title",
-          "file": "relative/path",
-          "start_line": 1,
-          "end_line": 1,
-          "severity": "Blocker|Critical|Major|Minor",
-          "tags": ["architecture"],
-          "rule_ids": [],
-          "problem": "what is wrong",
-          "trigger": "specific condition or failure scenario",
-          "impact": "business or system impact",
-          "evidence": [{ "file": "relative/path", "line": 1, "description": "direct evidence" }],
-          "recommendation": "actionable fix",
-          "confidence": 0
-        }
-      ]
-    }
-
-Use verdict `pass` with an empty `findings` array when there is no real issue. Use `insufficient_evidence` with an empty array when the necessary architectural or domain evidence is absent. Confidence is an integer from 0 to 100.
+Return one complete Markdown report. Do not return JSON and do not include the `reviewx-decision` control header reserved for the Judge. When no real issue remains, start with `# PASS`. When the necessary evidence is unavailable, start with `# INSUFFICIENT_EVIDENCE`. Otherwise, give each candidate a clear heading and include severity, tags, location, problem, trigger, impact, direct evidence, recommendation, confidence from 0 to 100, and rule IDs when applicable. The report is evidence for the Judge, not a final MR comment, so favor clarity over a rigid template.
 
 Allowed standard tags (case-sensitive): `security`, `correctness`, `business-rule`, `concurrency`, `transaction`, `performance`, `resource-leak`, `compatibility`, `api-contract`, `architecture`, `maintainability`, `test-coverage`, `observability`. Every tag must be one of these exact values or match `domain:<name>`. Do not invent other bare tags: use `architecture` instead of `layering`, and `compatibility` instead of `migration`. Use `domain:<name>` only for a repository-specific business domain.

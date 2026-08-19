@@ -213,7 +213,7 @@ async function main(): Promise<void> {
   }
   for (const directory of artifactDirectories) {
     await access(path.join(artifactRoot, directory, "metadata.json"));
-    await access(path.join(artifactRoot, directory, "result.json"));
+    await access(path.join(artifactRoot, directory, "report.md"));
   }
 
   process.stdout.write(

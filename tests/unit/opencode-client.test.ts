@@ -1,18 +1,27 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OpenCodeClient, type AgentRunOptions } from "../../src/opencode.js";
 import type { CommandOptions, CommandResult, CommandRunner } from "../../src/process.js";
 
-function output(value: unknown): string {
-  return `${JSON.stringify({ type: "text", part: { text: JSON.stringify(value) } })}\n`;
+function output(text: string): string {
+  const split = Math.floor(text.length / 2);
+  return `${[text.slice(0, split), text.slice(split)]
+    .map((part) => JSON.stringify({ type: "text", part: { text: part } }))
+    .join("\n")}\n`;
+}
+
+function success(text: string): CommandResult {
+  return { exitCode: 0, signal: null, stdout: output(text), stderr: "" };
 }
 
 class AgentRunner implements CommandRunner {
   readonly calls: Array<{ command: string; args: readonly string[]; options: CommandOptions }> = [];
 
-  constructor(private readonly resultFor: (agent: string) => CommandResult) {}
+  constructor(
+    private readonly resultFor: (agent: string, call: number) => CommandResult,
+  ) {}
 
   async run(
     command: string,
@@ -20,15 +29,12 @@ class AgentRunner implements CommandRunner {
     options: CommandOptions = {},
   ): Promise<CommandResult> {
     this.calls.push({ command, args: [...args], options });
-    return this.resultFor(args[args.indexOf("--agent") + 1]!);
+    return this.resultFor(args[args.indexOf("--agent") + 1]!, this.calls.length);
   }
 }
 
-function success(value: unknown): CommandResult {
-  return { exitCode: 0, signal: null, stdout: output(value), stderr: "" };
-}
-
 let artifactRoot: string;
+let inputPaths: string[];
 
 function runOptions(name: string, signal?: AbortSignal): AgentRunOptions {
   return {
@@ -40,40 +46,45 @@ function runOptions(name: string, signal?: AbortSignal): AgentRunOptions {
 
 beforeEach(async () => {
   artifactRoot = await mkdtemp(path.join(os.tmpdir(), "reviewx-agent-output-"));
+  inputPaths = await Promise.all(
+    ["context.json", "design.md", "business.md", "code.md"].map(async (name, index) => {
+      const file = path.join(artifactRoot, name);
+      await writeFile(file, index === 0 ? "{}" : `# Report ${index}`, "utf8");
+      return file;
+    }),
+  );
 });
 
 afterEach(async () => {
   delete process.env.CODEHUB_TEST_TOKEN;
   delete process.env.DEVUC_ACCESS_TOKEN;
   delete process.env.PRIVATE_TOKEN;
-  delete process.env.REVIEWX_OPENCODE_MODEL;
   await rm(artifactRoot, { recursive: true, force: true });
 });
 
-describe("OpenCode client", () => {
-  it("passes only the read-only environment and an abort signal", async () => {
+describe("OpenCode Markdown client", () => {
+  it("passes a read-only environment and persists expert Markdown with replay input", async () => {
     process.env.CODEHUB_TEST_TOKEN = "secret";
     process.env.DEVUC_ACCESS_TOKEN = "secret";
     process.env.PRIVATE_TOKEN = "secret";
-    const runner = new AgentRunner((agent) =>
-      success({ expert: agent, verdict: "pass", findings: [] }),
-    );
+    const runner = new AgentRunner(() => success("# PASS\n\nNo issue."));
     const client = new OpenCodeClient(runner, "fake-opencode", "./opencode");
     const controller = new AbortController();
+
     await expect(
       client.runExpert(
         "design-reviewer",
-        "C:/worktree",
-        "C:/input.json",
+        artifactRoot,
+        inputPaths[0]!,
         runOptions("design", controller.signal),
       ),
-    ).resolves.toMatchObject({ expert: "design-reviewer", verdict: "pass" });
+    ).resolves.toEqual({ expert: "design-reviewer", markdown: "# PASS\n\nNo issue." });
 
     const call = runner.calls[0]!;
     expect(call.command).toBe("fake-opencode");
     expect(call.args.slice(0, 4)).toEqual(["run", "--pure", "--agent", "design-reviewer"]);
     expect(call.options).toMatchObject({
-      cwd: "C:/worktree",
+      cwd: artifactRoot,
       timeoutMs: 1234,
       signal: controller.signal,
     });
@@ -84,145 +95,92 @@ describe("OpenCode client", () => {
       permission: { "*": "deny" },
       agent: { "design-reviewer": { permission: { edit: "deny" } } },
     });
+    expect(await readFile(path.join(artifactRoot, "design", "report.md"), "utf8"))
+      .toBe("# PASS\n\nNo issue.");
+    expect(JSON.parse(await readFile(
+      path.join(artifactRoot, "design", "input-manifest.json"),
+      "utf8",
+    )).files).toHaveLength(1);
   });
 
-  it("rejects an expert result attributed to a different expert", async () => {
-    const runner = new AgentRunner(() =>
-      success({ expert: "business-reviewer", verdict: "pass", findings: [] }),
+  it("attaches context plus three reports and persists a valid new Judge document", async () => {
+    const markdown = "\n# Final review\n\nArbitrary {content}.";
+    const document = `<!-- reviewx-decision: {"verdict":"new","severity":"Major"} -->\n${markdown}`;
+    const runner = new AgentRunner(() => success(document));
+    const client = new OpenCodeClient(runner, "fake", "./opencode");
+
+    await expect(
+      client.runJudge(artifactRoot, inputPaths, runOptions("judge")),
+    ).resolves.toEqual({
+      decision: { verdict: "new", severity: "Major" },
+      markdown,
+      document,
+    });
+
+    const files = runner.calls[0]!.args.filter((value) => value === "--file");
+    expect(files).toHaveLength(4);
+    expect(JSON.parse(await readFile(path.join(artifactRoot, "judge", "decision.json"), "utf8")))
+      .toEqual({ verdict: "new", severity: "Major" });
+    expect(await readFile(path.join(artifactRoot, "judge", "comment.md"), "utf8"))
+      .toBe(markdown);
+    expect(JSON.parse(await readFile(
+      path.join(artifactRoot, "judge", "input-manifest.json"),
+      "utf8",
+    )).files).toHaveLength(4);
+  });
+
+  it("retries one invalid Judge header and succeeds on the second fresh call", async () => {
+    const runner = new AgentRunner((_agent, call) =>
+      call === 1
+        ? success("# Missing header")
+        : success('<!-- reviewx-decision: {"verdict":"pass"} -->'),
     );
     const client = new OpenCodeClient(runner, "fake", "./opencode");
-    await expect(
-      client.runExpert("design-reviewer", "worktree", "input", runOptions("wrong-expert")),
-    ).rejects.toThrowError(/returned result for business-reviewer/u);
+
+    await expect(client.runJudge(artifactRoot, inputPaths, runOptions("retry")))
+      .resolves.toMatchObject({ decision: { verdict: "pass" } });
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls[1]!.args.at(-1)).toContain("上一次输出");
+    expect(await readFile(
+      path.join(artifactRoot, "retry", "attempt-1", "decision-error.txt"),
+      "utf8",
+    )).toContain("reviewx-decision");
+    expect(JSON.parse(await readFile(
+      path.join(artifactRoot, "retry", "metadata.json"),
+      "utf8",
+    ))).toMatchObject({ status: "succeeded", attempts: 2, verdict: "pass" });
   });
 
-  it("wraps invalid expert and judge schemas", async () => {
-    const runner = new AgentRunner(() => success({ unexpected: true, token: "secret-value" }));
+  it("fails after one retry and attributes the final Markdown to the Judge", async () => {
+    const runner = new AgentRunner(() => success("# Still invalid"));
     const client = new OpenCodeClient(runner, "fake", "./opencode");
-    await expect(
-      client.runExpert("code-reviewer", "worktree", "input", runOptions("invalid-expert")),
-    ).rejects.toMatchObject({
-      message: expect.stringMatching(/invalid result/u),
-      details: {
-        agent: "code-reviewer",
-        agent_output: '{"unexpected":true,"token":"***"}',
-        agent_output_source: "assistant_text",
-        agent_output_truncated: false,
-      },
-    });
-    await expect(
-      client.runJudge("worktree", "input", runOptions("invalid-judge")),
-    ).rejects.toMatchObject({
-      message: expect.stringMatching(/Judge returned an invalid result/u),
-      details: {
-        agent: "review-judge",
-        agent_output: '{"unexpected":true,"token":"***"}',
-        agent_output_source: "assistant_text",
-        agent_output_truncated: false,
-      },
-    });
-  });
 
-  it("accepts a valid judge result", async () => {
-    const runner = new AgentRunner(() => success({ verdict: "pass" }));
-    const client = new OpenCodeClient(runner, "fake", "./opencode");
-    await expect(
-      client.runJudge("worktree", "input", runOptions("valid-judge")),
-    ).resolves.toEqual({ verdict: "pass" });
-    expect(JSON.parse(await readFile(path.join(artifactRoot, "valid-judge", "metadata.json"), "utf8")))
-      .toMatchObject({
-        agent: "review-judge",
-        status: "succeeded",
-        strategy: "whole",
-        parse_status: "succeeded",
-        schema_status: "succeeded",
+    await expect(client.runJudge(artifactRoot, inputPaths, runOptions("invalid")))
+      .rejects.toMatchObject({
+        message: expect.stringMatching(/after one retry/u),
+        details: {
+          agent: "review-judge",
+          agent_output: "# Still invalid",
+          agent_output_source: "assistant_text",
+          agent_output_truncated: false,
+        },
       });
-    expect(JSON.parse(await readFile(path.join(artifactRoot, "valid-judge", "result.json"), "utf8")))
-      .toEqual({ verdict: "pass" });
-  });
-
-  it("accepts an expert result after narrated analysis", async () => {
-    const result = {
-      expert: "design-reviewer",
-      verdict: "pass",
-      findings: [],
-    };
-    const runner = new AgentRunner(() => ({
-      exitCode: 0,
-      signal: null,
-      stdout: `${JSON.stringify({
-        type: "text",
-        part: { text: `The base is develop.\n\nLet me compose the JSON.\n\n${JSON.stringify(result)}` },
-      })}\n`,
-      stderr: "",
-    }));
-    const client = new OpenCodeClient(runner, "fake", "./opencode");
-
-    await expect(
-      client.runExpert("design-reviewer", "worktree", "input", runOptions("narrated")),
-    ).resolves.toEqual(result);
-  });
-
-  it("attributes malformed output to the responsible agent", async () => {
-    const runner = new AgentRunner(() => ({
-      exitCode: 0,
-      signal: null,
-      stdout: `${JSON.stringify({ type: "text", part: { text: "not-json" } })}\n`,
-      stderr: "",
-    }));
-    const client = new OpenCodeClient(runner, "fake", "./opencode");
-    await expect(
-      client.runExpert("business-reviewer", "worktree", "input", runOptions("malformed")),
-    ).rejects.toMatchObject({
-      message: expect.stringMatching(/OpenCode agent business-reviewer returned invalid output/u),
-      details: {
-        agent: "business-reviewer",
-        agent_output: "not-json",
-        agent_output_source: "assistant_text",
-        agent_output_chars: 8,
-        agent_output_truncated: false,
-      },
-    });
-  });
-
-  it("falls back to raw OpenCode stdout when its event stream is malformed", async () => {
-    const client = new OpenCodeClient(
-      new AgentRunner(() => ({
-        exitCode: 0,
-        signal: null,
-        stdout: "not-jsonl\n",
-        stderr: "",
-      })),
-      "fake",
-      "./opencode",
-    );
-    await expect(
-      client.runJudge("worktree", "input", runOptions("bad-jsonl")),
-    ).rejects.toMatchObject({
-      details: {
-        agent: "review-judge",
-        agent_output: "not-jsonl\n",
-        agent_output_source: "opencode_stdout",
-        agent_output_chars: 10,
-        agent_output_truncated: false,
-      },
-    });
+    expect(runner.calls).toHaveLength(2);
+    expect(JSON.parse(await readFile(
+      path.join(artifactRoot, "invalid", "metadata.json"),
+      "utf8",
+    ))).toMatchObject({ status: "failed", attempts: 2, decision_status: "failed" });
   });
 
   it.each([
-    [{ exitCode: null, signal: "SIGTERM", stdout: "", stderr: "token=secret\n" }, "unknown"],
-    [{ exitCode: 4, signal: null, stdout: "", stderr: "" }, "4"],
-  ] as const)("rejects non-zero OpenCode exits", async (result, exitText) => {
-    const client = new OpenCodeClient(new AgentRunner(() => result), "fake", "./opencode");
-    await expect(
-      client.runJudge("worktree", "input", runOptions(`exit-${exitText}`)),
-    ).rejects.toMatchObject({
-      message: expect.stringMatching(new RegExp(`exit code ${exitText}`, "u")),
-      details: {
-        agent: "review-judge",
-        agent_output_artifact: path.join(artifactRoot, `exit-${exitText}`),
-      },
-    });
+    [{ exitCode: 4, signal: null, stdout: "", stderr: "forbidden" }, "exit code 4"],
+    [{ exitCode: 0, signal: null, stdout: "not-jsonl\n", stderr: "" }, "invalid event output"],
+  ] as const)("does not retry process or event failure", async (result, message) => {
+    const runner = new AgentRunner(() => result);
+    const client = new OpenCodeClient(runner, "fake", "./opencode");
+    await expect(client.runJudge(artifactRoot, inputPaths, runOptions("process-failure")))
+      .rejects.toThrowError(new RegExp(message, "u"));
+    expect(runner.calls).toHaveLength(1);
   });
 
   it("constructs with the packaged default configuration", () => {

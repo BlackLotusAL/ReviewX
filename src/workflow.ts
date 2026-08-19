@@ -3,19 +3,18 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   expertInputSchema,
-  judgeInputSchema,
+  judgeContextSchema,
   severityToCodeHub,
   type CommentResult,
   type Commit,
   type ExpertName,
-  type ExpertResult,
+  type ExpertReport,
   type FindingHistory,
-  type JudgeResult,
+  type JudgeReport,
   type MergeRequest,
   type ReviewResult,
 } from "./contracts.js";
 import { CodeHubClient, CodeHubCommandError } from "./codehub.js";
-import { validateCommentMarkdown } from "./comment.js";
 import { errorMessage } from "./errors.js";
 import { GitManager } from "./git.js";
 import { TextLogger, type AgentName, type LogLevel } from "./logger.js";
@@ -70,17 +69,13 @@ function isSameUpdate(left: string, right: string): boolean {
   return left === right;
 }
 
-function historyFromJudge(
-  judge: Extract<JudgeResult, { verdict: "new" }>,
+function historyFromMarkdown(
+  reviewMarkdown: string,
   publicationStatus: "confirmed" | "unknown",
   commentId: string | null,
 ): FindingHistory {
   return {
-    summary: {
-      title: judge.selected_finding.title,
-      file: judge.selected_finding.file,
-      problem: judge.selected_finding.problem,
-    },
+    review_markdown: reviewMarkdown,
     publication_status: publicationStatus,
     comment_id: commentId,
   };
@@ -265,20 +260,22 @@ export class ReviewWorkflow {
     runId: string,
     repoId: string,
     mr: MergeRequest,
-    judge: JudgeResult,
+    judge: JudgeReport,
     signal?: AbortSignal,
   ): Promise<TerminalRecord> {
-    if (judge.verdict === "pass") {
+    if (judge.decision.verdict === "pass") {
       await this.saveCursor(runId, repoId, mr.iid, mr.updated_at);
       return { result: "pass" };
     }
-    if (judge.verdict === "duplicate_of") {
+    if (judge.decision.verdict === "duplicate_of") {
       await this.saveCursor(runId, repoId, mr.iid, mr.updated_at);
       return {
         result: "duplicate_of",
-        duplicate_of_comment_id: judge.duplicate_comment_id,
+        duplicate_of_comment_id: judge.decision.duplicate_comment_id,
       };
     }
+
+    await this.saveReviewReport(runId, judge.markdown);
 
     const publishStartedAt = Date.now();
     await this.logger.write({
@@ -287,12 +284,11 @@ export class ReviewWorkflow {
       run_id: runId,
       repo_id: repoId,
       mr_iid: mr.iid,
-      severity: judge.selected_finding.severity,
+      severity: judge.decision.severity,
     });
 
     let latest: MergeRequest;
     try {
-      validateCommentMarkdown(judge.comment_markdown, judge.selected_finding);
       latest = await this.codeHub.mrView(repoId, mr.iid, signal);
     } catch (error) {
       await this.logger.write({
@@ -331,15 +327,13 @@ export class ReviewWorkflow {
       return { result: "updated" };
     }
 
-    await this.saveReviewReport(runId, judge.comment_markdown);
-
     let published: CommentResult;
     try {
       published = await this.codeHub.createComment(
         repoId,
         mr.iid,
-        judge.comment_markdown,
-        severityToCodeHub[judge.selected_finding.severity],
+        judge.markdown,
+        severityToCodeHub[judge.decision.severity],
         signal,
       );
     } catch (error) {
@@ -375,7 +369,7 @@ export class ReviewWorkflow {
         runId,
         repoId,
         mr.iid,
-        historyFromJudge(judge, "unknown", null),
+        historyFromMarkdown(judge.markdown, "unknown", null),
         updatedAt,
       );
       return { result: "publication_unknown", comment_id: null };
@@ -401,7 +395,7 @@ export class ReviewWorkflow {
       runId,
       repoId,
       mr.iid,
-      historyFromJudge(judge, "confirmed", published.comment_id),
+      historyFromMarkdown(judge.markdown, "confirmed", published.comment_id),
       updatedAt,
     );
     return { result: "new", comment_id: published.comment_id };
@@ -416,7 +410,7 @@ export class ReviewWorkflow {
     inputPath: string,
     artifactDir: string,
     signal?: AbortSignal,
-  ): Promise<ExpertResult> {
+  ): Promise<ExpertReport> {
     const startedAt = Date.now();
     await this.logger.write({
       level: "info",
@@ -439,8 +433,7 @@ export class ReviewWorkflow {
         repo_id: repoId,
         mr_iid: mrIid,
         agent: expert,
-        verdict: result.verdict,
-        findings_count: result.findings.length,
+        report_chars: result.markdown.length,
         duration_ms: elapsedSince(startedAt),
       });
       return result;
@@ -455,10 +448,10 @@ export class ReviewWorkflow {
     repoId: string,
     mrIid: string,
     worktreePath: string,
-    inputPath: string,
+    inputPaths: readonly string[],
     artifactDir: string,
     signal?: AbortSignal,
-  ): Promise<JudgeResult> {
+  ): Promise<JudgeReport> {
     const agent = "review-judge" as const;
     const startedAt = Date.now();
     await this.logger.write({
@@ -470,7 +463,7 @@ export class ReviewWorkflow {
       agent,
     });
     try {
-      const result = await this.openCode.runJudge(worktreePath, inputPath, {
+      const result = await this.openCode.runJudge(worktreePath, inputPaths, {
         artifactDir,
         timeoutMs: this.agentTimeoutMs,
         ...(signal === undefined ? {} : { signal }),
@@ -482,11 +475,11 @@ export class ReviewWorkflow {
         repo_id: repoId,
         mr_iid: mrIid,
         agent,
-        verdict: result.verdict,
-        ...(result.verdict === "new"
-          ? { severity: result.selected_finding.severity }
-          : result.verdict === "duplicate_of"
-            ? { duplicate_of_comment_id: result.duplicate_comment_id }
+        verdict: result.decision.verdict,
+        ...(result.decision.verdict === "new"
+          ? { severity: result.decision.severity }
+          : result.decision.verdict === "duplicate_of"
+            ? { duplicate_of_comment_id: result.decision.duplicate_comment_id }
             : {}),
         duration_ms: elapsedSince(startedAt),
       });
@@ -619,7 +612,8 @@ export class ReviewWorkflow {
       const expertInputPath = path.join(runDir, "expert-input.json");
       await writeFile(expertInputPath, `${JSON.stringify(expertInput, null, 2)}\n`, "utf8");
 
-      const expertResults: ExpertResult[] = [];
+      const expertReports: ExpertReport[] = [];
+      const expertReportPaths: string[] = [];
       for (const [index, expert] of experts.entries()) {
         const artifactDir = path.join(
           this.paths.agentOutputs,
@@ -627,7 +621,7 @@ export class ReviewWorkflow {
           `${String(index + 1).padStart(2, "0")}-${expert}`,
         );
         assertPathWithin(this.paths.agentOutputs, artifactDir);
-        expertResults.push(
+        expertReports.push(
           await this.runExpert(
             runId,
             repoId,
@@ -639,18 +633,26 @@ export class ReviewWorkflow {
             signal,
           ),
         );
+        expertReportPaths.push(path.join(artifactDir, "report.md"));
+      }
+
+      if (expertReports.length !== experts.length) {
+        throw new Error("Review run did not produce all expert Markdown reports.");
       }
 
       const latestState = await this.state.read();
       const findingHistory =
         latestState.repositories[repoId]?.merge_requests[mr.iid]?.finding_history ?? [];
-      const judgeInput = judgeInputSchema.parse({
+      const judgeContext = judgeContextSchema.parse({
         ...expertInput,
-        expert_results: expertResults,
         finding_history: findingHistory,
       });
-      const judgeInputPath = path.join(runDir, "judge-input.json");
-      await writeFile(judgeInputPath, `${JSON.stringify(judgeInput, null, 2)}\n`, "utf8");
+      const judgeContextPath = path.join(runDir, "judge-context.json");
+      await writeFile(
+        judgeContextPath,
+        `${JSON.stringify(judgeContext, null, 2)}\n`,
+        "utf8",
+      );
       const judgeArtifactDir = path.join(this.paths.agentOutputs, runId, "04-review-judge");
       assertPathWithin(this.paths.agentOutputs, judgeArtifactDir);
       const judge = await this.runJudge(
@@ -658,7 +660,7 @@ export class ReviewWorkflow {
         repoId,
         mr.iid,
         worktreePath,
-        judgeInputPath,
+        [judgeContextPath, ...expertReportPaths],
         judgeArtifactDir,
         signal,
       );

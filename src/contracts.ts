@@ -1,8 +1,6 @@
-import path from "node:path";
 import { z } from "zod";
 
 const nonEmpty = z.string().trim().min(1);
-const singleLine = nonEmpty.refine((value) => !/[\r\n]/u.test(value), "must be one line");
 
 export const positiveIdSchema = z
   .string()
@@ -110,48 +108,6 @@ export const standardTags = [
   "test-coverage",
   "observability",
 ] as const;
-const standardTagSet = new Set<string>(standardTags);
-
-export const tagSchema = singleLine.refine(
-  (value) => standardTagSet.has(value) || /^domain:[a-z0-9][a-z0-9._-]*$/u.test(value),
-  "tag is not controlled",
-);
-
-const relativeFileSchema = singleLine.refine(
-  (value) =>
-    !path.isAbsolute(value) &&
-    !value.split(/[\\/]/u).some((segment) => segment === "..") &&
-    value !== ".",
-  "file must be a safe relative path",
-);
-
-export const evidenceSchema = z.strictObject({
-  file: relativeFileSchema,
-  line: z.number().int().positive(),
-  description: nonEmpty,
-});
-
-export const findingSchema = z
-  .strictObject({
-    title: singleLine,
-    file: relativeFileSchema,
-    start_line: z.number().int().positive(),
-    end_line: z.number().int().positive(),
-    severity: severitySchema,
-    tags: z.array(tagSchema).min(1),
-    rule_ids: z.array(singleLine),
-    problem: nonEmpty,
-    trigger: nonEmpty,
-    impact: nonEmpty,
-    evidence: z.array(evidenceSchema).min(1),
-    recommendation: nonEmpty,
-    confidence: z.number().int().min(0).max(100),
-  })
-  .refine((value) => value.end_line >= value.start_line, {
-    message: "end_line must be greater than or equal to start_line",
-    path: ["end_line"],
-  });
-export type Finding = z.infer<typeof findingSchema>;
 
 export const expertNameSchema = z.enum([
   "design-reviewer",
@@ -160,28 +116,7 @@ export const expertNameSchema = z.enum([
 ]);
 export type ExpertName = z.infer<typeof expertNameSchema>;
 
-const findingsResultSchema = z.strictObject({
-  expert: expertNameSchema,
-  verdict: z.literal("findings"),
-  findings: z.array(findingSchema).min(1),
-});
-const emptyExpertResultSchema = z.strictObject({
-  expert: expertNameSchema,
-  verdict: z.enum(["pass", "insufficient_evidence"]),
-  findings: z.array(findingSchema).length(0),
-});
-export const expertResultSchema = z.discriminatedUnion("verdict", [
-  findingsResultSchema,
-  emptyExpertResultSchema,
-]);
-export type ExpertResult = z.infer<typeof expertResultSchema>;
-
-export const selectedFindingSchema = findingSchema.safeExtend({
-  example_code: z.string().trim().min(1),
-});
-export type SelectedFinding = z.infer<typeof selectedFindingSchema>;
-
-export const judgeResultSchema = z.discriminatedUnion("verdict", [
+export const judgeDecisionSchema = z.discriminatedUnion("verdict", [
   z.strictObject({ verdict: z.literal("pass") }),
   z.strictObject({
     verdict: z.literal("duplicate_of"),
@@ -189,13 +124,23 @@ export const judgeResultSchema = z.discriminatedUnion("verdict", [
   }),
   z.strictObject({
     verdict: z.literal("new"),
-    selected_finding: selectedFindingSchema,
-    comment_markdown: z.string().trim().min(1),
+    severity: severitySchema,
   }),
 ]);
-export type JudgeResult = z.infer<typeof judgeResultSchema>;
+export type JudgeDecision = z.infer<typeof judgeDecisionSchema>;
 
-export const findingHistorySchema = z.strictObject({
+export interface ExpertReport {
+  expert: ExpertName;
+  markdown: string;
+}
+
+export interface JudgeReport {
+  decision: JudgeDecision;
+  markdown: string;
+  document: string;
+}
+
+export const legacyFindingHistorySchema = z.strictObject({
   summary: z.strictObject({
     title: z.string(),
     file: z.string(),
@@ -204,6 +149,17 @@ export const findingHistorySchema = z.strictObject({
   publication_status: z.enum(["confirmed", "unknown"]),
   comment_id: z.string().nullable(),
 });
+
+export const markdownFindingHistorySchema = z.strictObject({
+  review_markdown: nonEmpty,
+  publication_status: z.enum(["confirmed", "unknown"]),
+  comment_id: z.string().nullable(),
+});
+
+export const findingHistorySchema = z.union([
+  legacyFindingHistorySchema,
+  markdownFindingHistorySchema,
+]);
 export type FindingHistory = z.infer<typeof findingHistorySchema>;
 
 export const mergeRequestStateSchema = z.strictObject({
@@ -233,11 +189,10 @@ export const expertInputSchema = z.strictObject({
 });
 export type ExpertInput = z.infer<typeof expertInputSchema>;
 
-export const judgeInputSchema = expertInputSchema.safeExtend({
-  expert_results: z.array(expertResultSchema).length(3),
+export const judgeContextSchema = expertInputSchema.safeExtend({
   finding_history: z.array(findingHistorySchema),
 });
-export type JudgeInput = z.infer<typeof judgeInputSchema>;
+export type JudgeContext = z.infer<typeof judgeContextSchema>;
 
 export const reviewResultSchema = z.enum([
   "pass",

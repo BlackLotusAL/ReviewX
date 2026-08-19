@@ -10,34 +10,17 @@ import { DefaultCommandRunner } from "../../src/process.js";
 import { CodeHubClient } from "../../src/codehub.js";
 import type {
   Commit,
-  JudgeResult,
+  JudgeDecision,
   MergeRequest,
   Repository,
-  SelectedFinding,
 } from "../../src/contracts.js";
 import { GitManager } from "../../src/git.js";
 import { TextLogger } from "../../src/logger.js";
 import { OpenCodeClient } from "../../src/opencode.js";
+import { formatJudgeDecisionHeader } from "../../src/judge-report.js";
 import { createRuntimePaths } from "../../src/runtime.js";
 import { StateStore } from "../../src/state.js";
 import { ReviewWorkflow } from "../../src/workflow.js";
-
-export const finding: SelectedFinding = {
-  title: "事务提交前发送成功事件",
-  file: "service.ts",
-  start_line: 1,
-  end_line: 1,
-  severity: "Critical",
-  tags: ["correctness", "transaction"],
-  rule_ids: ["TX-001"],
-  problem: "事务提交前已经发送成功事件。",
-  trigger: "事务随后回滚。",
-  impact: "下游状态与数据库不一致。",
-  evidence: [{ file: "service.ts", line: 1, description: "提交前调用 publish。" }],
-  recommendation: "移动到提交后的回调。",
-  confidence: 94,
-  example_code: "afterCommit(() => publish());",
-};
 
 export function finalComment(): string {
   return `### [Critical][correctness][transaction] 事务提交前发送成功事件
@@ -133,12 +116,17 @@ export class ScriptedCodeHubRunner implements CommandRunner {
 export class ScriptedAgentRunner implements CommandRunner {
   readonly agents: string[] = [];
   readonly inputs: unknown[] = [];
+  readonly judgeInputFiles: string[][] = [];
+  readonly judgeInputContents: string[][] = [];
   readonly environments: NodeJS.ProcessEnv[] = [];
   invalidExpert: string | undefined;
-  fencedOutput = false;
-  pollutedOutput = false;
+  invalidJudgeAttempts = 0;
+  expertMarkdown = "# PASS\n\nNo actionable issue remains in the final aggregate change.";
 
-  constructor(public judgeResult: JudgeResult) {}
+  constructor(
+    public judgeDecision: JudgeDecision,
+    public judgeMarkdown = finalComment(),
+  ) {}
 
   async run(
     _command: string,
@@ -146,11 +134,19 @@ export class ScriptedAgentRunner implements CommandRunner {
     options: CommandOptions = {},
   ): Promise<CommandResult> {
     const agent = args[args.indexOf("--agent") + 1]!;
-    const inputPath = args[args.indexOf("--file") + 1]!;
-    const input = JSON.parse(await readFile(inputPath, "utf8"));
+    const inputPaths = args
+      .map((value, index) => (value === "--file" ? args[index + 1] : undefined))
+      .filter((value): value is string => value !== undefined);
+    const input = JSON.parse(await readFile(inputPaths[0]!, "utf8"));
     this.agents.push(agent);
     this.inputs.push(input);
     this.environments.push(options.env ?? {});
+    if (agent === "review-judge") {
+      this.judgeInputFiles.push([...inputPaths]);
+      this.judgeInputContents.push(
+        await Promise.all(inputPaths.map(async (inputPath) => await readFile(inputPath, "utf8"))),
+      );
+    }
     if (options.cwd) {
       const finalSource = await readFile(path.join(options.cwd, "service.ts"), "utf8");
       if (finalSource.includes("BUG_FROM_EARLY_COMMIT")) {
@@ -160,18 +156,20 @@ export class ScriptedAgentRunner implements CommandRunner {
     if (agent === this.invalidExpert) {
       return { exitCode: 0, signal: null, stdout: "not-json\n", stderr: "" };
     }
-    const output =
-      agent === "review-judge"
-        ? this.judgeResult
-        : { expert: agent, verdict: "pass", findings: [] };
-    const rawJson = JSON.stringify(output);
-    const json = this.pollutedOutput
-      ? `I will inspect the change.\n\n\`\`\`ts\nconst sample = { enabled: true };\n\`\`\`\n\nThe diff is:\n\n\`\`\`diff\n-old\n+new\n\`\`\`\n\nLet me compose the JSON.\n\n${rawJson}`
-      : this.fencedOutput
-        ? `Review result follows.\n  \`\`\`\` json\n${rawJson}\n  \`\`\`\`\nEnd of result.`
-        : rawJson;
-    const split = Math.floor(json.length / 2);
-    const stdout = [json.slice(0, split), json.slice(split)]
+    let output: string;
+    if (agent === "review-judge") {
+      if (this.invalidJudgeAttempts > 0) {
+        this.invalidJudgeAttempts -= 1;
+        output = "# Missing control header";
+      } else {
+        const body = this.judgeDecision.verdict === "new" ? `\n${this.judgeMarkdown}` : "\n# Internal rationale";
+        output = `${formatJudgeDecisionHeader(this.judgeDecision)}${body}`;
+      }
+    } else {
+      output = this.expertMarkdown;
+    }
+    const split = Math.floor(output.length / 2);
+    const stdout = [output.slice(0, split), output.slice(split)]
       .map((text) => JSON.stringify({ type: "text", part: { text } }))
       .join("\n");
     return { exitCode: 0, signal: null, stdout: `${stdout}\n`, stderr: "" };
@@ -250,7 +248,10 @@ export interface WorkflowHarness {
   cleanup(): Promise<void>;
 }
 
-export async function createWorkflowHarness(judgeResult: JudgeResult): Promise<WorkflowHarness> {
+export async function createWorkflowHarness(
+  judgeDecision: JudgeDecision,
+  judgeMarkdown = finalComment(),
+): Promise<WorkflowHarness> {
   const root = await mkdtemp(path.join(os.tmpdir(), "reviewx-flow-"));
   const { remote, shas } = await createRemote(root);
   const paths = createRuntimePaths(path.join(root, "runtime", "state.json"));
@@ -289,7 +290,7 @@ export async function createWorkflowHarness(judgeResult: JudgeResult): Promise<W
     parent_shas: [],
   }));
   const codeHubRunner = new ScriptedCodeHubRunner(repository, mergeRequest, commits);
-  const agentRunner = new ScriptedAgentRunner(judgeResult);
+  const agentRunner = new ScriptedAgentRunner(judgeDecision, judgeMarkdown);
   const gitRunner = new RecordingGitRunner();
   const codeHub = new CodeHubClient(codeHubRunner, "codehub", 10_000);
   const gitManager = new GitManager(paths, gitRunner, "git", 30_000);

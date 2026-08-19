@@ -1,118 +1,59 @@
 import { describe, expect, it } from "vitest";
-import { processAgentOutputText } from "../../src/agent-output.js";
+import type { JudgeDecision } from "../../src/contracts.js";
+import {
+  formatJudgeDecisionHeader,
+  parseJudgeDocument,
+} from "../../src/judge-report.js";
 import { openCodeInlineConfig, parseOpenCodeText } from "../../src/opencode.js";
 
 function event(text: string): string {
   return JSON.stringify({ type: "text", part: { text } });
 }
 
-describe("OpenCode event parsing and permissions", () => {
+describe("OpenCode Markdown event parsing and permissions", () => {
   it("reassembles every completed text part in event order", () => {
     const value = parseOpenCodeText(
-      `${JSON.stringify({ type: "step_start", part: {} })}\n${event('{"verdict":')}\n${event('"pass"}')}\n`,
+      `${JSON.stringify({ type: "step_start", part: {} })}\n${event("# Report\n")}\n${event("Body {with JSON-like text}")}\n`,
     );
-    expect(value).toEqual({ verdict: "pass" });
+    expect(value).toBe("# Report\nBody {with JSON-like text}");
   });
 
-  it.each([
-    '```json\n{"verdict":"pass"}\n```',
-    '```JSON\r\n{"verdict":"pass"}\r\n```',
-    '```\n{"verdict":"pass"}\n```',
-    'Result follows.\n```json\n{"verdict":"pass"}\n```\nEnd of result.',
-    '  ```` json\n{"verdict":"pass"}\n  ````',
-    '~~~JSON\n{"verdict":"pass"}\n~~~',
-  ])("extracts one JSON Markdown fenced block", (text) => {
-    expect(parseOpenCodeText(`${event(text)}\n`)).toEqual({ verdict: "pass" });
+  it("accepts arbitrary non-empty Markdown without extraction or repair", () => {
+    const markdown = `Analysis first.
+
+\`\`\`json
+{"not":"a protocol"}
+\`\`\`
+
+Trailing prose.`;
+    expect(parseOpenCodeText(`${event(markdown)}\n`)).toBe(markdown);
   });
 
-  it("extracts a fenced result split across OpenCode text events", () => {
-    expect(
-      parseOpenCodeText(
-        `${event("Result follows.\n```json\n{\"verdict\":")}\n${event(
-          '"pass"}\n```\nEnd of result.',
-        )}\n`,
-      ),
-    ).toEqual({ verdict: "pass" });
+  it("preserves leading and trailing whitespace in assistant Markdown", () => {
+    const markdown = "\n# Report\n\nBody.  \n";
+    expect(parseOpenCodeText(`${event(markdown)}\n`)).toBe(markdown);
   });
 
-  it("extracts a trailing JSON object after analysis text split across events", () => {
-    const result = {
-      expert: "design-reviewer",
-      verdict: "findings",
-      findings: [{ body: 'Keep {value}, "quoted" text, and C:\\temp\\', confidence: 55 }],
-    };
-    expect(
-      parseOpenCodeText(
-        `${event(
-          "The base of this MR is develop. Let me inspect function { return \\\"value\\\"; }.\n\n",
-        )}\n${event(
-          `Let me compose the JSON.\n\n${JSON.stringify(result)}`,
-        )}\n`,
-      ),
-    ).toEqual(result);
-  });
-
-  it("allows whitespace but not prose after a trailing raw JSON object", () => {
-    expect(
-      parseOpenCodeText(`${event('Analysis first.\n{"verdict":"pass"}\n\t')}\n`),
-    ).toEqual({ verdict: "pass" });
-    expect(() =>
-      parseOpenCodeText(`${event('Analysis first.\n{"verdict":"pass"}\nDone.')}\n`),
-    ).toThrow();
-  });
-
-  it.each([
-    [
-      'Analysis.\n```ts\nconst value = { enabled: true };\n```\n```diff\n-old\n+new\n```\nResult:\n{"verdict":"pass"}',
-      "trailing_raw",
-    ],
-    [
-      'Analysis.\n```ts\nconst value = 1;\n```\nAnother example:\n```diff\n-old\n+new\n```\n```json\n{"verdict":"pass"}\n```',
-      "trailing_fence",
-    ],
-  ] as const)("ignores analysis fences before a terminal result", (text, strategy) => {
-    const processed = processAgentOutputText(text);
-    expect(processed).toMatchObject({ success: true, strategy, value: { verdict: "pass" } });
-    expect(parseOpenCodeText(`${event(text)}\n`)).toEqual({ verdict: "pass" });
-  });
-
-  it("repairs only missing structural closers", () => {
-    const repaired = processAgentOutputText(
-      'Analysis.\n{"expert":"design-reviewer","verdict":"findings","findings":[{"confidence":55}',
-    );
-    expect(repaired).toMatchObject({
-      success: true,
-      strategy: "trailing_raw",
-      appendedClosers: "]}",
-      value: {
-        expert: "design-reviewer",
-        verdict: "findings",
-        findings: [{ confidence: 55 }],
-      },
-    });
-  });
-
-  it.each([
-    'Analysis.\n{"verdict":"pass}',
-    'Analysis.\n{"verdict":"pass"]',
-    'Analysis.\n{"verdict":"pass",',
-  ])("does not repair unsafe or non-structural JSON damage", (text) => {
-    expect(processAgentOutputText(text)).toMatchObject({ success: false });
+  it("uses only the final assistant message after tool-call narration", () => {
+    const firstMessage = "msg-first";
+    const finalMessage = "msg-final";
+    const output = [
+      { type: "text", part: { messageID: firstMessage, text: "I will inspect." } },
+      { type: "step_finish", part: { messageID: firstMessage, reason: "tool-calls" } },
+      { type: "text", part: { messageID: finalMessage, text: "Final " } },
+      { type: "text", part: { messageID: finalMessage, text: "report" } },
+      { type: "step_finish", part: { messageID: finalMessage, reason: "stop" } },
+    ].map((value) => JSON.stringify(value)).join("\n");
+    expect(parseOpenCodeText(`${output}\n`)).toBe("Final report");
   });
 
   it.each([
     "plain text\n",
     `${JSON.stringify({ type: "step_start" })}\n`,
     `${JSON.stringify({ type: "error", error: {} })}\n`,
-    `${event('```javascript\n{"verdict":"pass"}\n```')}\n`,
-    `${event('```json\n{"verdict":"pass"}{"verdict":"pass"}\n```')}\n`,
-    `${event("```json\n\n```")}\n`,
-    `${event('```json\n{"verdict":"pass"}')}\n`,
-    `${event('{"verdict":"pass"}{"verdict":"pass"}')}\n`,
-    `${event('Analysis.\n{"verdict":"pass"}\n{"verdict":"pass"}')}\n`,
-    `${event('Analysis.\n{"verdict":}')}\n`,
     `${JSON.stringify({ type: "text", part: {} })}\n`,
-  ])("rejects malformed event output", (output) => {
+    `${event("   ")}\n`,
+  ])("rejects malformed or empty event output", (output) => {
     expect(() => parseOpenCodeText(output)).toThrow();
   });
 
@@ -129,5 +70,39 @@ describe("OpenCode event parsing and permissions", () => {
       "git show *": "allow",
       "git diff *": "allow",
     });
+  });
+});
+
+describe("Judge Markdown control header", () => {
+  it.each([
+    [{ verdict: "pass" }, "# Internal rationale"],
+    [{ verdict: "duplicate_of", duplicate_comment_id: "comment-1" }, ""],
+    [{ verdict: "duplicate_of", duplicate_comment_id: null }, "# Unknown publication"],
+    [{ verdict: "new", severity: "Major" }, "\n# Flexible comment\n\n{braces} and prose"],
+  ] as Array<[JudgeDecision, string]>)
+  ("parses %s while preserving the Markdown body", (decision, markdown) => {
+    const document = `${formatJudgeDecisionHeader(decision)}${markdown === "" ? "" : `\n${markdown}`}`;
+    expect(parseJudgeDocument(document)).toEqual({ decision, markdown, document });
+  });
+
+  it("discards transient narration before the single standalone control header", () => {
+    const canonical = '<!-- reviewx-decision: {"verdict":"pass"} -->\n\n# Rationale';
+    expect(parseJudgeDocument(`I inspected the worktree.\n\n${canonical}`)).toEqual({
+      decision: { verdict: "pass" },
+      markdown: "\n# Rationale",
+      document: canonical,
+    });
+  });
+
+  it.each([
+    "# Missing header",
+    '<!-- reviewx-decision: {"verdict":"pass",} -->',
+    '<!-- reviewx-decision: {"verdict":"pass","extra":true} -->',
+    '<!-- reviewx-decision: {"verdict":"new","severity":"High"} -->\n# Comment',
+    '<!-- reviewx-decision: {"verdict":"new","severity":"Major"} -->',
+    '```html\n<!-- reviewx-decision: {"verdict":"pass"} -->\n```',
+    '<!-- reviewx-decision: {"verdict":"pass"} -->\n<!-- reviewx-decision: {"verdict":"pass"} -->',
+  ])("rejects an invalid control document", (document) => {
+    expect(() => parseJudgeDocument(document)).toThrow();
   });
 });

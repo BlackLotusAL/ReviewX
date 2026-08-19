@@ -1,16 +1,9 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import {
-  expertResultSchema,
-  judgeResultSchema,
-  type AgentOutputSource,
-  type ExpertName,
-  type ExpertResult,
-  type JudgeResult,
-} from "./contracts.js";
-import { processAgentOutputText, type AgentOutputStrategy } from "./agent-output.js";
+import type { AgentOutputSource, ExpertName, ExpertReport, JudgeReport } from "./contracts.js";
 import { diagnosticTextPreview, redactText, ReviewXError } from "./errors.js";
+import { JudgeDocumentError, parseJudgeDocument } from "./judge-report.js";
 import { DefaultCommandRunner, type CommandRunner } from "./process.js";
 
 const readonlyPermissions = {
@@ -70,19 +63,26 @@ function sanitizedAgentEnv(configDir: string): NodeJS.ProcessEnv {
 }
 
 function collectOpenCodeText(stdout: string): string {
-  const textParts: string[] = [];
+  const textByMessage = new Map<string, string[]>();
+  let lastTextMessage = "legacy";
+  let finalMessage: string | undefined;
   for (const line of stdout.split(/\r?\n/u)) {
     if (line.trim() === "") continue;
     let event: unknown;
     try {
       event = JSON.parse(line);
     } catch (error) {
-      throw new ReviewXError("AGENT_ERROR", "OpenCode emitted a non-JSON event.", { cause: error });
+      throw new ReviewXError("AGENT_ERROR", "OpenCode emitted a non-JSON event.", {
+        cause: error,
+      });
     }
     if (!event || typeof event !== "object") {
       throw new ReviewXError("AGENT_ERROR", "OpenCode emitted an invalid event.");
     }
-    const value = event as { type?: unknown; part?: { text?: unknown }; error?: unknown };
+    const value = event as {
+      type?: unknown;
+      part?: { text?: unknown; messageID?: unknown; reason?: unknown };
+    };
     if (value.type === "error") {
       throw new ReviewXError("AGENT_ERROR", "OpenCode emitted an error event.");
     }
@@ -90,21 +90,34 @@ function collectOpenCodeText(stdout: string): string {
       if (!value.part || typeof value.part.text !== "string") {
         throw new ReviewXError("AGENT_ERROR", "OpenCode text event is missing part.text.");
       }
-      textParts.push(value.part.text);
+      const messageId =
+        typeof value.part.messageID === "string" ? value.part.messageID : "legacy";
+      const parts = textByMessage.get(messageId) ?? [];
+      parts.push(value.part.text);
+      textByMessage.set(messageId, parts);
+      lastTextMessage = messageId;
+    }
+    if (
+      value.type === "step_finish" &&
+      value.part?.reason === "stop" &&
+      typeof value.part.messageID === "string"
+    ) {
+      finalMessage = value.part.messageID;
     }
   }
-  if (textParts.length === 0) {
+  const textParts = textByMessage.get(finalMessage ?? lastTextMessage);
+  if (!textParts || textParts.length === 0) {
     throw new ReviewXError("AGENT_ERROR", "OpenCode returned no final assistant text.");
   }
-  return textParts.join("").trim();
+  const text = textParts.join("");
+  if (text.trim() === "") {
+    throw new ReviewXError("AGENT_ERROR", "OpenCode returned an empty final assistant text.");
+  }
+  return text;
 }
 
-export function parseOpenCodeText(stdout: string): unknown {
-  const processed = processAgentOutputText(collectOpenCodeText(stdout));
-  if (!processed.success) {
-    throw new ReviewXError("AGENT_ERROR", processed.error);
-  }
-  return processed.value;
+export function parseOpenCodeText(stdout: string): string {
+  return collectOpenCodeText(stdout);
 }
 
 type AgentName = ExpertName | "review-judge";
@@ -126,12 +139,18 @@ interface AgentArtifactMetadata {
   stdout_chars?: number;
   stderr_chars?: number;
   assistant_chars?: number;
-  strategy?: AgentOutputStrategy;
-  candidate_chars?: number;
-  processed_chars?: number;
-  appended_closers?: string;
-  parse_status: "not_attempted" | "succeeded" | "failed";
-  schema_status: "not_attempted" | "succeeded" | "failed";
+  event_status: "not_attempted" | "succeeded" | "failed";
+  error?: string;
+}
+
+interface JudgeArtifactMetadata {
+  agent: "review-judge";
+  status: "started" | "succeeded" | "failed";
+  started_at: string;
+  finished_at?: string;
+  attempts: number;
+  decision_status: "not_attempted" | "succeeded" | "failed";
+  verdict?: JudgeReport["decision"]["verdict"];
   error?: string;
 }
 
@@ -183,6 +202,30 @@ async function writeArtifact(directory: string, name: string, value: string): Pr
   await writeFile(path.join(directory, name), value, { encoding: "utf8", mode: 0o600 });
 }
 
+async function snapshotInputs(artifactDir: string, inputPaths: readonly string[]): Promise<void> {
+  const inputDir = path.join(artifactDir, "inputs");
+  await mkdir(inputDir, { recursive: true, mode: 0o700 });
+  const manifest: Array<{ source_path: string; artifact_file: string }> = [];
+  for (const [index, inputPath] of inputPaths.entries()) {
+    const name = `${String(index + 1).padStart(2, "0")}-${path.basename(inputPath)}`;
+    const raw = await readFile(inputPath, "utf8");
+    await writeArtifact(inputDir, name, raw);
+    manifest.push({ source_path: path.resolve(inputPath), artifact_file: `inputs/${name}` });
+  }
+  await writeArtifact(
+    artifactDir,
+    "input-manifest.json",
+    `${JSON.stringify({ files: manifest }, null, 2)}\n`,
+  );
+}
+
+const judgeHeaders = [
+  '<!-- reviewx-decision: {"verdict":"pass"} -->',
+  '<!-- reviewx-decision: {"verdict":"duplicate_of","duplicate_comment_id":"comment-id"} -->',
+  '<!-- reviewx-decision: {"verdict":"duplicate_of","duplicate_comment_id":null} -->',
+  '<!-- reviewx-decision: {"verdict":"new","severity":"Major"} -->',
+].join("\n");
+
 export class OpenCodeClient {
   private readonly configDir: string;
 
@@ -197,21 +240,20 @@ export class OpenCodeClient {
     this.configDir = path.resolve(configDir);
   }
 
-  private async invoke<T>(
+  private async invokeText(
     agent: AgentName,
     worktreePath: string,
-    inputPath: string,
+    inputPaths: readonly string[],
     options: AgentRunOptions,
-    validate: (value: unknown) => T,
-  ): Promise<T> {
+    message: string,
+  ): Promise<string> {
     const artifactDir = path.resolve(options.artifactDir);
     const metadata: AgentArtifactMetadata = {
       agent,
       status: "started",
       started_at: new Date().toISOString(),
       ...(this.model === undefined ? {} : { model: this.model }),
-      parse_status: "not_attempted",
-      schema_status: "not_attempted",
+      event_status: "not_attempted",
     };
     let diagnosticOutput: string | undefined;
     let diagnosticSource: AgentOutputSource | undefined;
@@ -226,12 +268,11 @@ export class OpenCodeClient {
           agent,
           "--dir",
           worktreePath,
-          "--file",
-          inputPath,
+          ...inputPaths.flatMap((inputPath) => ["--file", inputPath]),
           "--format",
           "json",
           ...(this.model === undefined ? [] : ["--model", this.model]),
-          "检视当前 MR 的最终整体净变化，只输出约定 JSON。",
+          message,
         ],
         {
           cwd: worktreePath,
@@ -264,66 +305,30 @@ export class OpenCodeClient {
       try {
         outputText = collectOpenCodeText(result.stdout);
       } catch (error) {
-        metadata.parse_status = "failed";
+        metadata.event_status = "failed";
         const detail = redactText(error instanceof Error ? error.message : String(error));
         throw new ReviewXError(
           "AGENT_ERROR",
-          `OpenCode agent ${agent} returned invalid output${detail ? `: ${detail}` : "."}`,
+          `OpenCode agent ${agent} returned invalid event output${detail ? `: ${detail}` : "."}`,
           { cause: error },
         );
       }
       diagnosticOutput = outputText;
       diagnosticSource = "assistant_text";
       metadata.assistant_chars = outputText.length;
+      metadata.event_status = "succeeded";
       await writeArtifact(artifactDir, "assistant.txt", outputText);
-
-      const processed = processAgentOutputText(outputText);
-      const attempt = processed.success ? processed : processed.attempt;
-      if (attempt) {
-        metadata.strategy = attempt.strategy;
-        metadata.candidate_chars = attempt.candidateText.length;
-        metadata.appended_closers = attempt.appendedClosers;
-        await writeArtifact(artifactDir, "candidate.txt", attempt.candidateText);
-        if (attempt.processedText !== undefined) {
-          metadata.processed_chars = attempt.processedText.length;
-          await writeArtifact(artifactDir, "processed.txt", attempt.processedText);
-        }
-      }
-      if (!processed.success) {
-        metadata.parse_status = "failed";
-        throw new ReviewXError(
-          "AGENT_ERROR",
-          `OpenCode agent ${agent} returned invalid output: ${processed.error}`,
-        );
-      }
-      metadata.parse_status = "succeeded";
-
-      let validated: T;
-      try {
-        validated = validate(processed.value);
-      } catch (error) {
-        metadata.schema_status = "failed";
-        throw error;
-      }
-      metadata.schema_status = "succeeded";
-      await writeArtifact(artifactDir, "result.json", `${JSON.stringify(validated, null, 2)}\n`);
       metadata.status = "succeeded";
       metadata.finished_at = new Date().toISOString();
       await writeArtifact(artifactDir, "metadata.json", `${JSON.stringify(metadata, null, 2)}\n`);
-      return validated;
+      return outputText;
     } catch (error) {
       metadata.status = "failed";
       metadata.finished_at = new Date().toISOString();
       metadata.error = redactText(error instanceof Error ? error.message : String(error));
       await mkdir(artifactDir, { recursive: true, mode: 0o700 });
       await writeArtifact(artifactDir, "metadata.json", `${JSON.stringify(metadata, null, 2)}\n`);
-      throw attachAgentContext(
-        error,
-        agent,
-        artifactDir,
-        diagnosticOutput,
-        diagnosticSource,
-      );
+      throw attachAgentContext(error, agent, artifactDir, diagnosticOutput, diagnosticSource);
     }
   }
 
@@ -332,46 +337,102 @@ export class OpenCodeClient {
     worktreePath: string,
     inputPath: string,
     options: AgentRunOptions,
-  ): Promise<ExpertResult> {
-    return await this.invoke(expert, worktreePath, inputPath, options, (value) => {
-      let result: ExpertResult;
-      try {
-        result = expertResultSchema.parse(value);
-      } catch (error) {
-        throw new ReviewXError("AGENT_ERROR", `Agent ${expert} returned an invalid result.`, {
-          cause: error,
-        });
-      }
-      if (result.expert !== expert) {
-        throw new ReviewXError(
-          "AGENT_ERROR",
-          `Agent ${expert} returned result for ${result.expert}.`,
-        );
-      }
-      return result;
-    });
+  ): Promise<ExpertReport> {
+    const artifactDir = path.resolve(options.artifactDir);
+    await mkdir(artifactDir, { recursive: true, mode: 0o700 });
+    await snapshotInputs(artifactDir, [inputPath]);
+    const markdown = await this.invokeText(
+      expert,
+      worktreePath,
+      [inputPath],
+      options,
+      "检视当前 MR 的最终整体净变化，输出一份完整 Markdown 评审报告。",
+    );
+    await writeArtifact(artifactDir, "report.md", markdown);
+    return { expert, markdown };
   }
 
   async runJudge(
     worktreePath: string,
-    inputPath: string,
+    inputPaths: readonly string[],
     options: AgentRunOptions,
-  ): Promise<JudgeResult> {
-    return await this.invoke(
-      "review-judge",
-      worktreePath,
-      inputPath,
-      options,
-      (value) => {
+  ): Promise<JudgeReport> {
+    const artifactDir = path.resolve(options.artifactDir);
+    const metadata: JudgeArtifactMetadata = {
+      agent: "review-judge",
+      status: "started",
+      started_at: new Date().toISOString(),
+      attempts: 0,
+      decision_status: "not_attempted",
+    };
+    await mkdir(artifactDir, { recursive: true, mode: 0o700 });
+    await snapshotInputs(artifactDir, inputPaths);
+
+    let lastDocument: string | undefined;
+    let lastError: unknown;
+    try {
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        metadata.attempts = attempt;
+        const attemptDir = path.join(artifactDir, `attempt-${attempt}`);
+        const message =
+          attempt === 1
+            ? "综合检视附加的 MR 上下文和三份专家 Markdown 报告。首行输出约定的 reviewx-decision 隐藏控制头，随后输出 Markdown 裁决报告。"
+            : `上一次输出的 reviewx-decision 控制头无效：${redactText(lastError instanceof Error ? lastError.message : String(lastError))}\n请重新完成裁决，并严格使用以下四种首行之一：\n${judgeHeaders}\n首行不要使用 Markdown 代码围栏。`;
+        lastDocument = await this.invokeText(
+          "review-judge",
+          worktreePath,
+          inputPaths,
+          { ...options, artifactDir: attemptDir },
+          message,
+        );
+        await writeArtifact(attemptDir, "report.md", lastDocument);
+
         try {
-          return judgeResultSchema.parse(value);
+          const report = parseJudgeDocument(lastDocument);
+          metadata.decision_status = "succeeded";
+          metadata.status = "succeeded";
+          metadata.verdict = report.decision.verdict;
+          metadata.finished_at = new Date().toISOString();
+          await Promise.all([
+            writeArtifact(artifactDir, "report.md", report.document),
+            writeArtifact(
+              artifactDir,
+              "decision.json",
+              `${JSON.stringify(report.decision, null, 2)}\n`,
+            ),
+            ...(report.decision.verdict === "new"
+              ? [writeArtifact(artifactDir, "comment.md", report.markdown)]
+              : []),
+            writeArtifact(artifactDir, "metadata.json", `${JSON.stringify(metadata, null, 2)}\n`),
+          ]);
+          return report;
         } catch (error) {
-          throw new ReviewXError("AGENT_ERROR", "Judge returned an invalid result.", {
-            cause: error,
-          });
+          if (!(error instanceof JudgeDocumentError)) throw error;
+          lastError = error;
+          metadata.decision_status = "failed";
+          await writeArtifact(attemptDir, "decision-error.txt", `${redactText(error.message)}\n`);
         }
-      },
-    );
+      }
+
+      throw new ReviewXError(
+        "AGENT_ERROR",
+        "Judge returned an invalid reviewx-decision header after one retry.",
+        { cause: lastError },
+      );
+    } catch (error) {
+      metadata.status = "failed";
+      metadata.finished_at = new Date().toISOString();
+      metadata.error = redactText(error instanceof Error ? error.message : String(error));
+      await writeArtifact(artifactDir, "metadata.json", `${JSON.stringify(metadata, null, 2)}\n`);
+      if (error instanceof ReviewXError && error.details?.agent === "review-judge") throw error;
+      throw attachAgentContext(
+        error,
+        "review-judge",
+        artifactDir,
+        lastDocument,
+        lastDocument === undefined ? undefined : "assistant_text",
+      );
+    }
   }
 }
 

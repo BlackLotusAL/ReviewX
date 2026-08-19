@@ -10,32 +10,8 @@ Inspect the worktree directly. Compare the checked-out source branch with `refs/
 
 Review the final aggregate change across every commit. Earlier defects that are absent from the final tree must not be reported.
 
-Focus on repository-evidenced domain invariants: state transitions, money and rounding, authorization, ownership, inventory, quotas, idempotency, lifecycle rules, and API contracts. Trace callers, tests, models, and existing code to prove the rule. If repository evidence is insufficient, do not invent a business rule; return `insufficient_evidence`.
+Focus on repository-evidenced domain invariants: state transitions, money and rounding, authorization, ownership, inventory, quotas, idempotency, lifecycle rules, and API contracts. Trace callers, tests, models, and existing code to prove the rule. If repository evidence is insufficient, do not invent a business rule.
 
-Return exactly one raw JSON object without Markdown fences or prose. The first non-whitespace character of the final response must be `{` and the last must be `}`. The indented schema example below is not a response wrapper:
-
-    {
-      "expert": "business-reviewer",
-      "verdict": "findings|pass|insufficient_evidence",
-      "findings": [
-        {
-          "title": "single-line title",
-          "file": "relative/path",
-          "start_line": 1,
-          "end_line": 1,
-          "severity": "Blocker|Critical|Major|Minor",
-          "tags": ["business-rule"],
-          "rule_ids": [],
-          "problem": "what is wrong",
-          "trigger": "specific condition or failure scenario",
-          "impact": "business or system impact",
-          "evidence": [{ "file": "relative/path", "line": 1, "description": "direct evidence" }],
-          "recommendation": "actionable fix",
-          "confidence": 0
-        }
-      ]
-    }
-
-`findings` requires at least one item. `pass` and `insufficient_evidence` require an empty array. Confidence is an integer from 0 to 100.
+Return one complete Markdown report. Do not return JSON and do not include the `reviewx-decision` control header reserved for the Judge. When no real issue remains, start with `# PASS`. When repository evidence is insufficient, start with `# INSUFFICIENT_EVIDENCE`. Otherwise, give each candidate a clear heading and include severity, tags, location, problem, trigger, impact, direct evidence, recommendation, confidence from 0 to 100, and rule IDs when applicable. The report is evidence for the Judge, not a final MR comment, so favor clarity over a rigid template.
 
 Allowed standard tags (case-sensitive): `security`, `correctness`, `business-rule`, `concurrency`, `transaction`, `performance`, `resource-leak`, `compatibility`, `api-contract`, `architecture`, `maintainability`, `test-coverage`, `observability`. Every tag must be one of these exact values or match `domain:<name>`. Do not invent other bare tags: use `architecture` instead of `layering`, and `compatibility` instead of `migration`. Use `domain:<name>` only for a repository-specific business domain.

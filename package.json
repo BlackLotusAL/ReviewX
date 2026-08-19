@@ -27,6 +27,7 @@
     "test:coverage": "vitest run --coverage",
     "test:smoke": "tsx tests/smoke.ts",
     "simulate:review": "tsx scripts/simulate-review.ts",
+    "simulate:judge": "tsx scripts/simulate-judge.ts",
     "pack:check": "tsx scripts/pack-check.ts"
   },
   "dependencies": {

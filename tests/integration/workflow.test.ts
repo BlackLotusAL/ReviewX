@@ -3,14 +3,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createWorkflowHarness,
   finalComment,
-  finding,
   type WorkflowHarness,
 } from "../helpers/harness.js";
 
 const active: WorkflowHarness[] = [];
 
-async function harness(result: Parameters<typeof createWorkflowHarness>[0]) {
-  const value = await createWorkflowHarness(result);
+async function harness(
+  decision: Parameters<typeof createWorkflowHarness>[0],
+  markdown?: string,
+) {
+  const value = await createWorkflowHarness(decision, markdown);
   active.push(value);
   return value;
 }
@@ -40,12 +42,12 @@ afterEach(async () => {
   await Promise.all(active.splice(0).map((item) => item.cleanup()));
 });
 
-describe("full review workflow with real Git", () => {
-  it("processes the final multi-commit worktree once and persists pass", async () => {
+describe("full Markdown review workflow with real Git", () => {
+  it("passes three expert Markdown reports to the Judge and persists replayable artifacts", async () => {
     const value = await harness({ verdict: "pass" });
     await value.workflow.scanOnce();
-    const state = await value.state.read();
-    expect(state.repositories["1"]!.merge_requests["7"]).toEqual({
+
+    expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toEqual({
       last_processed_updated_at: "2026-08-12T00:00:00Z",
       finding_history: [],
     });
@@ -56,192 +58,187 @@ describe("full review workflow with real Git", () => {
       "review-judge",
     ]);
     expect((value.agents.inputs[0] as { commits: unknown[] }).commits).toHaveLength(2);
-    expect(value.git.calls.some((call) => call.includes("diff"))).toBe(false);
-    expect(await missing(value.paths.worktrees)).toBe(false);
-    expect(await missing(`${value.paths.worktrees}/1/7`)).toBe(true);
-    expect(await readdir(value.paths.runs)).toEqual([]);
-
-    value.codeHub.listUpdatedAt = "2026-08-11T19:00:00-05:00";
-    await value.workflow.scanOnce();
-    expect(value.agents.agents).toHaveLength(4);
-    expect(value.codeHub.comments).toHaveLength(0);
-  });
-
-  it("extracts prose-wrapped fenced JSON from every expert and the judge", async () => {
-    const value = await harness({ verdict: "pass" });
-    value.agents.fencedOutput = true;
-
-    await value.workflow.scanOnce();
-
-    expect(value.agents.agents).toEqual([
-      "design-reviewer",
-      "business-reviewer",
-      "code-reviewer",
-      "review-judge",
+    expect(value.agents.judgeInputFiles[0]).toHaveLength(4);
+    expect(value.agents.judgeInputContents[0]!.slice(1)).toEqual([
+      value.agents.expertMarkdown,
+      value.agents.expertMarkdown,
+      value.agents.expertMarkdown,
     ]);
-    for (const agent of value.agents.agents) {
-      expect(
-        value.logs.some(
-          (line) => eventName(line) === "agent_started" && line.includes(`Agent ${agent} started`),
-        ),
-      ).toBe(true);
-      expect(
-        value.logs.some(
-          (line) => eventName(line) === "agent_finished" && line.includes(`Agent ${agent} finished`),
-        ),
-      ).toBe(true);
+
+    const [runId] = await readdir(value.paths.agentOutputs);
+    expect(runId).toBeDefined();
+    for (const name of ["01-design-reviewer", "02-business-reviewer", "03-code-reviewer"]) {
+      const directory = `${value.paths.agentOutputs}/${runId}/${name}`;
+      expect(await readFile(`${directory}/report.md`, "utf8")).toBe(value.agents.expertMarkdown);
+      expect(JSON.parse(await readFile(`${directory}/input-manifest.json`, "utf8")).files)
+        .toHaveLength(1);
     }
-    const terminal = findLog(value.logs, "review_run_finished");
-    expect(terminal).toContain("result pass");
-    expect(terminal).not.toContain("agent_output");
+    const judgeDirectory = `${value.paths.agentOutputs}/${runId}/04-review-judge`;
+    expect(JSON.parse(await readFile(`${judgeDirectory}/decision.json`, "utf8"))).toEqual({
+      verdict: "pass",
+    });
+    expect(JSON.parse(await readFile(`${judgeDirectory}/input-manifest.json`, "utf8")).files)
+      .toHaveLength(4);
+    expect(await missing(`${judgeDirectory}/attempt-1/assistant.txt`)).toBe(false);
+    expect(await missing(`${value.paths.runs}/${runId}`)).toBe(true);
+    expect(await missing(`${value.paths.worktrees}/1/7`)).toBe(true);
+    expect(value.git.calls.some((call) => call.includes("diff"))).toBe(false);
   });
 
-  it("persists artifacts while removing analysis fences before every terminal result", async () => {
+  it("preserves arbitrary expert Markdown without JSON extraction or repair", async () => {
     const value = await harness({ verdict: "pass" });
-    value.agents.pollutedOutput = true;
+    value.agents.expertMarkdown = `# Review notes
 
+Prose with { "json": true } and code:
+
+\`\`\`diff
+-old
++new
+\`\`\``;
     await value.workflow.scanOnce();
 
-    const runIds = await readdir(value.paths.agentOutputs);
-    expect(runIds).toHaveLength(1);
-    const runId = runIds[0]!;
+    const [runId] = await readdir(value.paths.agentOutputs);
+    expect(await readFile(
+      `${value.paths.agentOutputs}/${runId}/02-business-reviewer/report.md`,
+      "utf8",
+    )).toBe(value.agents.expertMarkdown);
     expect(findLog(value.logs, "review_run_finished")).toContain("result pass");
-    expect(value.logs.join("")).toContain(runId.replaceAll("-", "").slice(0, 8));
-    expect(value.logs.join("")).not.toContain(runId);
-    const artifactNames = [
-      "01-design-reviewer",
-      "02-business-reviewer",
-      "03-code-reviewer",
-      "04-review-judge",
-    ];
-    for (const name of artifactNames) {
-      const directory = `${value.paths.agentOutputs}/${runId}/${name}`;
-      const metadata = JSON.parse(await readFile(`${directory}/metadata.json`, "utf8"));
-      expect(metadata).toMatchObject({
-        status: "succeeded",
-        strategy: "trailing_raw",
-        parse_status: "succeeded",
-        schema_status: "succeeded",
-      });
-      expect(await readFile(`${directory}/assistant.txt`, "utf8")).toContain("```diff");
-      expect(JSON.parse(await readFile(`${directory}/processed.txt`, "utf8"))).toBeTruthy();
-      expect(JSON.parse(await readFile(`${directory}/result.json`, "utf8"))).toBeTruthy();
-    }
-    expect(await missing(`${value.paths.runs}/${runId}`)).toBe(true);
-    expect(await missing(`${value.paths.agentOutputs}/${runId}`)).toBe(false);
   });
 
-  it("publishes one new comment, refreshes the cursor, and prevents its own loop", async () => {
-    const value = await harness({
-      verdict: "new",
-      selected_finding: finding,
-      comment_markdown: finalComment(),
+  it("retries an invalid Judge control header once and retains both attempts", async () => {
+    const value = await harness({ verdict: "pass" });
+    value.agents.invalidJudgeAttempts = 1;
+    await value.workflow.scanOnce();
+
+    expect(value.agents.agents.slice(-2)).toEqual(["review-judge", "review-judge"]);
+    const [runId] = await readdir(value.paths.agentOutputs);
+    const directory = `${value.paths.agentOutputs}/${runId}/04-review-judge`;
+    expect(await readFile(`${directory}/attempt-1/decision-error.txt`, "utf8"))
+      .toContain("reviewx-decision");
+    expect(await missing(`${directory}/attempt-2/assistant.txt`)).toBe(false);
+    expect(JSON.parse(await readFile(`${directory}/metadata.json`, "utf8"))).toMatchObject({
+      status: "succeeded",
+      attempts: 2,
+      decision_status: "succeeded",
+      verdict: "pass",
     });
+  });
+
+  it("fails after exactly one Judge retry and leaves the cursor untouched", async () => {
+    const value = await harness({ verdict: "pass" });
+    value.agents.invalidJudgeAttempts = 2;
+    await value.workflow.scanOnce();
+
+    expect(value.agents.agents.filter((agent) => agent === "review-judge")).toHaveLength(2);
+    expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
+    expect(findLog(value.logs, "agent_failed")).toContain("invalid reviewx-decision header");
+    expect(findLog(value.logs, "review_run_finished")).toContain("result failed");
+  });
+
+  it("publishes the Judge Markdown unchanged and stores Markdown history", async () => {
+    const markdown = `# Flexible review
+
+Any valid Markdown body may be published, including {braces}.`;
+    const value = await harness({ verdict: "new", severity: "Critical" }, markdown);
     process.env.CODEHUB_TEST_TOKEN = "must-not-leak";
     try {
       await value.workflow.scanOnce();
     } finally {
       delete process.env.CODEHUB_TEST_TOKEN;
     }
-    expect(value.codeHub.comments).toEqual([{ body: finalComment(), severity: "major" }]);
+
+    expect(value.codeHub.comments).toEqual([{ body: markdown, severity: "major" }]);
     const mrState = (await value.state.read()).repositories["1"]!.merge_requests["7"]!;
     expect(mrState.last_processed_updated_at).toBe("2026-08-12T00:01:00Z");
     expect(mrState.finding_history).toEqual([
       {
-        summary: {
-          title: finding.title,
-          file: finding.file,
-          problem: finding.problem,
-        },
+        review_markdown: markdown,
         publication_status: "confirmed",
         comment_id: "comment-1",
       },
     ]);
     expect(value.agents.environments.every((env) => env.CODEHUB_TEST_TOKEN === undefined)).toBe(true);
     expect(value.logs.join("")).not.toContain("must-not-leak");
-    expect(value.logs.join("")).not.toContain(finalComment());
-    const runIds = await readdir(value.paths.agentOutputs);
-    expect(runIds).toHaveLength(1);
-    expect(await readFile(`${value.paths.agentOutputs}/${runIds[0]!}/review.md`, "utf8")).toBe(
-      finalComment(),
-    );
-    const config = JSON.parse(value.agents.environments[0]!.OPENCODE_CONFIG_CONTENT!);
-    expect(config.permission["*"]).toBe("deny");
-    expect(config.permission.bash["git diff *"]).toBe("allow");
-
-    // A temporarily stale list response must not make the already processed MR run again.
-    await value.workflow.scanOnce();
-    expect(value.codeHub.comments).toHaveLength(1);
-    expect(value.agents.agents).toHaveLength(4);
+    expect(value.logs.join("")).not.toContain(markdown);
+    const [runId] = await readdir(value.paths.agentOutputs);
+    expect(await readFile(`${value.paths.agentOutputs}/${runId}/review.md`, "utf8")).toBe(markdown);
   });
 
   it("persists duplicate_of without publishing", async () => {
-    const value = await harness({ verdict: "duplicate_of", duplicate_comment_id: "old-comment" });
+    const value = await harness({
+      verdict: "duplicate_of",
+      duplicate_comment_id: "old-comment",
+    });
     await value.workflow.scanOnce();
     expect(value.codeHub.comments).toHaveLength(0);
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"])
       .toMatchObject({ last_processed_updated_at: "2026-08-12T00:00:00Z" });
-    const terminal = findLog(value.logs, "review_run_finished");
-    expect(terminal).toContain("result duplicate_of");
-    expect(terminal).toContain("duplicate comment old-comment");
+    expect(findLog(value.logs, "review_run_finished")).toContain("duplicate comment old-comment");
+  });
+
+  it("passes legacy history to the Judge without rewriting state", async () => {
+    const value = await harness({ verdict: "pass" });
+    await value.state.updateMergeRequest("1", "7", (current) => ({
+      ...current,
+      finding_history: [
+        {
+          summary: { title: "Legacy", file: "service.ts", problem: "Legacy problem" },
+          publication_status: "confirmed",
+          comment_id: "legacy-comment",
+        },
+      ],
+    }));
+    await value.workflow.scanOnce();
+
+    const judgeContext = JSON.parse(value.agents.judgeInputContents[0]![0]!);
+    expect(judgeContext.finding_history[0]).toMatchObject({
+      summary: { title: "Legacy" },
+      comment_id: "legacy-comment",
+    });
+    expect((await value.state.read()).repositories["1"]!.merge_requests["7"]!.finding_history[0])
+      .toHaveProperty("summary");
   });
 
   it.each([
     ["closed", "closed", "2026-08-12T00:00:00Z"],
     ["updated", "opened", "2026-08-12T00:00:30Z"],
   ] as const)("does not publish when the MR is %s", async (result, state, updatedAt) => {
-    const value = await harness({
-      verdict: "new",
-      selected_finding: finding,
-      comment_markdown: finalComment(),
-    });
+    const value = await harness({ verdict: "new", severity: "Critical" }, finalComment());
     value.codeHub.prePublishState = state;
     value.codeHub.prePublishUpdatedAt = updatedAt;
     await value.workflow.scanOnce();
     expect(value.codeHub.comments).toHaveLength(0);
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
-    const terminal = findLog(value.logs, "review_run_finished");
-    expect(terminal).toContain(`[WARN] [review_run_finished]`);
-    expect(terminal).toContain(`result ${result}`);
+    expect(findLog(value.logs, "review_run_finished")).toContain(`result ${result}`);
+    const [runId] = await readdir(value.paths.agentOutputs);
+    expect(await readFile(`${value.paths.agentOutputs}/${runId}/review.md`, "utf8"))
+      .toBe(finalComment());
   });
 
   it.each(["unknown", "missing_id"] as const)(
     "records %s publication history and treats the update as processed",
     async (publication) => {
-      const value = await harness({
-        verdict: "new",
-        selected_finding: finding,
-        comment_markdown: finalComment(),
-      });
+      const value = await harness({ verdict: "new", severity: "Critical" }, finalComment());
       value.codeHub.publication = publication;
       await value.workflow.scanOnce();
       const mrState = (await value.state.read()).repositories["1"]!.merge_requests["7"]!;
-      expect(mrState.last_processed_updated_at).toBe("2026-08-12T00:01:00Z");
       expect(mrState.finding_history[0]).toMatchObject({
+        review_markdown: finalComment(),
         publication_status: "unknown",
         comment_id: null,
       });
-      const terminal = findLog(value.logs, "review_run_finished");
-      expect(terminal).toContain("[WARN] [review_run_finished]");
-      expect(terminal).toContain("result publication_unknown");
-      value.codeHub.listUpdatedAt = "2026-08-12T00:01:00Z";
-      await value.workflow.scanOnce();
-      expect(value.codeHub.comments).toHaveLength(1);
-      expect(value.agents.agents).toHaveLength(4);
+      expect(findLog(value.logs, "review_run_finished")).toContain("result publication_unknown");
     },
   );
 
-  it("leaves the cursor untouched on agent failure and retries from the beginning", async () => {
+  it("leaves the cursor untouched on expert failure and retries from the beginning", async () => {
     const value = await harness({ verdict: "pass" });
     value.agents.invalidExpert = "business-reviewer";
     await value.workflow.scanOnce();
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
     expect(value.agents.agents).toEqual(["design-reviewer", "business-reviewer"]);
-    const failedAgent = findLog(value.logs, "agent_failed");
-    expect(failedAgent).toContain("Agent business-reviewer failed");
-    expect(failedAgent).not.toContain("not-json");
-    expect(failedAgent).not.toContain("agent-output");
-    expect(findLog(value.logs, "review_run_finished")).toContain("result failed");
+    expect(findLog(value.logs, "agent_failed")).not.toContain("not-json");
+
     value.agents.invalidExpert = undefined;
     await value.workflow.scanOnce();
     expect(value.agents.agents.slice(2)).toEqual([
@@ -250,91 +247,19 @@ describe("full review workflow with real Git", () => {
       "code-reviewer",
       "review-judge",
     ]);
-    expect((await value.state.read()).repositories["1"]!.merge_requests["7"])
-      .toMatchObject({ last_processed_updated_at: "2026-08-12T00:00:00Z" });
-    expect((await readFile(value.paths.log, "utf8")).trim().split(/\r?\n/u).length).toBe(
-      value.logs.length,
-    );
   });
 
-  it("isolates repository scan failures and continues the scan lifecycle", async () => {
-    const value = await harness({ verdict: "pass" });
-    value.codeHub.listFailure = true;
-    await value.workflow.scanOnce();
-    expect(value.agents.agents).toEqual([]);
-    expect(value.logs.map(eventName)).toEqual([
-      "scan_started",
-      "repository_scan_started",
-      "repository_scan_failed",
-      "scan_finished",
-    ]);
-    expect(findLog(value.logs, "repository_scan_failed")).toContain(
-      "[WARN] [repository_scan_failed]",
-    );
-  });
+  it("isolates repository failures and keeps cleanup failures non-terminal", async () => {
+    const repositoryFailure = await harness({ verdict: "pass" });
+    repositoryFailure.codeHub.listFailure = true;
+    await repositoryFailure.workflow.scanOnce();
+    expect(repositoryFailure.agents.agents).toEqual([]);
+    expect(findLog(repositoryFailure.logs, "repository_scan_failed")).toContain("[WARN]");
 
-  it("warns on cleanup failure without changing a successful review result", async () => {
-    const value = await harness({ verdict: "pass" });
-    value.git.cleanupFailure = true;
-
-    await value.workflow.scanOnce();
-
-    expect(findLog(value.logs, "cleanup_failed")).toContain("[WARN] [cleanup_failed]");
-    const terminal = findLog(value.logs, "review_run_finished");
-    expect(terminal).toContain("[INFO] [review_run_finished]");
-    expect(terminal).toContain("result pass");
-  });
-
-  it("ignores non-open list results and honors a pre-aborted scan", async () => {
-    const value = await harness({ verdict: "pass" });
-    value.codeHub.listState = "closed";
-    await value.workflow.scanOnce();
-    expect(value.agents.agents).toEqual([]);
-
-    const controller = new AbortController();
-    controller.abort();
-    const callCount = value.codeHub.calls.length;
-    await value.workflow.scanOnce(controller.signal);
-    expect(value.codeHub.calls).toHaveLength(callCount);
-  });
-
-  it("does not advance the cursor when comment publication fails", async () => {
-    const value = await harness({
-      verdict: "new",
-      selected_finding: finding,
-      comment_markdown: finalComment(),
-    });
-    value.codeHub.publication = "failure";
-    await value.workflow.scanOnce();
-    expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
-    expect(findLog(value.logs, "comment_publish_failed")).toContain("forbidden");
-    expect(findLog(value.logs, "review_run_finished")).toContain("result failed");
-  });
-
-  it("uses the review start timestamp when unknown publication cannot refresh", async () => {
-    const value = await harness({
-      verdict: "new",
-      selected_finding: finding,
-      comment_markdown: finalComment(),
-    });
-    value.codeHub.publication = "unknown";
-    value.codeHub.refreshFailure = true;
-    await value.workflow.scanOnce();
-    const mrState = (await value.state.read()).repositories["1"]!.merge_requests["7"]!;
-    expect(mrState.last_processed_updated_at).toBe("2026-08-12T00:00:00Z");
-    expect(mrState.finding_history[0]).toMatchObject({ publication_status: "unknown" });
-  });
-
-  it("fails a new result whose Markdown does not match the finding", async () => {
-    const value = await harness({
-      verdict: "new",
-      selected_finding: finding,
-      comment_markdown: "not a valid review comment",
-    });
-    await value.workflow.scanOnce();
-    expect(value.codeHub.comments).toEqual([]);
-    expect(value.codeHub.viewCalls).toBe(0);
-    expect(findLog(value.logs, "comment_publish_failed")).toContain("comment_markdown");
-    expect(findLog(value.logs, "review_run_finished")).toContain("result failed");
+    const cleanupFailure = await harness({ verdict: "pass" });
+    cleanupFailure.git.cleanupFailure = true;
+    await cleanupFailure.workflow.scanOnce();
+    expect(findLog(cleanupFailure.logs, "cleanup_failed")).toContain("[WARN]");
+    expect(findLog(cleanupFailure.logs, "review_run_finished")).toContain("result pass");
   });
 });

@@ -71,20 +71,24 @@ runtime/
 ├── worktrees/<repo-key>/<mr-iid>/
 ├── runs/<run-id>/
     ├── expert-input.json
-    └── judge-input.json
+    └── judge-context.json
 └── agent-output/<run-id>/
     ├── review.md
     └── <sequence>-<agent>/
+        ├── inputs/
+        ├── input-manifest.json
         ├── stdout.jsonl
         ├── stderr.txt
         ├── assistant.txt
-        ├── candidate.txt
-        ├── processed.txt
-        ├── result.json
+        ├── report.md
+        ├── decision.json        # Judge only
+        ├── comment.md           # new only
+        ├── attempt-1/           # Judge process artifacts
+        ├── attempt-2/           # only after an invalid control header
         └── metadata.json
 ```
 
-`runs/` 只保存当前运行的临时输入，运行结束后删除对应 run 目录和 worktree。每次 Agent 调用都把原始事件流、拼接正文、截取候选、实际转换文本、校验结果和处理元数据永久保存到 `agent-output/`；产生新意见时，发往 CodeHub 的 Markdown 原文另存为 `<run-id>/review.md`。这些文件可能包含完整源码片段和模型分析，不做脱敏或自动清理；部署方必须限制目录访问并自行配置保留周期。日志同样不内建轮转。
+`runs/` 只保存当前运行的临时输入，运行结束后删除对应 run 目录和 worktree。每个 Agent 的原始事件流、拼接正文、Markdown 报告、输入副本、附件清单和处理元数据永久保存到 `agent-output/`，因此清理临时目录后仍可重放。产生新意见时，发往 CodeHub 的 Markdown 原文另存为 `<run-id>/review.md`。这些文件可能包含完整源码片段和模型分析，不做脱敏或自动清理；部署方必须限制目录访问并自行配置保留周期。日志同样不内建轮转。
 
 ### 3.2 状态
 
@@ -97,11 +101,15 @@ interface MergeRequestState {
   last_processed_updated_at?: string;
   finding_history: FindingHistory[];
 }
-interface FindingHistory {
-  summary: { title: string; file: string; problem: string };
+type FindingHistory = {
+  review_markdown: string;
   publication_status: "confirmed" | "unknown";
   comment_id: string | null;
-}
+} | {
+  summary: { title: string; file: string; problem: string }; // 旧版兼容
+  publication_status: "confirmed" | "unknown";
+  comment_id: string | null;
+};
 ```
 
 `repositories` 以 CodeHub Project ID 为键，`merge_requests` 以 MR IID 为键。
@@ -127,7 +135,7 @@ stdout 和 `reviewx.log` 逐字节输出相同的单行文本日志。自定义 
 
 ```text
 [2026-08-15T10:20:30.123Z] [INFO] [agent_started] Agent design-reviewer started for review run 550e8400 on repository 123, MR 45.
-[2026-08-15T10:20:35.456Z] [INFO] [agent_finished] Agent design-reviewer finished with verdict pass and 0 findings in 5333ms for review run 550e8400 on repository 123, MR 45.
+[2026-08-15T10:20:35.456Z] [INFO] [agent_finished] Agent design-reviewer finished with a Markdown report with 842 characters in 5333ms for review run 550e8400 on repository 123, MR 45.
 ```
 
 `INFO` 表示正常开始或成功，`WARN` 表示仓库扫描失败但继续、MR 已更新或关闭、发布结果未知、清理失败等非致命异常，`ERROR` 表示 Agent、核心阶段、Review Run 或 runtime 失败。日志覆盖扫描、仓库、worktree、commit、四个 Agent、评论发布、状态保存、清理和 Review Run 终态，并包含适用的计数、判定和耗时。
@@ -204,12 +212,12 @@ opencode run \
   --dir <worktree> \
   --file <run-dir>/expert-input.json \
   --format json \
-  "检视当前 MR 的最终整体净变化，只输出约定 JSON。"
+  "检视当前 MR 的最终整体净变化，输出一份完整 Markdown 评审报告。"
 ```
 
-`--format json` 只保证 OpenCode 事件流为 JSONL。Agent 正文仍要求输出一个裸 JSON 对象；后处理会依次识别完整裸 JSON、位于正文末尾的裸 JSON、位于末尾的无语言或 `json` fenced block，最后才使用全文唯一 fenced block 的旧兼容规则。末尾答案一旦确定，前置分析中的 fenced diff 和代码示例不参与计数。
+`--format json` 只保证 OpenCode 事件流为 JSONL。ReviewX 按 `messageID` 重建最后一个正常结束的 assistant message；三个专家的正文作为自由 Markdown 原样保存，不执行 JSON 提取、fence 识别或结构补全。Judge 同时附加 MR context JSON 和三份专家报告，正文只要求恰好一个独立行的隐藏 `reviewx-decision` 控制头；控制头前的瞬时旁白不进入 canonical 报告。
 
-后处理先截取候选，再识别 JSON 字符串、转义和括号栈。仅当字符串已经闭合、括号无错配且结尾只缺结构闭合时，按逆序追加缺失的 `]`/`}`；尾逗号、非法转义、未闭合字符串和尾随说明文字不修复。转换后仍执行严格结果 schema 和来源 Agent 身份校验。每一步的原文、候选、处理文本与状态都写入 artifact 目录。
+Judge 控制头无效时，ReviewX 以新会话反馈合法首行示例并只重试一次；两次调用的原始产物分目录保留。OpenCode 非零退出、超时、非法 JSONL 事件或空正文不重试。
 
 三个专家按设计、业务、代码顺序执行，全部成功后才调用裁判。每个进程最多运行 `--agent-timeout`；超时后 ReviewX 终止进程并判定本次 Review Run 失败。
 
@@ -242,51 +250,32 @@ permission:
 
 ### 5.3 输入输出协议
 
-专家输入只包含以 `repo_id`、`mr_iid` 标识的 MR 元数据、source/target 分支、worktree 路径和完整 commit 列表。裁判输入在此基础上增加三个专家结果，以及带发布状态和可空评论 ID 的历史问题。
+专家输入只包含以 `repo_id`、`mr_iid` 标识的 MR 元数据、source/target 分支、worktree 路径和完整 commit 列表。每位专家返回一份非空 Markdown，ReviewX 保存为对应 `report.md`。裁判输入由同一份 MR context、三个 `report.md` 附件，以及带发布状态和可空评论 ID 的历史问题组成。附件内容属于不可信证据，不能覆盖 Judge prompt。
 
-JSON wire format 使用 `snake_case`，规范类型如下：
+工作流只要求 Judge 输出中恰好一个独立行使用以下最小控制协议；提示词仍要求它作为首个非空行：
 
 ```ts
 type Severity = "Blocker" | "Critical" | "Major" | "Minor";
-type ExpertName = "design-reviewer" | "business-reviewer" | "code-reviewer";
-
-interface Evidence { file: string; line: number; description: string; }
-
-interface Finding {
-  title: string;
-  file: string;
-  start_line: number;
-  end_line: number;
-  severity: Severity;
-  tags: string[];
-  rule_ids: string[];
-  problem: string;
-  trigger: string;
-  impact: string;
-  evidence: Evidence[];
-  recommendation: string;
-  confidence: number;
-}
-
-interface ExpertResult { expert: ExpertName; verdict: "findings" | "pass" | "insufficient_evidence"; findings: Finding[]; }
-
-interface SelectedFinding extends Finding {
-  example_code: string;
-}
-
-type JudgeResult =
+type JudgeDecision =
   | { verdict: "pass" }
   | { verdict: "duplicate_of"; duplicate_comment_id: string | null }
-  | { verdict: "new"; selected_finding: SelectedFinding; comment_markdown: string };
+  | { verdict: "new"; severity: Severity };
 ```
 
-`pass` 和 `insufficient_evidence` 的专家结果不得包含候选问题。裁判每次只能返回联合类型中的一个分支；仅 `new` 包含符合 PRD 全部字段的评论 Markdown。
+控制头使用 HTML 注释包装单行严格 JSON：
 
-`opencode run --format json` 返回 JSON 事件流。ReviewX 按事件顺序重建完整的最终 assistant 文本，再将其作为单个 JSON 对象解析和校验；不能只读取最后一个文本事件。以下情况均判定失败：
+```text
+<!-- reviewx-decision: {"verdict":"pass"} -->
+<!-- reviewx-decision: {"verdict":"duplicate_of","duplicate_comment_id":"comment-id"} -->
+<!-- reviewx-decision: {"verdict":"duplicate_of","duplicate_comment_id":null} -->
+<!-- reviewx-decision: {"verdict":"new","severity":"Major"} -->
+```
+
+`new` 必须在控制头后提供非空 Markdown；ReviewX 只剥离控制头，其余正文不做字段级校验或改写，并原样保存和发布。`pass`、`duplicate_of` 可附带内部 Markdown 说明，但不发布。以下情况判定失败：
 
 - 子进程非零退出、超时或缺少最终响应。
-- JSON 无法解析、包含多个顶层对象或不符合对应类型。
-- 枚举、行号、置信度或裁判分支约束非法。
+- OpenCode JSONL 事件非法或最终 Markdown 为空。
+- Judge 控制头缺失、JSON 非法、包含额外字段、枚举非法，或 `new` 正文为空；控制头错误只重试一次。
 
 ## 6. 扫描、检视与发布流程
 
@@ -355,7 +344,7 @@ reviewx run
 5. `new` 按固定 severity 映射发布；`pass` 和 `duplicate_of` 不发布评论。
 6. 检视期间 MR 更新或关闭时不评论；成功评论刷新 `updated_at`，`WRITE_RESULT_UNKNOWN` 记录未知历史且不自动重试。
 7. 所有代码托管操作都对应第 4.1 节的 CodeHub CLI 命令；并发命令不损坏状态，Agent 不能编辑代码、运行项目命令、访问网络或发布评论。
-8. 多个分析代码块不会阻止末尾结果解析；每个 Agent 的完整后处理产物可通过 `run_id` 在 `runtime/agent-output/` 定位。
+8. 专家 Markdown 中的代码块、JSON 片段和自由说明会原样保留；每个 Agent 的可重放输入和完整报告可通过 `run_id` 在 `runtime/agent-output/` 定位。
 
 ### 8.3 官方参考
 

@@ -39,7 +39,7 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 1. 管理员通过命令添加仓库 ID；workflow 验证仓库存在性和读取权限，拒绝无效或重复 ID，并持久化有效记录。
 2. Workflow 定时查询已登记仓库的 Open MR，仅为首次发现、此前失败或 `updated_at` 严格变新的 MR 创建 Review Run；等价时间格式或暂时返回的旧时间不触发重复检视。
 3. Workflow clone 或 fetch 仓库，创建隔离工作区并切换到 MR source 分支，然后读取 source/target 分支信息和 commit 列表。
-4. 设计、业务和代码专家直接读取工作区，基于 MR 的最终整体净变化独立输出结构化候选问题。
+4. 设计、业务和代码专家直接读取工作区，基于 MR 的最终整体净变化独立输出 Markdown 评审报告。
 5. 裁判 Agent 结合候选问题、工作区和该 MR 的历史 ReviewX 问题，输出 `PASS`、`duplicate_of` 或一个 `new` 问题。
 6. `new` 问题仅在 MR 仍为 Open 且 `updated_at` 与检视开始时一致时发布为普通 MR 评论；`PASS`、`duplicate_of`、已更新或已关闭的 MR 不发布评论。
 7. Workflow 保存处理结果并写日志：成功处理后更新 `last_processed_updated_at`；发布评论后刷新 MR 最新 `updated_at` 并保存评论 ID；失败或中断时不更新时间，下一次扫描从头重试。
@@ -75,10 +75,10 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 | PR-AI-001 | 每个 Review Run 由设计规范、业务规则和代码正确性专家独立分析 |
 | PR-AI-002 | 专家直接读取工作区，自主获取整体差异和完成判断所需的代码上下文 |
 | PR-AI-003 | 专家必须综合所有 commit 形成的最终整体净变化，不得输出已被后续 commit 修复的问题 |
-| PR-AI-004 | 各专家输出结构化候选问题；证据不足时明确返回证据不足而不是推测 |
-| PR-AI-005 | 裁判 Agent 验证证据、合并重复问题并排序，每次输出一个 Selected Finding 或 `PASS` |
-| PR-AI-006 | 裁判 Agent 将 Selected Finding 与历史 ReviewX 问题做语义比较，并标记为 `new` 或 `duplicate_of` |
-| PR-AI-007 | 裁判 Agent 为 `new` 问题生成符合第 5 章规范的评论内容 |
+| PR-AI-004 | 各专家输出独立 Markdown 评审报告；证据不足时明确说明证据不足而不是推测 |
+| PR-AI-005 | 裁判 Agent 读取三个专家报告，验证证据、合并重复问题并排序，每次选择至多一个有效问题 |
+| PR-AI-006 | 裁判 Agent 将选中的问题与历史 ReviewX Markdown 或旧版摘要做语义比较，并标记为 `new` 或 `duplicate_of` |
+| PR-AI-007 | 裁判 Agent 以隐藏 JSON 控制头表达 `pass`、`new` 或 `duplicate_of`，并为 `new` 生成符合第 5 章规范的自由 Markdown 评论正文 |
 
 ### 4.4 评论与日志
 
@@ -175,7 +175,7 @@ observability
 
 ### 6.2 最小可靠性
 
-- 必须持久化仓库 ID、每个 MR 的 `last_processed_updated_at`、历史问题摘要和评论 ID。
+- 必须持久化仓库 ID、每个 MR 的 `last_processed_updated_at`、历史评论 Markdown 和评论 ID；旧版问题摘要保持读取兼容。
 - 服务重启后不恢复中间阶段；未完成运行由后续扫描从头重新执行。
 - MR 更新检查、单 MR 单运行和历史问题比较必须确保不会发布旧结果或重复问题。
 
