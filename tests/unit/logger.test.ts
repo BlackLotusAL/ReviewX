@@ -153,6 +153,164 @@ describe("text logger", () => {
     );
   });
 
+  it("formats omitted progress fields and all progress-adjacent failure events", () => {
+    const context = {
+      time: "2026-08-15T10:20:30.123+08:00",
+      run_id: "550e8400-e29b-41d4-a716-446655440000",
+      repo_id: "123",
+      mr_iid: "45",
+    };
+    const lines = [
+      formatLogLine({
+        ...context,
+        level: "error",
+        event: "worktree_prepare_failed",
+        duration_ms: -10,
+        error: "password=secret",
+      }),
+      formatLogLine({
+        ...context,
+        level: "error",
+        event: "commits_load_failed",
+        duration_ms: 10,
+        error: "load failed",
+      }),
+      formatLogLine({
+        ...context,
+        level: "info",
+        event: "agent_tool_started",
+        agent: "design-reviewer",
+        step: 1,
+        tool: "read",
+      }),
+      formatLogLine({
+        ...context,
+        level: "warn",
+        event: "agent_tool_finished",
+        agent: "design-reviewer",
+        step: 1,
+        tool: "read",
+        status: "failed",
+      }),
+      formatLogLine({
+        ...context,
+        level: "info",
+        event: "agent_step_finished",
+        agent: "design-reviewer",
+        step: 1,
+      }),
+      formatLogLine({
+        ...context,
+        level: "info",
+        event: "agent_waiting",
+        agent: "design-reviewer",
+        step: 1,
+        last_event: "tool_use",
+        idle_ms: 60_000,
+      }),
+      formatLogLine({
+        ...context,
+        level: "info",
+        event: "agent_progress_summary",
+        agent: "design-reviewer",
+        step: 1,
+        summary: {
+          steps: 1,
+          tool_calls: 0,
+          step_duration_ms: 0,
+          tool_duration_ms: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          reasoning_tokens: 0,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+        },
+      }),
+      formatLogLine({
+        ...context,
+        level: "info",
+        event: "agent_finished",
+        agent: "design-reviewer",
+        duration_ms: 1,
+      }),
+      formatLogLine({
+        ...context,
+        level: "info",
+        event: "agent_finished",
+        agent: "review-judge",
+        verdict: "duplicate_of",
+        duplicate_of_comment_id: null,
+        duration_ms: 1,
+      }),
+      formatLogLine({
+        ...context,
+        level: "error",
+        event: "comment_publish_failed",
+        duration_ms: 1,
+        error: "publish failed",
+      }),
+      formatLogLine({
+        ...context,
+        level: "info",
+        event: "state_saved",
+        operation: "cursor",
+        duration_ms: 1,
+      }),
+      formatLogLine({
+        ...context,
+        level: "info",
+        event: "state_saved",
+        operation: "finding_history",
+        duration_ms: 1,
+      }),
+      formatLogLine({
+        ...context,
+        level: "error",
+        event: "state_save_failed",
+        operation: "cursor",
+        duration_ms: 1,
+        error: "cursor failed",
+      }),
+      formatLogLine({
+        ...context,
+        level: "error",
+        event: "state_save_failed",
+        operation: "finding_history",
+        duration_ms: 1,
+        error: "history failed",
+      }),
+      formatLogLine({
+        ...context,
+        level: "info",
+        event: "review_run_finished",
+        updated_at: "2026-08-15T10:00:00Z",
+        result: "new",
+        comment_id: null,
+        duration_ms: 1,
+      }),
+      formatLogLine({
+        ...context,
+        level: "info",
+        event: "review_run_finished",
+        updated_at: "2026-08-15T10:00:00Z",
+        result: "duplicate_of",
+        duplicate_of_comment_id: null,
+        duration_ms: 1,
+      }),
+    ];
+    const output = lines.join("");
+
+    expect(output).toContain("Worktree preparation failed after 0ms");
+    expect(output).toContain("Agent design-reviewer, step 1");
+    expect(output).toContain("finished tool read with status failed.");
+    expect(output).toContain("completed progress tracking with 1 steps and 0 tool calls; startup unknown");
+    expect(output).toContain("a Markdown report with 0 characters");
+    expect(output).toContain("duplicate comment unknown");
+    expect(output).toContain("Appended unknown finding history");
+    expect(output).toContain("Saving finding history failed");
+    expect(output).not.toContain("password=secret");
+  });
+
   it("turns append failures into LOG_ERROR", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "reviewx-log-"));
     roots.push(root);

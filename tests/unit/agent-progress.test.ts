@@ -152,11 +152,21 @@ describe("OpenCode agent progress tracking", () => {
 
   it("sanitizes paths and details without exposing external targets", () => {
     const worktree = path.resolve("progress-fixture");
+    expect(summarizeToolAction(worktree, "read", null)).toBeUndefined();
     expect(summarizeToolAction(worktree, "read", {
       filePath: path.join(worktree, "src", "service.ts"),
       offset: 10,
       limit: 20,
     })).toBe("path=src/service.ts offset=10 limit=20");
+    expect(summarizeToolAction(worktree, "read", {
+      path: worktree,
+      limit: 20,
+    })).toBe("path=. offset=0 limit=20");
+    expect(summarizeToolAction(worktree, "read", {
+      path: path.join(worktree, "src", "service.ts"),
+      offset: 10,
+    })).toBe("path=src/service.ts offset=10");
+    expect(summarizeToolAction(worktree, "read", {})).toBeUndefined();
     expect(summarizeToolAction(worktree, "read", {
       filePath: path.resolve(worktree, "..", "secret.env"),
     })).toBe("path=[external]");
@@ -169,13 +179,103 @@ describe("OpenCode agent progress tracking", () => {
     expect(summarizeToolAction(worktree, "bash", {
       command: "git status; echo SOURCE_MUST_NOT_LOG; git log --oneline -5",
     })).toBe("command=git status; git log --oneline -5");
+    expect(summarizeToolAction(worktree, "bash", {
+      command: "echo SOURCE_MUST_NOT_LOG",
+    })).toBe("command=[redacted]");
+    expect(summarizeToolAction(worktree, "bash", {})).toBeUndefined();
     expect(summarizeToolAction(worktree, "grep", {
       pattern: `password=secret ${"x".repeat(500)}`,
       path: worktree,
     })).toMatch(/^pattern=password=\*\*\*/u);
+    expect(summarizeToolAction(worktree, "glob", {
+      path: worktree,
+      include: "*.ts",
+    })).toBe("path=. include=*.ts");
+    expect(summarizeToolAction(worktree, "glob", {})).toBeUndefined();
     expect(summarizeToolAction(worktree, "grep", {
       pattern: "x".repeat(500),
     })!.length).toBe(300);
+  });
+
+  it("handles missing metadata, failed tools, duplicate states, and empty step metrics", async () => {
+    const events: AgentProgressEvent[] = [];
+    const tracker = new AgentProgressTracker(
+      path.resolve("progress-fixture"),
+      (event) => {
+        events.push(event);
+      },
+      { heartbeatMs: 600_000, monotonicNow: () => 0 },
+    );
+
+    await tracker.handleLine("   ");
+    await tracker.handleLine(line(null));
+    await tracker.handleLine(line({}));
+    await tracker.handleLine(line({
+      type: "tool_use",
+      part: {
+        callID: "running-without-action",
+        state: { status: "running" },
+      },
+    }));
+    await tracker.handleLine(line({
+      type: "tool_use",
+      part: {
+        callID: "running-without-action",
+        state: { status: "running" },
+      },
+    }));
+    await tracker.handleLine(line({
+      type: "tool_use",
+      part: {
+        state: {},
+      },
+    }));
+    const failedTool = {
+      type: "tool_use",
+      part: {
+        state: { status: "failed" },
+      },
+    };
+    await tracker.handleLine(line(failedTool));
+    await tracker.handleLine(line(failedTool));
+    await tracker.handleLine(line({
+      type: "tool_use",
+      timestamp: 10,
+      part: {
+        messageID: "message-with-fallback-time",
+        state: { status: "error", time: { start: -1, end: 5 } },
+      },
+    }));
+    await tracker.handleLine(line({
+      type: "step_finish",
+      part: {},
+    }));
+
+    const summary = await tracker.finish();
+    await expect(tracker.handleLine(line({ type: "future_event" }))).resolves.toBeUndefined();
+    await expect(tracker.finish()).resolves.toEqual(summary);
+
+    expect(events).toContainEqual({
+      type: "tool_started",
+      step: 1,
+      tool: "unknown",
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_finished",
+      tool: "unknown",
+      status: "failed",
+    }));
+    expect(events).toContainEqual({ type: "step_finished", step: 7 });
+    expect(summary).toMatchObject({
+      steps: 7,
+      tool_calls: 2,
+      tool_duration_ms: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      reasoning_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+    });
   });
 
   it("emits 60-second heartbeats, resets on activity, and stops after finish", async () => {
@@ -189,6 +289,9 @@ describe("OpenCode agent progress tracking", () => {
       },
       { heartbeatMs: 60_000, monotonicNow: () => now },
     );
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events).toEqual([]);
 
     now = 60_000;
     await vi.advanceTimersByTimeAsync(60_000);
@@ -219,6 +322,22 @@ describe("OpenCode agent progress tracking", () => {
     now = 255_000;
     await vi.advanceTimersByTimeAsync(120_000);
     expect(events).toHaveLength(count);
+  });
+
+  it("propagates progress callback failures and preserves them after closing", async () => {
+    const expected = new Error("progress log failed");
+    const tracker = new AgentProgressTracker(
+      path.resolve("progress-fixture"),
+      () => {
+        throw expected;
+      },
+      { heartbeatMs: 600_000 },
+    );
+
+    await expect(tracker.handleLine(line({ type: "future_event" }))).rejects.toBe(expected);
+    await expect(tracker.handleLine(line({ type: "future_event" }))).rejects.toBe(expected);
+    await expect(tracker.finish()).rejects.toBe(expected);
+    await expect(tracker.finish()).rejects.toBe(expected);
   });
 
   it("ignores malformed and unknown progress lines without failing", async () => {
