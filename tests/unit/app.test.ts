@@ -56,11 +56,12 @@ describe("application services", () => {
     const state = path.join(temp, "state.json");
     const log = path.join(temp, "log.log");
     await writeFile(state, '{"repositories":{}}\n', "utf8");
-    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 35);
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      if (String(chunk).includes("[scan_finished]")) controller.abort();
+      return true;
+    });
     await runService({ statePath: state, logPath: log, intervalMs: 10, agentTimeoutMs: 100, signal: controller.signal });
-    clearTimeout(timer);
     expect(await readFile(log, "utf8")).toContain("[INFO] [scan_finished]");
     await expect(readFile(path.join(temp, "reviewx.run.lock"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
