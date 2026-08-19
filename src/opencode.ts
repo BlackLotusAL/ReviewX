@@ -2,6 +2,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import type { AgentOutputSource, ExpertName, ExpertReport, JudgeReport } from "./contracts.js";
+import {
+  AgentProgressTracker,
+  type AgentProgressEvent,
+  type AgentProgressSummary,
+} from "./agent-progress.js";
 import { diagnosticTextPreview, redactText, ReviewXError } from "./errors.js";
 import { JudgeDocumentError, parseJudgeDocument } from "./judge-report.js";
 import { DefaultCommandRunner, type CommandRunner } from "./process.js";
@@ -126,7 +131,10 @@ export interface AgentRunOptions {
   artifactDir: string;
   timeoutMs: number;
   signal?: AbortSignal;
+  onProgress?: (event: AgentRunProgress) => void | Promise<void>;
 }
+
+export type AgentRunProgress = AgentProgressEvent & { attempt?: number };
 
 interface AgentArtifactMetadata {
   agent: AgentName;
@@ -140,6 +148,7 @@ interface AgentArtifactMetadata {
   stderr_chars?: number;
   assistant_chars?: number;
   event_status: "not_attempted" | "succeeded" | "failed";
+  progress?: AgentProgressSummary;
   error?: string;
 }
 
@@ -246,6 +255,7 @@ export class OpenCodeClient {
     inputPaths: readonly string[],
     options: AgentRunOptions,
     message: string,
+    attempt?: number,
   ): Promise<string> {
     const artifactDir = path.resolve(options.artifactDir);
     const metadata: AgentArtifactMetadata = {
@@ -257,8 +267,15 @@ export class OpenCodeClient {
     };
     let diagnosticOutput: string | undefined;
     let diagnosticSource: AgentOutputSource | undefined;
+    let progress: AgentProgressTracker | undefined;
     try {
       await mkdir(artifactDir, { recursive: true, mode: 0o700 });
+      progress = new AgentProgressTracker(worktreePath, async (event) => {
+        await options.onProgress?.({
+          ...event,
+          ...(attempt === undefined ? {} : { attempt }),
+        });
+      });
       const result = await this.runner.run(
         this.executable,
         [
@@ -280,8 +297,10 @@ export class OpenCodeClient {
           timeoutMs: options.timeoutMs,
           ...(options.signal === undefined ? {} : { signal: options.signal }),
           maxOutputBytes: 20 * 1024 * 1024,
+          onStdoutLine: async (line) => await progress!.handleLine(line),
         },
       );
+      metadata.progress = await progress.finish();
       metadata.exit_code = result.exitCode;
       metadata.signal = result.signal;
       metadata.stdout_chars = result.stdout.length;
@@ -323,12 +342,29 @@ export class OpenCodeClient {
       await writeArtifact(artifactDir, "metadata.json", `${JSON.stringify(metadata, null, 2)}\n`);
       return outputText;
     } catch (error) {
+      let finalError = error;
+      if (progress !== undefined) {
+        metadata.progress = progress.summary();
+        try {
+          metadata.progress = await progress.finish();
+        } catch (progressError) {
+          finalError = progressError;
+        }
+      }
       metadata.status = "failed";
       metadata.finished_at = new Date().toISOString();
-      metadata.error = redactText(error instanceof Error ? error.message : String(error));
+      metadata.error = redactText(
+        finalError instanceof Error ? finalError.message : String(finalError),
+      );
       await mkdir(artifactDir, { recursive: true, mode: 0o700 });
       await writeArtifact(artifactDir, "metadata.json", `${JSON.stringify(metadata, null, 2)}\n`);
-      throw attachAgentContext(error, agent, artifactDir, diagnosticOutput, diagnosticSource);
+      throw attachAgentContext(
+        finalError,
+        agent,
+        artifactDir,
+        diagnosticOutput,
+        diagnosticSource,
+      );
     }
   }
 
@@ -384,6 +420,7 @@ export class OpenCodeClient {
           inputPaths,
           { ...options, artifactDir: attemptDir },
           message,
+          attempt,
         );
         await writeArtifact(attemptDir, "report.md", lastDocument);
 

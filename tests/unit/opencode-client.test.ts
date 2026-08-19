@@ -29,7 +29,12 @@ class AgentRunner implements CommandRunner {
     options: CommandOptions = {},
   ): Promise<CommandResult> {
     this.calls.push({ command, args: [...args], options });
-    return this.resultFor(args[args.indexOf("--agent") + 1]!, this.calls.length);
+    const result = this.resultFor(args[args.indexOf("--agent") + 1]!, this.calls.length);
+    for (const line of result.stdout.split(/\r?\n/u)) {
+      if (line === "") continue;
+      await options.onStdoutLine?.(line);
+    }
+    return result;
   }
 }
 

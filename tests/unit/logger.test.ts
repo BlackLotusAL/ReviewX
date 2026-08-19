@@ -117,6 +117,42 @@ describe("text logger", () => {
     expect(line).not.toContain(runId);
   });
 
+  it("formats safe Agent progress actions, timings, attempts, and tokens", () => {
+    const context = {
+      time: "2026-08-15T10:20:30.123+08:00",
+      run_id: "550e8400-e29b-41d4-a716-446655440000",
+      repo_id: "123",
+      mr_iid: "45",
+      agent: "review-judge" as const,
+      attempt: 2,
+      step: 3,
+    };
+    expect(formatLogLine({
+      ...context,
+      level: "info",
+      event: "agent_tool_finished",
+      tool: "grep",
+      action: "pattern=Controller path=src",
+      status: "completed",
+      duration_ms: 42,
+    })).toContain(
+      "Agent review-judge, attempt 2, step 3 for review run 550e8400 on repository 123, MR 45 finished tool grep (pattern=Controller path=src) with status completed in 42ms",
+    );
+    expect(formatLogLine({
+      ...context,
+      level: "info",
+      event: "agent_step_finished",
+      reason: "tool-calls",
+      duration_ms: 2_500,
+      model_until_action_ms: 2_400,
+      input_tokens: 1_000,
+      output_tokens: 100,
+      cache_read_tokens: 800,
+    })).toContain(
+      "reason tool-calls; total 2500ms, model-to-action 2400ms; tokens input 1000, output 100, cache-read 800",
+    );
+  });
+
   it("turns append failures into LOG_ERROR", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "reviewx-log-"));
     roots.push(root);

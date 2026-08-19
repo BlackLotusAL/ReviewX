@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { diagnosticTextPreview, errorMessage, redactText } from "../../src/errors.js";
+import {
+  diagnosticTextPreview,
+  errorMessage,
+  redactText,
+  ReviewXError,
+} from "../../src/errors.js";
 import { DefaultCommandRunner } from "../../src/process.js";
 import { assertPathWithin, createRuntimePaths } from "../../src/runtime.js";
 
@@ -11,6 +16,45 @@ describe("process, redaction, and runtime paths", () => {
       { timeoutMs: 5_000 },
     );
     expect(result).toMatchObject({ exitCode: 0, stdout: "out", stderr: "err" });
+  });
+
+  it("streams complete UTF-8 stdout lines in order without changing captured output", async () => {
+    const lines: string[] = [];
+    const result = await new DefaultCommandRunner().run(
+      process.execPath,
+      [
+        "-e",
+        [
+          "const value = Buffer.from('第一行\\r\\nsecond\\n末行', 'utf8');",
+          "process.stdout.write(value.subarray(0, 2));",
+          "setTimeout(() => process.stdout.write(value.subarray(2, 9)), 5);",
+          "setTimeout(() => process.stdout.write(value.subarray(9)), 10);",
+        ].join(""),
+      ],
+      {
+        onStdoutLine: async (line) => {
+          await Promise.resolve();
+          lines.push(line);
+        },
+      },
+    );
+    expect(lines).toEqual(["第一行", "second", "末行"]);
+    expect(result.stdout).toBe("第一行\r\nsecond\n末行");
+  });
+
+  it("terminates the process and propagates stdout callback failures", async () => {
+    await expect(
+      new DefaultCommandRunner().run(
+        process.execPath,
+        ["-e", "process.stdout.write('ready\\n');setTimeout(() => {}, 5000)"],
+        {
+          timeoutMs: 10_000,
+          onStdoutLine: async () => {
+            throw new ReviewXError("LOG_ERROR", "stream log failed");
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "LOG_ERROR", message: "stream log failed" });
   });
 
   it("enforces timeout and pre-aborted signals", async () => {

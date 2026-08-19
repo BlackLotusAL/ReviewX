@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
+import type { AgentProgressSummary } from "./agent-progress.js";
 import type { ExpertName, ReviewResult, Severity } from "./contracts.js";
 import { redactText, ReviewXError } from "./errors.js";
 
@@ -10,6 +11,12 @@ interface ReviewContext {
   run_id: string;
   repo_id: string;
   mr_iid: string;
+}
+
+interface AgentProgressContext extends ReviewContext {
+  agent: AgentName;
+  attempt?: number;
+  step: number;
 }
 
 export type LogEvent =
@@ -67,6 +74,50 @@ export type LogEvent =
       error: string;
     } & ReviewContext)
   | ({ level: "info"; event: "agent_started"; agent: AgentName } & ReviewContext)
+  | ({
+      level: "info";
+      event: "agent_process_ready";
+      startup_ms: number;
+    } & AgentProgressContext)
+  | ({ level: "info"; event: "agent_step_started" } & AgentProgressContext)
+  | ({
+      level: "info";
+      event: "agent_tool_started";
+      tool: string;
+      action?: string;
+    } & AgentProgressContext)
+  | ({
+      level: "info" | "warn";
+      event: "agent_tool_finished";
+      tool: string;
+      action?: string;
+      status: "completed" | "failed";
+      duration_ms?: number;
+    } & AgentProgressContext)
+  | ({
+      level: "info";
+      event: "agent_step_finished";
+      reason?: string;
+      duration_ms?: number;
+      model_until_action_ms?: number;
+      text_generation_ms?: number;
+      input_tokens?: number;
+      output_tokens?: number;
+      reasoning_tokens?: number;
+      cache_read_tokens?: number;
+      cache_write_tokens?: number;
+    } & AgentProgressContext)
+  | ({
+      level: "info";
+      event: "agent_waiting";
+      last_event: string;
+      idle_ms: number;
+    } & AgentProgressContext)
+  | ({
+      level: "info";
+      event: "agent_progress_summary";
+      summary: AgentProgressSummary;
+    } & AgentProgressContext)
   | ({
       level: "info";
       event: "agent_finished";
@@ -180,6 +231,46 @@ function reviewContext(record: ReviewContext): string {
   return `review run ${shortRunId(record.run_id)} on repository ${oneLine(record.repo_id)}, MR ${oneLine(record.mr_iid)}`;
 }
 
+function agentProgressContext(record: AgentProgressContext): string {
+  const attempt = record.attempt === undefined ? "" : `, attempt ${record.attempt}`;
+  return `Agent ${record.agent}${attempt}, step ${record.step} for ${reviewContext(record)}`;
+}
+
+function actionDetail(action: string | undefined): string {
+  return action === undefined ? "" : ` (${oneLine(action)})`;
+}
+
+function timingDetail(label: string, value: number | undefined): string | undefined {
+  return value === undefined ? undefined : `${label} ${elapsed(value)}ms`;
+}
+
+function stepMetrics(
+  record: Extract<LogEvent, { event: "agent_step_finished" }>,
+): string {
+  const timings = [
+    timingDetail("total", record.duration_ms),
+    timingDetail("model-to-action", record.model_until_action_ms),
+    timingDetail("text-generation", record.text_generation_ms),
+  ].filter((value): value is string => value !== undefined);
+  const tokens = [
+    record.input_tokens === undefined ? undefined : `input ${record.input_tokens}`,
+    record.output_tokens === undefined ? undefined : `output ${record.output_tokens}`,
+    record.reasoning_tokens === undefined ? undefined : `reasoning ${record.reasoning_tokens}`,
+    record.cache_read_tokens === undefined
+      ? undefined
+      : `cache-read ${record.cache_read_tokens}`,
+    record.cache_write_tokens === undefined
+      ? undefined
+      : `cache-write ${record.cache_write_tokens}`,
+  ].filter((value): value is string => value !== undefined);
+  const parts = [
+    ...(record.reason === undefined ? [] : [`reason ${oneLine(record.reason)}`]),
+    ...(timings.length === 0 ? [] : [timings.join(", ")]),
+    ...(tokens.length === 0 ? [] : [`tokens ${tokens.join(", ")}`]),
+  ];
+  return parts.length === 0 ? "" : ` with ${parts.join("; ")}`;
+}
+
 function safeError(error: string, runId?: string): string {
   const redacted = redactText(error);
   const shortened = runId === undefined ? redacted : redacted.replaceAll(runId, shortRunId(runId));
@@ -254,6 +345,25 @@ function logDetail(record: LogRecord): string {
       return `Commit loading failed after ${elapsed(record.duration_ms)}ms for ${reviewContext(record)}: ${safeError(record.error, record.run_id)}`;
     case "agent_started":
       return `Agent ${record.agent} started for ${reviewContext(record)}.`;
+    case "agent_process_ready":
+      return `${agentProgressContext(record)} produced its first OpenCode event after ${elapsed(record.startup_ms)}ms.`;
+    case "agent_step_started":
+      return `${agentProgressContext(record)} started.`;
+    case "agent_tool_started":
+      return `${agentProgressContext(record)} started tool ${oneLine(record.tool)}${actionDetail(record.action)}.`;
+    case "agent_tool_finished":
+      return `${agentProgressContext(record)} finished tool ${oneLine(record.tool)}${actionDetail(record.action)} with status ${record.status}${record.duration_ms === undefined ? "" : ` in ${elapsed(record.duration_ms)}ms`}.`;
+    case "agent_step_finished":
+      return `${agentProgressContext(record)} finished${stepMetrics(record)}.`;
+    case "agent_waiting":
+      return `${agentProgressContext(record)} produced no OpenCode event for ${elapsed(record.idle_ms)}ms after ${oneLine(record.last_event)}.`;
+    case "agent_progress_summary": {
+      const summary = record.summary;
+      const startup = summary.startup_ms === undefined
+        ? "startup unknown"
+        : `startup ${elapsed(summary.startup_ms)}ms`;
+      return `${agentProgressContext(record)} completed progress tracking with ${summary.steps} steps and ${summary.tool_calls} tool calls; ${startup}, step total ${elapsed(summary.step_duration_ms)}ms, tool total ${elapsed(summary.tool_duration_ms)}ms; tokens input ${summary.input_tokens}, output ${summary.output_tokens}, reasoning ${summary.reasoning_tokens}, cache-read ${summary.cache_read_tokens}, cache-write ${summary.cache_write_tokens}.`;
+    }
     case "agent_finished":
       return `Agent ${record.agent} finished with ${agentResult(record)} in ${elapsed(record.duration_ms)}ms for ${reviewContext(record)}.`;
     case "agent_failed":

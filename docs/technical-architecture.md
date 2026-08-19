@@ -134,13 +134,17 @@ stdout 和 `reviewx.log` 逐字节输出相同的单行文本日志。自定义 
 固定前缀只包含时间、等级和稳定事件名；`run_id`、仓库、MR、结果、计数和耗时写入事件详情。完整 UUID 仅用于内部状态和 `runs/`、`agent-output/` 路径，日志统一显示去掉连字符后的前 8 位小写十六进制短引用。
 
 ```text
-[2026-08-15T10:20:30.123Z] [INFO] [agent_started] Agent design-reviewer started for review run 550e8400 on repository 123, MR 45.
-[2026-08-15T10:20:35.456Z] [INFO] [agent_finished] Agent design-reviewer finished with a Markdown report with 842 characters in 5333ms for review run 550e8400 on repository 123, MR 45.
+[2026-08-15T18:20:30.123+08:00] [INFO] [agent_started] Agent design-reviewer started for review run 550e8400 on repository 123, MR 45.
+[2026-08-15T18:20:31.123+08:00] [INFO] [agent_step_started] Agent design-reviewer, step 1 for review run 550e8400 on repository 123, MR 45 started.
+[2026-08-15T18:20:33.123+08:00] [INFO] [agent_tool_finished] Agent design-reviewer, step 1 for review run 550e8400 on repository 123, MR 45 finished tool read (path=src/service.ts) with status completed in 12ms.
+[2026-08-15T18:20:35.456+08:00] [INFO] [agent_finished] Agent design-reviewer finished with a Markdown report with 842 characters in 5333ms for review run 550e8400 on repository 123, MR 45.
 ```
 
-`INFO` 表示正常开始或成功，`WARN` 表示仓库扫描失败但继续、MR 已更新或关闭、发布结果未知、清理失败等非致命异常，`ERROR` 表示 Agent、核心阶段、Review Run 或 runtime 失败。日志覆盖扫描、仓库、worktree、commit、四个 Agent、评论发布、状态保存、清理和 Review Run 终态，并包含适用的计数、判定和耗时。
+OpenCode stdout 以 UTF-8 JSONL 实时逐行分发，同时继续完整保存到 `stdout.jsonl`。四个 Agent 默认记录进程就绪、步骤、工具动作、步骤耗时和 token/cache 汇总；Judge 事件包含 attempt。连续 60 秒没有新事件时输出 `agent_waiting`，任何新行都会重置心跳。模型到首个动作的耗时同时包含 Provider 排队、网络和模型推理，不能解释为纯网络耗时。
 
-所有动态详情保持单行，错误先脱敏并限制长度。日志不包含 Agent 原始输出、评论正文、凭据、clone URL、环境变量或完整 UUID；完整 Agent 输出只存在访问受限的 `agent-output/` 产物目录。
+`INFO` 表示正常开始、等待或成功，`WARN` 表示工具失败、仓库扫描失败但继续、MR 已更新或关闭、发布结果未知、清理失败等非致命异常，`ERROR` 表示 Agent、核心阶段、Review Run 或 runtime 失败。日志覆盖扫描、仓库、worktree、commit、四个 Agent、评论发布、状态保存、清理和 Review Run 终态，并包含适用的计数、判定和耗时。
+
+所有动态详情保持单行，错误和 Agent 动作先脱敏；动作限制为 300 字符，文件只显示 worktree 相对路径，外部路径显示 `[external]`。日志不包含工具输出、源码、提示词、Agent 原始输出、评论正文、凭据、clone URL、环境变量或完整 UUID；完整 Agent 输出只存在访问受限的 `agent-output/` 产物目录。
 
 ## 4. CodeHub CLI 与 Git worktree
 

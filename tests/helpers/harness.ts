@@ -121,6 +121,7 @@ export class ScriptedAgentRunner implements CommandRunner {
   readonly environments: NodeJS.ProcessEnv[] = [];
   invalidExpert: string | undefined;
   invalidJudgeAttempts = 0;
+  failedToolAgent: string | undefined;
   expertMarkdown = "# PASS\n\nNo actionable issue remains in the final aggregate change.";
 
   constructor(
@@ -154,6 +155,7 @@ export class ScriptedAgentRunner implements CommandRunner {
       }
     }
     if (agent === this.invalidExpert) {
+      await options.onStdoutLine?.("not-json");
       return { exitCode: 0, signal: null, stdout: "not-json\n", stderr: "" };
     }
     let output: string;
@@ -169,9 +171,85 @@ export class ScriptedAgentRunner implements CommandRunner {
       output = this.expertMarkdown;
     }
     const split = Math.floor(output.length / 2);
-    const stdout = [output.slice(0, split), output.slice(split)]
-      .map((text) => JSON.stringify({ type: "text", part: { text } }))
-      .join("\n");
+    const invocation = this.agents.length;
+    const toolMessage = `${agent}-${invocation}-tool`;
+    const finalMessage = `${agent}-${invocation}-final`;
+    const stdout = [
+      {
+        type: "step_start",
+        timestamp: 1_000,
+        part: { messageID: toolMessage },
+      },
+      {
+        type: "tool_use",
+        timestamp: 1_050,
+        part: {
+          messageID: toolMessage,
+          callID: `${toolMessage}-call`,
+          tool: "read",
+          state: {
+            status: agent === this.failedToolAgent ? "error" : "completed",
+            input: { filePath: path.join(options.cwd ?? ".", "service.ts") },
+            output: "TOOL_OUTPUT_MUST_NOT_REACH_LOGS token=tool-secret",
+            time: { start: 1_025, end: 1_040 },
+          },
+        },
+      },
+      {
+        type: "step_finish",
+        timestamp: 1_075,
+        part: {
+          messageID: toolMessage,
+          reason: "tool-calls",
+          tokens: {
+            input: 100,
+            output: 10,
+            reasoning: 0,
+            cache: { read: 50, write: 0 },
+          },
+        },
+      },
+      {
+        type: "step_start",
+        timestamp: 2_000,
+        part: { messageID: finalMessage },
+      },
+      {
+        type: "text",
+        timestamp: 2_050,
+        part: {
+          messageID: finalMessage,
+          text: output.slice(0, split),
+          time: { start: 2_025, end: 2_035 },
+        },
+      },
+      {
+        type: "text",
+        timestamp: 2_060,
+        part: {
+          messageID: finalMessage,
+          text: output.slice(split),
+          time: { start: 2_035, end: 2_045 },
+        },
+      },
+      {
+        type: "step_finish",
+        timestamp: 2_075,
+        part: {
+          messageID: finalMessage,
+          reason: "stop",
+          tokens: {
+            input: 50,
+            output: 20,
+            reasoning: 0,
+            cache: { read: 25, write: 0 },
+          },
+        },
+      },
+    ].map((event) => JSON.stringify(event)).join("\n");
+    for (const eventLine of stdout.split("\n")) {
+      await options.onStdoutLine?.(eventLine);
+    }
     return { exitCode: 0, signal: null, stdout: `${stdout}\n`, stderr: "" };
   }
 }

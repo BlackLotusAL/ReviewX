@@ -66,15 +66,17 @@ runtime/
 
 三个专家各自生成自由 Markdown 报告，Judge 读取这些报告后输出一个独立行的隐藏 `reviewx-decision` JSON 控制头。ReviewX 只校验该控制头，忽略控制头前的临时模型旁白，正文不做字段级解析；`new` 正文会原样发送到 CodeHub。
 
-每次 Agent 调用的原始 stdout/stderr、完整 Markdown、可重放输入、附件清单和元数据都会永久保存在 `agent-output/`。Judge 首次控制头无效时只重试一次，并分别保留两个 attempt。产生新检视意见时，发送给 CodeHub 的 Markdown 原文同时保存为对应 `<run-id>/review.md`。其中可能包含未脱敏的源码和模型分析；请限制目录权限并自行清理历史产物。
+每次 Agent 调用的原始 stdout/stderr、完整 Markdown、可重放输入、附件清单和元数据都会永久保存在 `agent-output/`。元数据同时汇总启动、步骤、工具和 token/cache 指标。Judge 首次控制头无效时只重试一次，并分别保留两个 attempt。产生新检视意见时，发送给 CodeHub 的 Markdown 原文同时保存为对应 `<run-id>/review.md`。其中可能包含未脱敏的源码和模型分析；请限制目录权限并自行清理历史产物。
 
-日志同时写入 stdout 和文本 `.log` 文件，每行使用 `[带系统本地 UTC 偏移的 ISO-8601 时间] [LEVEL] [event] 英文详情`。系统时区或夏令时变化后，后续日志会使用新的偏移。每个 Review Run 内部使用完整 UUID，日志只显示去掉连字符后的前 8 位短引用；终态 `result` 为 `pass`、`duplicate_of`、`new`、`publication_unknown`、`updated`、`closed` 或 `failed`。
+日志同时写入 stdout 和文本 `.log` 文件，每行使用 `[带系统本地 UTC 偏移的 ISO-8601 时间] [LEVEL] [event] 英文详情`。系统时区或夏令时变化后，后续日志会使用新的偏移。四个 Agent 默认实时记录进程就绪、模型步骤、脱敏工具动作、分步耗时、token 和汇总；连续 60 秒没有 OpenCode 事件时写入 `agent_waiting` 心跳。每个 Review Run 内部使用完整 UUID，日志只显示去掉连字符后的前 8 位短引用；Judge 进度额外显示 attempt，终态 `result` 为 `pass`、`duplicate_of`、`new`、`publication_unknown`、`updated`、`closed` 或 `failed`。
 
 ```text
 [2026-08-15T18:20:30.123+08:00] [INFO] [agent_started] Agent design-reviewer started for review run 550e8400 on repository 123, MR 45.
+[2026-08-15T18:20:31.123+08:00] [INFO] [agent_step_started] Agent design-reviewer, step 1 for review run 550e8400 on repository 123, MR 45 started.
+[2026-08-15T18:20:33.123+08:00] [INFO] [agent_tool_finished] Agent design-reviewer, step 1 for review run 550e8400 on repository 123, MR 45 finished tool read (path=src/service.ts) with status completed in 12ms.
 ```
 
-运行日志记录扫描、worktree、commit、Agent、评论发布、状态保存和清理等关键阶段及耗时，但不记录 Agent 原始输出或评论正文。完整 Agent 产物只保存在访问受限的 `agent-output/`。
+运行日志记录扫描、worktree、commit、Agent、评论发布、状态保存和清理等关键阶段及耗时。Agent 动作最多 300 字符，只包含脱敏命令、搜索模式和 worktree 相对路径；日志不记录工具输出、源码、提示词、Agent 原始文本或评论正文。完整 Agent 产物只保存在访问受限的 `agent-output/`。
 
 ## 可靠性与故障恢复
 

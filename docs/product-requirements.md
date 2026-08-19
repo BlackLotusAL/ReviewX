@@ -91,6 +91,8 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 | PR-LOG-001 | 每个 Review Run 使用稳定 UUID；文本日志使用其前 8 位短引用，并以 `[带系统本地 UTC 偏移的 ISO-8601 时间] [LEVEL] [event]` 作为固定前缀；系统时区或夏令时变化后，后续日志使用新的偏移 |
 | PR-LOG-002 | 日志详情记录仓库 ID、MR ID、`updated_at`、结果或错误、`new`/`duplicate_of` 判断和评论 ID |
 | PR-LOG-003 | 日志记录扫描、worktree、commit、每个 Agent、评论发布、状态保存和清理的关键步骤、结果与耗时，不记录 Agent 原始输出或评论正文 |
+| PR-LOG-004 | 四个 Agent 默认实时记录进程就绪、步骤、脱敏工具动作、步骤耗时和 token/cache 汇总；Judge 事件必须标记 attempt |
+| PR-LOG-005 | Agent 连续 60 秒没有 OpenCode 事件时记录等待心跳；日志不得包含工具输出、源码、提示词或 Assistant 文本，动作最多 300 字符且路径相对 worktree |
 
 ## 5. MR 评论规范
 

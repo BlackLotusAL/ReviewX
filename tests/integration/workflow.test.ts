@@ -105,6 +105,64 @@ Prose with { "json": true } and code:
     expect(findLog(value.logs, "review_run_finished")).toContain("result pass");
   });
 
+  it("streams safe progress for every Agent and persists progress summaries", async () => {
+    const value = await harness({ verdict: "pass" });
+    value.agents.failedToolAgent = "design-reviewer";
+    await value.workflow.scanOnce();
+
+    const progressEvents = value.logs.map(eventName).filter((event) =>
+      event.startsWith("agent_") && !["agent_started", "agent_finished"].includes(event)
+    );
+    expect(progressEvents.filter((event) => event === "agent_process_ready")).toHaveLength(4);
+    expect(progressEvents.filter((event) => event === "agent_tool_finished")).toHaveLength(4);
+    expect(progressEvents.filter((event) => event === "agent_step_finished")).toHaveLength(8);
+    expect(progressEvents.filter((event) => event === "agent_progress_summary")).toHaveLength(4);
+
+    const designStarted = value.logs.findIndex((line) =>
+      eventName(line) === "agent_started" && line.includes("design-reviewer")
+    );
+    const designTool = value.logs.findIndex((line) =>
+      eventName(line) === "agent_tool_finished" && line.includes("design-reviewer")
+    );
+    const designFinished = value.logs.findIndex((line) =>
+      eventName(line) === "agent_finished" && line.includes("design-reviewer")
+    );
+    expect(designStarted).toBeLessThan(designTool);
+    expect(designTool).toBeLessThan(designFinished);
+    expect(value.logs[designTool]).toContain("path=service.ts");
+    expect(value.logs[designTool]).toContain("[WARN]");
+    expect(value.logs[designTool]).toContain("status failed");
+    expect(findLog(value.logs, "agent_step_finished")).toContain("model-to-action 25ms");
+    expect(value.logs.some((line) =>
+      eventName(line) === "agent_process_ready" &&
+      line.includes("review-judge, attempt 1, step 0")
+    )).toBe(true);
+
+    const combinedLogs = value.logs.join("");
+    expect(combinedLogs).not.toContain("TOOL_OUTPUT_MUST_NOT_REACH_LOGS");
+    expect(combinedLogs).not.toContain("tool-secret");
+    expect(combinedLogs).not.toContain(value.agents.expertMarkdown);
+    expect(await readFile(value.paths.log, "utf8")).toBe(combinedLogs);
+
+    const [runId] = await readdir(value.paths.agentOutputs);
+    expect(JSON.parse(await readFile(
+      `${value.paths.agentOutputs}/${runId}/01-design-reviewer/metadata.json`,
+      "utf8",
+    )).progress).toMatchObject({
+      steps: 2,
+      tool_calls: 1,
+      step_duration_ms: 150,
+      tool_duration_ms: 15,
+      input_tokens: 150,
+      output_tokens: 30,
+      cache_read_tokens: 75,
+    });
+    expect(JSON.parse(await readFile(
+      `${value.paths.agentOutputs}/${runId}/04-review-judge/attempt-1/metadata.json`,
+      "utf8",
+    )).progress).toMatchObject({ steps: 2, tool_calls: 1 });
+  });
+
   it("retries an invalid Judge control header once and retains both attempts", async () => {
     const value = await harness({ verdict: "pass" });
     value.agents.invalidJudgeAttempts = 1;
@@ -122,6 +180,12 @@ Prose with { "json": true } and code:
       decision_status: "succeeded",
       verdict: "pass",
     });
+    expect(value.logs.some((line) =>
+      eventName(line) === "agent_process_ready" && line.includes("attempt 1")
+    )).toBe(true);
+    expect(value.logs.some((line) =>
+      eventName(line) === "agent_process_ready" && line.includes("attempt 2")
+    )).toBe(true);
   });
 
   it("fails after exactly one Judge retry and leaves the cursor untouched", async () => {

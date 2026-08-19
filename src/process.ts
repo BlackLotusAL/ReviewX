@@ -1,5 +1,6 @@
 import { spawn as nativeSpawn } from "node:child_process";
 import process from "node:process";
+import { StringDecoder } from "node:string_decoder";
 import crossSpawn from "cross-spawn";
 import { ReviewXError } from "./errors.js";
 
@@ -16,6 +17,7 @@ export interface CommandOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   maxOutputBytes?: number;
+  onStdoutLine?: (line: string) => void | Promise<void>;
 }
 
 export interface CommandRunner {
@@ -82,6 +84,35 @@ export class DefaultCommandRunner implements CommandRunner {
       let aborted = false;
       let overflowed = false;
       let settled = false;
+      let stdoutLineBuffer = "";
+      let stdoutCallbackError: unknown;
+      let stdoutCallbackQueue: Promise<void> = Promise.resolve();
+      const stdoutDecoder = options.onStdoutLine === undefined ? undefined : new StringDecoder("utf8");
+
+      const enqueueStdoutLine = (line: string) => {
+        if (options.onStdoutLine === undefined || stdoutCallbackError !== undefined) return;
+        stdoutCallbackQueue = stdoutCallbackQueue
+          .then(async () => {
+            if (stdoutCallbackError !== undefined) return;
+            await options.onStdoutLine!(line);
+          })
+          .catch((error: unknown) => {
+            if (stdoutCallbackError !== undefined) return;
+            stdoutCallbackError = error;
+            terminateProcessTree(child.pid);
+          });
+      };
+
+      const dispatchStdoutText = (text: string) => {
+        stdoutLineBuffer += text;
+        let newline = stdoutLineBuffer.indexOf("\n");
+        while (newline >= 0) {
+          const rawLine = stdoutLineBuffer.slice(0, newline);
+          enqueueStdoutLine(rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine);
+          stdoutLineBuffer = stdoutLineBuffer.slice(newline + 1);
+          newline = stdoutLineBuffer.indexOf("\n");
+        }
+      };
 
       const collect = (target: Buffer[], chunk: Buffer | string) => {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -93,7 +124,12 @@ export class DefaultCommandRunner implements CommandRunner {
         }
         target.push(buffer);
       };
-      child.stdout?.on("data", (chunk: Buffer) => collect(stdout, chunk));
+      child.stdout?.on("data", (chunk: Buffer) => {
+        collect(stdout, chunk);
+        if (!overflowed && stdoutDecoder !== undefined) {
+          dispatchStdoutText(stdoutDecoder.write(chunk));
+        }
+      });
       child.stderr?.on("data", (chunk: Buffer) => collect(stderr, chunk));
 
       const timeout =
@@ -126,10 +162,32 @@ export class DefaultCommandRunner implements CommandRunner {
           }),
         );
       });
-      child.once("close", (exitCode, signal) => {
+      child.once("close", async (exitCode, signal) => {
         if (settled) return;
         settled = true;
         cleanup();
+        if (stdoutDecoder !== undefined) {
+          dispatchStdoutText(stdoutDecoder.end());
+          if (stdoutLineBuffer !== "") {
+            enqueueStdoutLine(
+              stdoutLineBuffer.endsWith("\r")
+                ? stdoutLineBuffer.slice(0, -1)
+                : stdoutLineBuffer,
+            );
+            stdoutLineBuffer = "";
+          }
+          await stdoutCallbackQueue;
+        }
+        if (stdoutCallbackError !== undefined) {
+          reject(
+            stdoutCallbackError instanceof Error
+              ? stdoutCallbackError
+              : new ReviewXError("PROCESS_ERROR", "Process stdout handler failed.", {
+                  cause: stdoutCallbackError,
+                }),
+          );
+          return;
+        }
         if (timedOut) {
           reject(new ReviewXError("PROCESS_TIMEOUT", `Process ${command} timed out.`));
           return;

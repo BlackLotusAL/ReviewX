@@ -18,7 +18,7 @@ import { CodeHubClient, CodeHubCommandError } from "./codehub.js";
 import { errorMessage } from "./errors.js";
 import { GitManager } from "./git.js";
 import { TextLogger, type AgentName, type LogLevel } from "./logger.js";
-import { OpenCodeClient } from "./opencode.js";
+import { OpenCodeClient, type AgentRunProgress } from "./opencode.js";
 import { assertPathWithin, type RuntimePaths } from "./runtime.js";
 import { StateStore } from "./state.js";
 
@@ -425,6 +425,9 @@ export class ReviewWorkflow {
         artifactDir,
         timeoutMs: this.agentTimeoutMs,
         ...(signal === undefined ? {} : { signal }),
+        onProgress: async (progress) => {
+          await this.logAgentProgress(runId, repoId, mrIid, expert, progress);
+        },
       });
       await this.logger.write({
         level: "info",
@@ -467,6 +470,9 @@ export class ReviewWorkflow {
         artifactDir,
         timeoutMs: this.agentTimeoutMs,
         ...(signal === undefined ? {} : { signal }),
+        onProgress: async (progress) => {
+          await this.logAgentProgress(runId, repoId, mrIid, agent, progress);
+        },
       });
       await this.logger.write({
         level: "info",
@@ -508,6 +514,111 @@ export class ReviewWorkflow {
       duration_ms: elapsedSince(startedAt),
       error: errorMessage(error),
     });
+  }
+
+  private async logAgentProgress(
+    runId: string,
+    repoId: string,
+    mrIid: string,
+    agent: AgentName,
+    progress: AgentRunProgress,
+  ): Promise<void> {
+    const context = {
+      run_id: runId,
+      repo_id: repoId,
+      mr_iid: mrIid,
+      agent,
+      step: progress.step,
+      ...(progress.attempt === undefined ? {} : { attempt: progress.attempt }),
+    } as const;
+    switch (progress.type) {
+      case "process_ready":
+        await this.logger.write({
+          level: "info",
+          event: "agent_process_ready",
+          ...context,
+          startup_ms: progress.startup_ms,
+        });
+        break;
+      case "step_started":
+        await this.logger.write({
+          level: "info",
+          event: "agent_step_started",
+          ...context,
+        });
+        break;
+      case "tool_started":
+        await this.logger.write({
+          level: "info",
+          event: "agent_tool_started",
+          ...context,
+          tool: progress.tool,
+          ...(progress.action === undefined ? {} : { action: progress.action }),
+        });
+        break;
+      case "tool_finished":
+        await this.logger.write({
+          level: progress.status === "failed" ? "warn" : "info",
+          event: "agent_tool_finished",
+          ...context,
+          tool: progress.tool,
+          ...(progress.action === undefined ? {} : { action: progress.action }),
+          status: progress.status,
+          ...(progress.duration_ms === undefined
+            ? {}
+            : { duration_ms: progress.duration_ms }),
+        });
+        break;
+      case "step_finished":
+        await this.logger.write({
+          level: "info",
+          event: "agent_step_finished",
+          ...context,
+          ...(progress.reason === undefined ? {} : { reason: progress.reason }),
+          ...(progress.duration_ms === undefined
+            ? {}
+            : { duration_ms: progress.duration_ms }),
+          ...(progress.model_until_action_ms === undefined
+            ? {}
+            : { model_until_action_ms: progress.model_until_action_ms }),
+          ...(progress.text_generation_ms === undefined
+            ? {}
+            : { text_generation_ms: progress.text_generation_ms }),
+          ...(progress.input_tokens === undefined
+            ? {}
+            : { input_tokens: progress.input_tokens }),
+          ...(progress.output_tokens === undefined
+            ? {}
+            : { output_tokens: progress.output_tokens }),
+          ...(progress.reasoning_tokens === undefined
+            ? {}
+            : { reasoning_tokens: progress.reasoning_tokens }),
+          ...(progress.cache_read_tokens === undefined
+            ? {}
+            : { cache_read_tokens: progress.cache_read_tokens }),
+          ...(progress.cache_write_tokens === undefined
+            ? {}
+            : { cache_write_tokens: progress.cache_write_tokens }),
+        });
+        break;
+      case "waiting":
+        await this.logger.write({
+          level: "info",
+          event: "agent_waiting",
+          ...context,
+          last_event: progress.last_event,
+          idle_ms: progress.idle_ms,
+        });
+        break;
+      case "summary":
+        await this.logger.write({
+          level: "info",
+          event: "agent_progress_summary",
+          ...context,
+          summary: progress.summary,
+        });
+        break;
+    }
   }
 
   private async review(
