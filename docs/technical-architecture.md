@@ -128,7 +128,7 @@ type FindingHistory = {
 stdout 和 `reviewx.log` 逐字节输出相同的单行文本日志。自定义 `--log` 路径必须使用 `.log` 后缀（大小写不敏感）。每行格式为：
 
 ```text
-[ISO-8601 UTC time] [LEVEL] [event] English event details
+[ISO-8601 local time with UTC offset] [LEVEL] [event] English event details
 ```
 
 固定前缀只包含时间、等级和稳定事件名；`run_id`、仓库、MR、结果、计数和耗时写入事件详情。完整 UUID 仅用于内部状态和 `runs/`、`agent-output/` 路径，日志统一显示去掉连字符后的前 8 位小写十六进制短引用。

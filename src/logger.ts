@@ -148,6 +148,19 @@ export type LogEvent =
 export type LogRecord = LogEvent & { time: string };
 export type LogInput = LogEvent & { time?: string };
 
+function pad(value: number, width = 2): string {
+  return String(value).padStart(width, "0");
+}
+
+export function formatLocalIsoTimestamp(date: Date = new Date()): string {
+  const offsetMinutes = -date.getTimezoneOffset();
+  const offsetSign = offsetMinutes >= 0 ? "+" : "-";
+  const absoluteOffset = Math.abs(offsetMinutes);
+  const offsetHours = Math.floor(absoluteOffset / 60);
+  const offsetRemainder = absoluteOffset % 60;
+  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}${offsetSign}${pad(offsetHours)}:${pad(offsetRemainder)}`;
+}
+
 function elapsed(duration: number): number {
   return Math.max(0, Math.round(duration));
 }
@@ -284,10 +297,14 @@ export class TextLogger {
     private readonly writeStdout: (line: string) => void = (line) => {
       process.stdout.write(line);
     },
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   write(input: LogInput): Promise<void> {
-    const record = { ...input, time: input.time ?? new Date().toISOString() } as LogRecord;
+    const record = {
+      ...input,
+      time: input.time ?? formatLocalIsoTimestamp(this.now()),
+    } as LogRecord;
     const line = formatLogLine(record);
     this.queue = this.queue.then(async () => {
       try {

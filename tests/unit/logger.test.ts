@@ -2,14 +2,57 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { formatLogLine, shortRunId, TextLogger } from "../../src/logger.js";
+import {
+  formatLocalIsoTimestamp,
+  formatLogLine,
+  shortRunId,
+  TextLogger,
+} from "../../src/logger.js";
 
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((value) => rm(value, { recursive: true, force: true })));
 });
 
+function localDate(timezoneOffset: number): Date {
+  return {
+    getFullYear: () => 2026,
+    getMonth: () => 7,
+    getDate: () => 15,
+    getHours: () => 18,
+    getMinutes: () => 20,
+    getSeconds: () => 30,
+    getMilliseconds: () => 123,
+    getTimezoneOffset: () => timezoneOffset,
+  } as Date;
+}
+
 describe("text logger", () => {
+  it.each([
+    [-480, "2026-08-15T18:20:30.123+08:00"],
+    [330, "2026-08-15T18:20:30.123-05:30"],
+    [0, "2026-08-15T18:20:30.123+00:00"],
+  ])("formats the current system offset %i as local ISO-8601", (offset, expected) => {
+    expect(formatLocalIsoTimestamp(localDate(offset))).toBe(expected);
+  });
+
+  it("reads the system offset again for every generated log line", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "reviewx-log-"));
+    roots.push(root);
+    const output: string[] = [];
+    let timezoneOffset = -480;
+    const logger = new TextLogger(
+      path.join(root, "events.log"),
+      (line) => output.push(line),
+      () => localDate(timezoneOffset),
+    );
+    await logger.write({ level: "info", event: "scan_started" });
+    timezoneOffset = 420;
+    await logger.write({ level: "info", event: "scan_started" });
+    expect(output[0]!).toMatch(/^\[2026-08-15T18:20:30\.123\+08:00\]/u);
+    expect(output[1]!).toMatch(/^\[2026-08-15T18:20:30\.123-07:00\]/u);
+  });
+
   it("writes byte-identical ordered text lines to file and stdout", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "reviewx-log-"));
     roots.push(root);

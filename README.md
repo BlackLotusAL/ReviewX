@@ -68,10 +68,10 @@ runtime/
 
 每次 Agent 调用的原始 stdout/stderr、完整 Markdown、可重放输入、附件清单和元数据都会永久保存在 `agent-output/`。Judge 首次控制头无效时只重试一次，并分别保留两个 attempt。产生新检视意见时，发送给 CodeHub 的 Markdown 原文同时保存为对应 `<run-id>/review.md`。其中可能包含未脱敏的源码和模型分析；请限制目录权限并自行清理历史产物。
 
-日志同时写入 stdout 和文本 `.log` 文件，每行使用 `[ISO-8601 UTC 时间] [LEVEL] [event] 英文详情`。每个 Review Run 内部使用完整 UUID，日志只显示去掉连字符后的前 8 位短引用；终态 `result` 为 `pass`、`duplicate_of`、`new`、`publication_unknown`、`updated`、`closed` 或 `failed`。
+日志同时写入 stdout 和文本 `.log` 文件，每行使用 `[带系统本地 UTC 偏移的 ISO-8601 时间] [LEVEL] [event] 英文详情`。系统时区或夏令时变化后，后续日志会使用新的偏移。每个 Review Run 内部使用完整 UUID，日志只显示去掉连字符后的前 8 位短引用；终态 `result` 为 `pass`、`duplicate_of`、`new`、`publication_unknown`、`updated`、`closed` 或 `failed`。
 
 ```text
-[2026-08-15T10:20:30.123Z] [INFO] [agent_started] Agent design-reviewer started for review run 550e8400 on repository 123, MR 45.
+[2026-08-15T18:20:30.123+08:00] [INFO] [agent_started] Agent design-reviewer started for review run 550e8400 on repository 123, MR 45.
 ```
 
 运行日志记录扫描、worktree、commit、Agent、评论发布、状态保存和清理等关键阶段及耗时，但不记录 Agent 原始输出或评论正文。完整 Agent 产物只保存在访问受限的 `agent-output/`。
