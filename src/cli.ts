@@ -6,7 +6,7 @@ import {
   defaultStatePath,
   runService,
 } from "./app.js";
-import { parseDuration } from "./duration.js";
+import { parseDuration, parseInterval } from "./duration.js";
 import { errorMessage, ReviewXError } from "./errors.js";
 
 const VERSION = "0.1.0";
@@ -89,7 +89,7 @@ async function runCommand(argv: string[]): Promise<number> {
   );
   const rawLogPath = optionString(parsed.values.log, "--log");
   const logPath = rawLogPath ? absoluteFromCwd(rawLogPath) : undefined;
-  const intervalMs = parseDuration(
+  const intervalMs = parseInterval(
     optionString(parsed.values.interval, "--interval") ?? "10m",
     "--interval",
   );

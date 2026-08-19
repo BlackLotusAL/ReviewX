@@ -35,10 +35,12 @@ reviewx repo add 123456 --state /srv/reviewx/state.json
 ```bash
 reviewx run
 reviewx run --interval 10m --agent-timeout 20m --max-consecutive-failures 3
+reviewx run --interval 2h
+reviewx run --interval 1d
 reviewx run --state /srv/reviewx/state.json --log /var/log/reviewx.log
 ```
 
-时长只接受正整数加 `ms`、`s` 或 `m`。自定义 `--state` 时，其父目录即 runtime 根目录；未指定 `--log` 时，日志也写入该目录。自定义日志路径必须使用 `.log` 后缀（大小写不敏感）。
+`--interval` 只接受正整数加分钟 `m`、小时 `h` 或天 `d`；`--agent-timeout` 接受正整数加 `ms`、`s` 或 `m`。自定义 `--state` 时，其父目录即 runtime 根目录；未指定 `--log` 时，日志也写入该目录。自定义日志路径必须使用 `.log` 后缀（大小写不敏感）。
 
 ## Runtime
 

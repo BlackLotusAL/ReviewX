@@ -116,7 +116,7 @@ describe("built CLI", () => {
     const invalidLog = await command([
       "run",
       "--interval",
-      "5s",
+      "5m",
       "--state",
       statePath,
       "--log",
@@ -124,6 +124,20 @@ describe("built CLI", () => {
     ]);
     expect(invalidLog.exitCode).toBe(2);
     expect(JSON.parse(invalidLog.stderr)).toMatchObject({ code: "INVALID_ARGUMENT" });
+    const invalidInterval = await command([
+      "run",
+      "--interval",
+      "5s",
+      "--state",
+      statePath,
+      "--log",
+      path.join(runtime, "invalid-interval.log"),
+    ]);
+    expect(invalidInterval.exitCode).toBe(2);
+    expect(JSON.parse(invalidInterval.stderr)).toMatchObject({
+      code: "INVALID_ARGUMENT",
+      message: expect.stringContaining("m, h, or d"),
+    });
     const invalidFailureLimit = await command([
       "run",
       "--max-consecutive-failures",
@@ -138,7 +152,7 @@ describe("built CLI", () => {
 
     const child = spawn(
       process.execPath,
-      [cli, "run", "--interval", "5s", "--state", statePath, "--log", logPath],
+      [cli, "run", "--interval", "1m", "--state", statePath, "--log", logPath],
       {
         cwd: root,
         env: { ...process.env, REVIEWX_CODEHUB_BIN: fakeCodeHub },
@@ -152,7 +166,7 @@ describe("built CLI", () => {
     const second = await command([
       "run",
       "--interval",
-      "5s",
+      "1m",
       "--state",
       statePath,
       "--log",
@@ -176,7 +190,7 @@ describe("built CLI", () => {
       const recovered = await command([
         "run",
         "--interval",
-        "5s",
+        "1m",
         "--state",
         statePath,
         "--log",

@@ -12,7 +12,7 @@ import {
   type SelectedFinding,
 } from "../../src/contracts.js";
 import { validateCommentMarkdown } from "../../src/comment.js";
-import { parseDuration } from "../../src/duration.js";
+import { parseDuration, parseInterval } from "../../src/duration.js";
 
 export const selectedFinding: SelectedFinding = {
   title: "事务提交前发送成功事件",
@@ -57,9 +57,12 @@ ${finding.example_code}
 describe("public contracts", () => {
   it("normalizes IDs and parses supported durations", () => {
     expect(normalizePositiveId("00042")).toBe("42");
-    expect(parseDuration("500ms", "--interval")).toBe(500);
-    expect(parseDuration("2s", "--interval")).toBe(2_000);
-    expect(parseDuration("3m", "--interval")).toBe(180_000);
+    expect(parseDuration("500ms", "--agent-timeout")).toBe(500);
+    expect(parseDuration("2s", "--agent-timeout")).toBe(2_000);
+    expect(parseDuration("3m", "--agent-timeout")).toBe(180_000);
+    expect(parseInterval("3m", "--interval")).toBe(180_000);
+    expect(parseInterval("2h", "--interval")).toBe(7_200_000);
+    expect(parseInterval("1d", "--interval")).toBe(86_400_000);
   });
 
   it.each(["0", "-1", "abc", "1.5"])("rejects invalid ID %s", (value) => {
@@ -68,7 +71,12 @@ describe("public contracts", () => {
 
   it.each(["0s", "1h", "1.5s", "abc", "999999999999999999999m"])(
     "rejects invalid duration %s",
-    (value) => expect(() => parseDuration(value, "--interval")).toThrow(),
+    (value) => expect(() => parseDuration(value, "--agent-timeout")).toThrow(),
+  );
+
+  it.each(["500ms", "5s", "0m", "1.5h", "abc", "999999999999999999999d"])(
+    "rejects invalid interval %s",
+    (value) => expect(() => parseInterval(value, "--interval")).toThrow(),
   );
 
   it("accepts CodeHub nullable descriptive metadata", () => {
