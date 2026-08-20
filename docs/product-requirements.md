@@ -88,7 +88,7 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 | PR-OUT-002 | 不同更新发现的不同问题允许分别评论；`PASS`、`DUPLICATE`、已更新、已关闭或失败的运行不得发布评论 |
 | PR-OUT-003 | 评论必须包含待修改文件和行号或明确代码范围 |
 | PR-OUT-004 | `NEW` 问题发送给 CodeHub 的 Markdown 原文保存到对应 Agent 结果目录的 `review.md` |
-| PR-LOG-001 | 每个 Review Run 使用稳定 UUID；文本日志使用其前 8 位短引用，并以 `[带系统本地 UTC 偏移的 ISO-8601 时间] [LEVEL] [event]` 作为固定前缀；系统时区或夏令时变化后，后续日志使用新的偏移 |
+| PR-LOG-001 | 每个 Review Run 使用稳定 UUID；文本日志使用其前 8 位短引用，并以 `[YYYY-MM-DD HH:mm:ss.SSS] [LEVEL] [event]` 作为固定前缀；时间取系统本地墙钟时间且不附带时区后缀 |
 | PR-LOG-002 | 日志详情记录仓库 ID、MR ID、`updated_at`、结果或错误、`NEW`/`DUPLICATE` 判断和评论 ID |
 | PR-LOG-003 | 日志记录扫描、worktree、commit、每个 Agent、评论发布、状态保存和清理的关键步骤、结果与耗时，不记录 Agent 原始输出或评论正文 |
 | PR-LOG-004 | 四个 Agent 默认实时记录进程就绪、步骤、脱敏工具动作、步骤耗时和 token/cache 汇总；Judge 事件必须标记 attempt |

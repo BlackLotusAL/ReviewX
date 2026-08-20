@@ -203,13 +203,8 @@ function pad(value: number, width = 2): string {
   return String(value).padStart(width, "0");
 }
 
-export function formatLocalIsoTimestamp(date: Date = new Date()): string {
-  const offsetMinutes = -date.getTimezoneOffset();
-  const offsetSign = offsetMinutes >= 0 ? "+" : "-";
-  const absoluteOffset = Math.abs(offsetMinutes);
-  const offsetHours = Math.floor(absoluteOffset / 60);
-  const offsetRemainder = absoluteOffset % 60;
-  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}${offsetSign}${pad(offsetHours)}:${pad(offsetRemainder)}`;
+export function formatLocalTimestamp(date: Date = new Date()): string {
+  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
 function elapsed(duration: number): number {
@@ -413,7 +408,7 @@ export class TextLogger {
   write(input: LogInput): Promise<void> {
     const record = {
       ...input,
-      time: input.time ?? formatLocalIsoTimestamp(this.now()),
+      time: input.time ?? formatLocalTimestamp(this.now()),
     } as LogRecord;
     const line = formatLogLine(record);
     this.queue = this.queue.then(async () => {
