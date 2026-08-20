@@ -238,7 +238,7 @@ describe("text logger", () => {
         level: "info",
         event: "agent_finished",
         agent: "review-judge",
-        verdict: "duplicate_of",
+        verdict: "DUPLICATE",
         duplicate_of_comment_id: null,
         duration_ms: 1,
       }),

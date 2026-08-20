@@ -97,17 +97,20 @@ describe("public contracts", () => {
   );
 
   it("enforces the minimal strict Judge decision union", () => {
-    expect(judgeDecisionSchema.parse({ verdict: "pass" })).toEqual({ verdict: "pass" });
+    expect(judgeDecisionSchema.parse({ verdict: "PASS" })).toEqual({ verdict: "PASS" });
     expect(
-      judgeDecisionSchema.parse({ verdict: "duplicate_of", duplicate_comment_id: null }),
-    ).toEqual({ verdict: "duplicate_of", duplicate_comment_id: null });
-    expect(judgeDecisionSchema.parse({ verdict: "new", severity: "Critical" })).toEqual({
-      verdict: "new",
+      judgeDecisionSchema.parse({ verdict: "DUPLICATE", duplicate_comment_id: null }),
+    ).toEqual({ verdict: "DUPLICATE", duplicate_comment_id: null });
+    expect(judgeDecisionSchema.parse({ verdict: "NEW", severity: "Critical" })).toEqual({
+      verdict: "NEW",
       severity: "Critical",
     });
-    expect(() => judgeDecisionSchema.parse({ verdict: "new" })).toThrow();
-    expect(() => judgeDecisionSchema.parse({ verdict: "new", severity: "High" })).toThrow();
-    expect(() => judgeDecisionSchema.parse({ verdict: "pass", explanation: "extra" })).toThrow();
+    expect(() => judgeDecisionSchema.parse({ verdict: "NEW" })).toThrow();
+    expect(() => judgeDecisionSchema.parse({ verdict: "NEW", severity: "High" })).toThrow();
+    expect(() => judgeDecisionSchema.parse({ verdict: "PASS", explanation: "extra" })).toThrow();
+    expect(() => judgeDecisionSchema.parse({ verdict: "pass" })).toThrow();
+    expect(() => judgeDecisionSchema.parse({ verdict: "duplicate_of" })).toThrow();
+    expect(() => judgeDecisionSchema.parse({ verdict: "new", severity: "Critical" })).toThrow();
   });
 
   it("accepts legacy and Markdown history while rejecting malformed state", () => {

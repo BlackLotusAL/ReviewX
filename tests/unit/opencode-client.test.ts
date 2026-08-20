@@ -110,14 +110,14 @@ describe("OpenCode Markdown client", () => {
 
   it("attaches context plus three reports and persists a valid new Judge document", async () => {
     const markdown = "\n# Final review\n\nArbitrary {content}.";
-    const document = `<!-- reviewx-decision: {"verdict":"new","severity":"Major"} -->\n${markdown}`;
+    const document = `<!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->\n${markdown}`;
     const runner = new AgentRunner(() => success(document));
     const client = new OpenCodeClient(runner, "fake", "./opencode");
 
     await expect(
       client.runJudge(artifactRoot, inputPaths, runOptions("judge")),
     ).resolves.toEqual({
-      decision: { verdict: "new", severity: "Major" },
+      decision: { verdict: "NEW", severity: "Major" },
       markdown,
       document,
     });
@@ -125,7 +125,7 @@ describe("OpenCode Markdown client", () => {
     const files = runner.calls[0]!.args.filter((value) => value === "--file");
     expect(files).toHaveLength(4);
     expect(JSON.parse(await readFile(path.join(artifactRoot, "judge", "decision.json"), "utf8")))
-      .toEqual({ verdict: "new", severity: "Major" });
+      .toEqual({ verdict: "NEW", severity: "Major" });
     expect(await readFile(path.join(artifactRoot, "judge", "comment.md"), "utf8"))
       .toBe(markdown);
     expect(JSON.parse(await readFile(
@@ -138,12 +138,12 @@ describe("OpenCode Markdown client", () => {
     const runner = new AgentRunner((_agent, call) =>
       call === 1
         ? success("# Missing header")
-        : success('<!-- reviewx-decision: {"verdict":"pass"} -->'),
+        : success('<!-- reviewx-decision: {"verdict":"PASS"} -->'),
     );
     const client = new OpenCodeClient(runner, "fake", "./opencode");
 
     await expect(client.runJudge(artifactRoot, inputPaths, runOptions("retry")))
-      .resolves.toMatchObject({ decision: { verdict: "pass" } });
+      .resolves.toMatchObject({ decision: { verdict: "PASS" } });
     expect(runner.calls).toHaveLength(2);
     expect(runner.calls[1]!.args.at(-1)).toContain("上一次输出");
     expect(await readFile(
@@ -153,7 +153,7 @@ describe("OpenCode Markdown client", () => {
     expect(JSON.parse(await readFile(
       path.join(artifactRoot, "retry", "metadata.json"),
       "utf8",
-    ))).toMatchObject({ status: "succeeded", attempts: 2, verdict: "pass" });
+    ))).toMatchObject({ status: "succeeded", attempts: 2, verdict: "PASS" });
   });
 
   it("fails after one retry and attributes the final Markdown to the Judge", async () => {

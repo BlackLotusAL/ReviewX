@@ -117,13 +117,13 @@ export const expertNameSchema = z.enum([
 export type ExpertName = z.infer<typeof expertNameSchema>;
 
 export const judgeDecisionSchema = z.discriminatedUnion("verdict", [
-  z.strictObject({ verdict: z.literal("pass") }),
+  z.strictObject({ verdict: z.literal("PASS") }),
   z.strictObject({
-    verdict: z.literal("duplicate_of"),
+    verdict: z.literal("DUPLICATE"),
     duplicate_comment_id: z.string().trim().min(1).nullable(),
   }),
   z.strictObject({
-    verdict: z.literal("new"),
+    verdict: z.literal("NEW"),
     severity: severitySchema,
   }),
 ]);

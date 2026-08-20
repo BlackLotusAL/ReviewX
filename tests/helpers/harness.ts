@@ -23,25 +23,37 @@ import { StateStore } from "../../src/state.js";
 import { ReviewWorkflow } from "../../src/workflow.js";
 
 export function finalComment(): string {
-  return `### [Critical][correctness][transaction] 事务提交前发送成功事件
+  return `### 【Critical】事务提交前发送成功事件
 
-**位置**：\`service.ts:1\`
+**严重等级**：🟠 Critical<br>
+**问题类型**：\`correctness\`, \`transaction\`<br>
+**位置**：\`service.ts\` L1<br>
+**置信度**：94<br>
+**适用规则**：\`TX-001\`
 
-**问题**：事务提交前已经发送成功事件。
+**问题描述**
 
-**触发条件**：事务随后回滚。
+> 事务提交前已经发送成功事件。
 
-**影响**：下游状态与数据库不一致。
+**触发条件**
 
-**修改建议**：移动到提交后的回调。
+> 事务随后回滚。
+
+**影响**
+
+> 下游状态与数据库不一致。
+
+**证据**
+
+> 最终代码在事务提交前直接发送事件。
+
+**修复建议**
+
+> 将事件发送移动到提交后的回调。
 
 \`\`\`ts
 afterCommit(() => publish());
-\`\`\`
-
-**置信度**：94%
-
-**规则**：\`TX-001\``;
+\`\`\``;
 }
 
 function ok(value: unknown): CommandResult {
@@ -164,7 +176,7 @@ export class ScriptedAgentRunner implements CommandRunner {
         this.invalidJudgeAttempts -= 1;
         output = "# Missing control header";
       } else {
-        const body = this.judgeDecision.verdict === "new" ? `\n${this.judgeMarkdown}` : "\n# Internal rationale";
+        const body = this.judgeDecision.verdict === "NEW" ? `\n${this.judgeMarkdown}` : "";
         output = `${formatJudgeDecisionHeader(this.judgeDecision)}${body}`;
       }
     } else {

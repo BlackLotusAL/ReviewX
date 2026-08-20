@@ -64,7 +64,7 @@ runtime/
 
 `state.json` 只保存仓库、MR 的 `last_processed_updated_at` 和历史评论 Markdown；旧版问题摘要仍可直接读取。每次 Agent 都是独立进程和会话；服务重启不会恢复中间阶段，未完成的 MR 会在后续扫描从头运行。
 
-三个专家各自生成自由 Markdown 报告，Judge 读取这些报告后输出一个独立行的隐藏 `reviewx-decision` JSON 控制头。ReviewX 只校验该控制头，忽略控制头前的临时模型旁白，正文不做字段级解析；`new` 正文会原样发送到 CodeHub。
+三个专家各自生成自由 Markdown 报告，Judge 读取这些报告后输出一个独立行的隐藏 `reviewx-decision` JSON 控制头。Judge verdict 固定为 `PASS`、`DUPLICATE` 或 `NEW`；前两者的 canonical 产物只保留控制头，`NEW` 的正文会原样发送到 CodeHub。ReviewX 忽略控制头前的临时模型旁白，且不对 `NEW` 正文做字段级解析。
 
 每次 Agent 调用的原始 stdout/stderr、完整 Markdown、可重放输入、附件清单和元数据都会永久保存在 `agent-output/`。元数据同时汇总启动、步骤、工具和 token/cache 指标。Judge 首次控制头无效时只重试一次，并分别保留两个 attempt。产生新检视意见时，发送给 CodeHub 的 Markdown 原文同时保存为对应 `<run-id>/review.md`。其中可能包含未脱敏的源码和模型分析；请限制目录权限并自行清理历史产物。
 
@@ -82,7 +82,7 @@ runtime/
 
 - `reviewx.run.lock` 保证单机只有一个扫描进程；死亡 PID 的遗留锁会自动清理。
 - 状态在锁内重新读取并以同目录临时文件原子替换；损坏状态不会被覆盖。
-- `pass`、`duplicate_of` 和成功/未知发布会推进游标；仅当 CodeHub 返回严格更新的 `updated_at` 时才再次检视，等价时间格式或暂时回退的列表数据会被忽略。
+- Judge 返回 `PASS`、`DUPLICATE`，以及 `NEW` 成功或发布结果未知时会推进游标；仅当 CodeHub 返回严格更新的 `updated_at` 时才再次检视，等价时间格式或暂时回退的列表数据会被忽略。
 - 连续 3 轮扫描存在错误后服务会终止并返回失败；可用 `--max-consecutive-failures` 调整阈值，无错误的一轮会重置计数。失败、MR 更新或关闭不会推进游标。
 - 已确认评论和结果未知的评论都会进入语义去重历史。
 - worktree 与 run 输入目录在成功、失败和信号中断后清理；仓库缓存保留供后续 fetch。
@@ -104,7 +104,7 @@ pnpm simulate:judge
 
 `pnpm simulate:review` 创建本地 Git remote 和模拟 MR，使用真实 OpenCode 依次运行三个 Reviewer 与 Judge，但 CodeHub 调用全部由本地模拟器接收，不会发布外部评论。默认模型为 `deepseek/deepseek-chat`，可通过 `REVIEWX_SIMULATION_MODEL` 覆盖；产物保存在 `runtime/simulations/`。
 
-`pnpm simulate:judge` 不创建 CodeHub 客户端，只使用本地 Git fixture 和真实 OpenCode，依次验证 Judge 的 `pass`、`new`、`duplicate_of` 三条路径；产物保存在 `runtime/judge-simulations/`。
+`pnpm simulate:judge` 不创建 CodeHub 客户端，只使用本地 Git fixture 和真实 OpenCode，依次验证 Judge 的 `PASS`、`NEW`、`DUPLICATE` 三条路径；产物保存在 `runtime/judge-simulations/`。
 
 ## 首版边界
 

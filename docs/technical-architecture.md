@@ -117,7 +117,7 @@ type FindingHistory = {
 状态更新规则：
 
 - 写入时获取 `state.lock`，重新读取状态，写同目录临时文件并原子替换；扫描和外部命令期间不持锁。
-- `pass` 或 `duplicate_of` 成功后保存本次 `updated_at`。
+- Judge 返回 `PASS` 或 `DUPLICATE` 后保存本次 `updated_at`。
 - 新评论发布后保存 `confirmed` 历史、评论 ID 和重新查询得到的最新 `updated_at`。
 - `WRITE_RESULT_UNKNOWN` 按第 7.1 节保存 `unknown` 历史并终止该次更新的自动重试。
 - 失败、中断、发布前 MR 更新或关闭时不更新 `last_processed_updated_at`。
@@ -261,25 +261,25 @@ permission:
 ```ts
 type Severity = "Blocker" | "Critical" | "Major" | "Minor";
 type JudgeDecision =
-  | { verdict: "pass" }
-  | { verdict: "duplicate_of"; duplicate_comment_id: string | null }
-  | { verdict: "new"; severity: Severity };
+  | { verdict: "PASS" }
+  | { verdict: "DUPLICATE"; duplicate_comment_id: string | null }
+  | { verdict: "NEW"; severity: Severity };
 ```
 
 控制头使用 HTML 注释包装单行严格 JSON：
 
 ```text
-<!-- reviewx-decision: {"verdict":"pass"} -->
-<!-- reviewx-decision: {"verdict":"duplicate_of","duplicate_comment_id":"comment-id"} -->
-<!-- reviewx-decision: {"verdict":"duplicate_of","duplicate_comment_id":null} -->
-<!-- reviewx-decision: {"verdict":"new","severity":"Major"} -->
+<!-- reviewx-decision: {"verdict":"PASS"} -->
+<!-- reviewx-decision: {"verdict":"DUPLICATE","duplicate_comment_id":"comment-id"} -->
+<!-- reviewx-decision: {"verdict":"DUPLICATE","duplicate_comment_id":null} -->
+<!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->
 ```
 
-`new` 必须在控制头后提供非空 Markdown；ReviewX 只剥离控制头，其余正文不做字段级校验或改写，并原样保存和发布。`pass`、`duplicate_of` 可附带内部 Markdown 说明，但不发布。以下情况判定失败：
+`NEW` 必须在控制头后提供非空 Markdown；ReviewX 只剥离控制头，其余正文不做字段级校验或改写，并原样保存和发布。`PASS`、`DUPLICATE` 的 canonical 产物强制只保留控制头；模型原始 attempt 仍完整留档。以下情况判定失败：
 
 - 子进程非零退出、超时或缺少最终响应。
 - OpenCode JSONL 事件非法或最终 Markdown 为空。
-- Judge 控制头缺失、JSON 非法、包含额外字段、枚举非法，或 `new` 正文为空；控制头错误只重试一次。
+- Judge 控制头缺失、JSON 非法、包含额外字段、枚举非法，或 `NEW` 正文为空；控制头错误只重试一次。
 
 ## 6. 扫描、检视与发布流程
 
@@ -289,8 +289,8 @@ type JudgeDecision =
 2. 只处理首次发现、此前失败或 `updated_at` 严格晚于游标的 MR；同一时刻的不同格式和列表接口暂时返回的旧时间不触发检视。
 3. 按第 4 章准备缓存、worktree、分支和 commit 列表。
 4. 按第 5 章顺序调用三个专家和裁判。
-5. `pass` 或 `duplicate_of` 不发布评论，按第 3 章保存处理游标。
-6. `new` 在发布前通过 `mr view` 重新读取 MR；不是 Open 或 `updated_at` 已变化时放弃结果且不更新游标。
+5. `PASS` 或 `DUPLICATE` 不发布评论，按第 3 章保存处理游标。
+6. `NEW` 在发布前通过 `mr view` 重新读取 MR；不是 Open 或 `updated_at` 已变化时放弃结果且不更新游标。
 7. MR 未变化时按第 4.2 节发布一条普通评论；成功后保存 `confirmed` 历史、评论 ID 和刷新后的 `updated_at`，结果未知时按第 7.1 节处理。
 
 每次 Review Run 最多发布一条新问题评论。Workflow 校验结构和执行裁判结果，不修改专家候选或代替 Agent 做语义判断。
@@ -306,7 +306,7 @@ CodeHub CLI/Git 命令失败、worktree 准备失败、Agent 失败或状态无�
 1. 将本次问题摘要写入 `finding_history`，标记 `publication_status: "unknown"` 且 `comment_id: null`。
 2. 再调用一次 `mr view`；成功时保存其 `updated_at`，失败时保存检视开始时的 `updated_at`。
 3. 记录 `publication_unknown`，将该次 MR 更新视为已处理，不自动重试。
-4. 后续 MR 更新仍可检视；裁判必须把 `unknown` 历史参与语义去重，相同问题返回 `duplicate_of`，其 `duplicate_comment_id` 为 `null`。
+4. 后续 MR 更新仍可检视；裁判必须把 `unknown` 历史参与语义去重，相同问题返回 `DUPLICATE`，其 `duplicate_comment_id` 为 `null`。
 
 首版不做立即重试、阶段恢复或 Agent session 持久化。仍为 Open 的未完成 MR 会在下一轮从工作区准备阶段重新执行。
 
@@ -345,7 +345,7 @@ reviewx run
 2. MR 命令始终使用 Project ID 和 MR IID；仅 CLI 返回的首次、此前失败或 `updated_at` 变化的 Open MR 进入检视。
 3. CodeHub CLI 只执行第 4.1 节的五类命令；本地 Git 按 SSH 优先规则准备 clone/fetch 和 worktree，不生成 diff 包。
 4. 三个专家顺序执行；非零退出、非法结构或单个进程超过 20 分钟时停止本次运行。
-5. `new` 按固定 severity 映射发布；`pass` 和 `duplicate_of` 不发布评论。
+5. `NEW` 按固定 severity 映射发布；`PASS` 和 `DUPLICATE` 不发布评论。
 6. 检视期间 MR 更新或关闭时不评论；成功评论刷新 `updated_at`，`WRITE_RESULT_UNKNOWN` 记录未知历史且不自动重试。
 7. 所有代码托管操作都对应第 4.1 节的 CodeHub CLI 命令；并发命令不损坏状态，Agent 不能编辑代码、运行项目命令、访问网络或发布评论。
 8. 专家 Markdown 中的代码块、JSON 片段和自由说明会原样保留；每个 Agent 的可重放输入和完整报告可通过 `run_id` 在 `runtime/agent-output/` 定位。

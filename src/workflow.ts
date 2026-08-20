@@ -263,11 +263,11 @@ export class ReviewWorkflow {
     judge: JudgeReport,
     signal?: AbortSignal,
   ): Promise<TerminalRecord> {
-    if (judge.decision.verdict === "pass") {
+    if (judge.decision.verdict === "PASS") {
       await this.saveCursor(runId, repoId, mr.iid, mr.updated_at);
       return { result: "pass" };
     }
-    if (judge.decision.verdict === "duplicate_of") {
+    if (judge.decision.verdict === "DUPLICATE") {
       await this.saveCursor(runId, repoId, mr.iid, mr.updated_at);
       return {
         result: "duplicate_of",
@@ -482,9 +482,9 @@ export class ReviewWorkflow {
         mr_iid: mrIid,
         agent,
         verdict: result.decision.verdict,
-        ...(result.decision.verdict === "new"
+        ...(result.decision.verdict === "NEW"
           ? { severity: result.decision.severity }
-          : result.decision.verdict === "duplicate_of"
+          : result.decision.verdict === "DUPLICATE"
             ? { duplicate_of_comment_id: result.decision.duplicate_comment_id }
             : {}),
         duration_ms: elapsedSince(startedAt),

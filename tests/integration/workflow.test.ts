@@ -44,7 +44,7 @@ afterEach(async () => {
 
 describe("full Markdown review workflow with real Git", () => {
   it("passes three expert Markdown reports to the Judge and persists replayable artifacts", async () => {
-    const value = await harness({ verdict: "pass" });
+    const value = await harness({ verdict: "PASS" });
     await value.workflow.scanOnce();
 
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toEqual({
@@ -75,8 +75,10 @@ describe("full Markdown review workflow with real Git", () => {
     }
     const judgeDirectory = `${value.paths.agentOutputs}/${runId}/04-review-judge`;
     expect(JSON.parse(await readFile(`${judgeDirectory}/decision.json`, "utf8"))).toEqual({
-      verdict: "pass",
+      verdict: "PASS",
     });
+    expect(await readFile(`${judgeDirectory}/report.md`, "utf8"))
+      .toBe('<!-- reviewx-decision: {"verdict":"PASS"} -->');
     expect(JSON.parse(await readFile(`${judgeDirectory}/input-manifest.json`, "utf8")).files)
       .toHaveLength(4);
     expect(await missing(`${judgeDirectory}/attempt-1/assistant.txt`)).toBe(false);
@@ -86,7 +88,7 @@ describe("full Markdown review workflow with real Git", () => {
   });
 
   it("preserves arbitrary expert Markdown without JSON extraction or repair", async () => {
-    const value = await harness({ verdict: "pass" });
+    const value = await harness({ verdict: "PASS" });
     value.agents.expertMarkdown = `# Review notes
 
 Prose with { "json": true } and code:
@@ -106,7 +108,7 @@ Prose with { "json": true } and code:
   });
 
   it("streams safe progress for every Agent and persists progress summaries", async () => {
-    const value = await harness({ verdict: "pass" });
+    const value = await harness({ verdict: "PASS" });
     value.agents.failedToolAgent = "design-reviewer";
     await value.workflow.scanOnce();
 
@@ -164,7 +166,7 @@ Prose with { "json": true } and code:
   });
 
   it("retries an invalid Judge control header once and retains both attempts", async () => {
-    const value = await harness({ verdict: "pass" });
+    const value = await harness({ verdict: "PASS" });
     value.agents.invalidJudgeAttempts = 1;
     await value.workflow.scanOnce();
 
@@ -178,7 +180,7 @@ Prose with { "json": true } and code:
       status: "succeeded",
       attempts: 2,
       decision_status: "succeeded",
-      verdict: "pass",
+      verdict: "PASS",
     });
     expect(value.logs.some((line) =>
       eventName(line) === "agent_process_ready" && line.includes("attempt 1")
@@ -189,7 +191,7 @@ Prose with { "json": true } and code:
   });
 
   it("fails after exactly one Judge retry and leaves the cursor untouched", async () => {
-    const value = await harness({ verdict: "pass" });
+    const value = await harness({ verdict: "PASS" });
     value.agents.invalidJudgeAttempts = 2;
     await value.workflow.scanOnce();
 
@@ -203,7 +205,7 @@ Prose with { "json": true } and code:
     const markdown = `# Flexible review
 
 Any valid Markdown body may be published, including {braces}.`;
-    const value = await harness({ verdict: "new", severity: "Critical" }, markdown);
+    const value = await harness({ verdict: "NEW", severity: "Critical" }, markdown);
     process.env.CODEHUB_TEST_TOKEN = "must-not-leak";
     try {
       await value.workflow.scanOnce();
@@ -230,7 +232,7 @@ Any valid Markdown body may be published, including {braces}.`;
 
   it("persists duplicate_of without publishing", async () => {
     const value = await harness({
-      verdict: "duplicate_of",
+      verdict: "DUPLICATE",
       duplicate_comment_id: "old-comment",
     });
     await value.workflow.scanOnce();
@@ -238,10 +240,17 @@ Any valid Markdown body may be published, including {braces}.`;
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"])
       .toMatchObject({ last_processed_updated_at: "2026-08-12T00:00:00Z" });
     expect(findLog(value.logs, "review_run_finished")).toContain("duplicate comment old-comment");
+    const [runId] = await readdir(value.paths.agentOutputs);
+    expect(await readFile(
+      `${value.paths.agentOutputs}/${runId}/04-review-judge/report.md`,
+      "utf8",
+    )).toBe(
+      '<!-- reviewx-decision: {"verdict":"DUPLICATE","duplicate_comment_id":"old-comment"} -->',
+    );
   });
 
   it("passes legacy history to the Judge without rewriting state", async () => {
-    const value = await harness({ verdict: "pass" });
+    const value = await harness({ verdict: "PASS" });
     await value.state.updateMergeRequest("1", "7", (current) => ({
       ...current,
       finding_history: [
@@ -267,7 +276,7 @@ Any valid Markdown body may be published, including {braces}.`;
     ["closed", "closed", "2026-08-12T00:00:00Z"],
     ["updated", "opened", "2026-08-12T00:00:30Z"],
   ] as const)("does not publish when the MR is %s", async (result, state, updatedAt) => {
-    const value = await harness({ verdict: "new", severity: "Critical" }, finalComment());
+    const value = await harness({ verdict: "NEW", severity: "Critical" }, finalComment());
     value.codeHub.prePublishState = state;
     value.codeHub.prePublishUpdatedAt = updatedAt;
     await value.workflow.scanOnce();
@@ -282,7 +291,7 @@ Any valid Markdown body may be published, including {braces}.`;
   it.each(["unknown", "missing_id"] as const)(
     "records %s publication history and treats the update as processed",
     async (publication) => {
-      const value = await harness({ verdict: "new", severity: "Critical" }, finalComment());
+      const value = await harness({ verdict: "NEW", severity: "Critical" }, finalComment());
       value.codeHub.publication = publication;
       await value.workflow.scanOnce();
       const mrState = (await value.state.read()).repositories["1"]!.merge_requests["7"]!;
@@ -296,7 +305,7 @@ Any valid Markdown body may be published, including {braces}.`;
   );
 
   it("leaves the cursor untouched on expert failure and retries from the beginning", async () => {
-    const value = await harness({ verdict: "pass" });
+    const value = await harness({ verdict: "PASS" });
     value.agents.invalidExpert = "business-reviewer";
     await value.workflow.scanOnce();
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
@@ -314,13 +323,13 @@ Any valid Markdown body may be published, including {braces}.`;
   });
 
   it("isolates repository failures and keeps cleanup failures non-terminal", async () => {
-    const repositoryFailure = await harness({ verdict: "pass" });
+    const repositoryFailure = await harness({ verdict: "PASS" });
     repositoryFailure.codeHub.listFailure = true;
     await repositoryFailure.workflow.scanOnce();
     expect(repositoryFailure.agents.agents).toEqual([]);
     expect(findLog(repositoryFailure.logs, "repository_scan_failed")).toContain("[WARN]");
 
-    const cleanupFailure = await harness({ verdict: "pass" });
+    const cleanupFailure = await harness({ verdict: "PASS" });
     cleanupFailure.git.cleanupFailure = true;
     await cleanupFailure.workflow.scanOnce();
     expect(findLog(cleanupFailure.logs, "cleanup_failed")).toContain("[WARN]");

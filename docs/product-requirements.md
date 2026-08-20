@@ -40,8 +40,8 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 2. Workflow 定时查询已登记仓库的 Open MR，仅为首次发现、此前失败或 `updated_at` 严格变新的 MR 创建 Review Run；等价时间格式或暂时返回的旧时间不触发重复检视。
 3. Workflow clone 或 fetch 仓库，创建隔离工作区并切换到 MR source 分支，然后读取 source/target 分支信息和 commit 列表。
 4. 设计、业务和代码专家直接读取工作区，基于 MR 的最终整体净变化独立输出 Markdown 评审报告。
-5. 裁判 Agent 结合候选问题、工作区和该 MR 的历史 ReviewX 问题，输出 `PASS`、`duplicate_of` 或一个 `new` 问题。
-6. `new` 问题仅在 MR 仍为 Open 且 `updated_at` 与检视开始时一致时发布为普通 MR 评论；`PASS`、`duplicate_of`、已更新或已关闭的 MR 不发布评论。
+5. 裁判 Agent 结合候选问题、工作区和该 MR 的历史 ReviewX 问题，输出 `PASS`、`DUPLICATE` 或一个 `NEW` 问题。
+6. `NEW` 问题仅在 MR 仍为 Open 且 `updated_at` 与检视开始时一致时发布为普通 MR 评论；`PASS`、`DUPLICATE`、已更新或已关闭的 MR 不发布评论。
 7. Workflow 保存处理结果并写日志：成功处理后更新 `last_processed_updated_at`；发布评论后刷新 MR 最新 `updated_at` 并保存评论 ID；失败或中断时不更新时间，下一次扫描从头重试。
 
 同一个 MR 同时最多运行一个 Review Run。Agent 只能生成评论内容，不能获得 CodeHub 评论凭据；评论统一由 workflow 发布。
@@ -77,19 +77,19 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 | PR-AI-003 | 专家必须综合所有 commit 形成的最终整体净变化，不得输出已被后续 commit 修复的问题 |
 | PR-AI-004 | 各专家输出独立 Markdown 评审报告；证据不足时明确说明证据不足而不是推测 |
 | PR-AI-005 | 裁判 Agent 读取三个专家报告，验证证据、合并重复问题并排序，每次选择至多一个有效问题 |
-| PR-AI-006 | 裁判 Agent 将选中的问题与历史 ReviewX Markdown 或旧版摘要做语义比较，并标记为 `new` 或 `duplicate_of` |
-| PR-AI-007 | 裁判 Agent 以隐藏 JSON 控制头表达 `pass`、`new` 或 `duplicate_of`，并为 `new` 生成符合第 5 章规范的自由 Markdown 评论正文 |
+| PR-AI-006 | 裁判 Agent 将选中的问题与历史 ReviewX Markdown 或旧版摘要做语义比较，并标记为 `NEW` 或 `DUPLICATE` |
+| PR-AI-007 | 裁判 Agent 以隐藏 JSON 控制头表达 `PASS`、`NEW` 或 `DUPLICATE`，并仅为 `NEW` 生成符合第 5 章规范的自由 Markdown 评论正文 |
 
 ### 4.4 评论与日志
 
 | 编号 | 需求 |
 | --- | --- |
-| PR-OUT-001 | 每次 Review Run 最多向对应 MR 发布一条 `new` 问题的普通评论，不提供草稿或 inline 评论模式 |
-| PR-OUT-002 | 不同更新发现的不同问题允许分别评论；`PASS`、`duplicate_of`、已更新、已关闭或失败的运行不得发布评论 |
+| PR-OUT-001 | 每次 Review Run 最多向对应 MR 发布一条 `NEW` 问题的普通评论，不提供草稿或 inline 评论模式 |
+| PR-OUT-002 | 不同更新发现的不同问题允许分别评论；`PASS`、`DUPLICATE`、已更新、已关闭或失败的运行不得发布评论 |
 | PR-OUT-003 | 评论必须包含待修改文件和行号或明确代码范围 |
-| PR-OUT-004 | `new` 问题发送给 CodeHub 的 Markdown 原文保存到对应 Agent 结果目录的 `review.md` |
+| PR-OUT-004 | `NEW` 问题发送给 CodeHub 的 Markdown 原文保存到对应 Agent 结果目录的 `review.md` |
 | PR-LOG-001 | 每个 Review Run 使用稳定 UUID；文本日志使用其前 8 位短引用，并以 `[带系统本地 UTC 偏移的 ISO-8601 时间] [LEVEL] [event]` 作为固定前缀；系统时区或夏令时变化后，后续日志使用新的偏移 |
-| PR-LOG-002 | 日志详情记录仓库 ID、MR ID、`updated_at`、结果或错误、`new`/`duplicate_of` 判断和评论 ID |
+| PR-LOG-002 | 日志详情记录仓库 ID、MR ID、`updated_at`、结果或错误、`NEW`/`DUPLICATE` 判断和评论 ID |
 | PR-LOG-003 | 日志记录扫描、worktree、commit、每个 Agent、评论发布、状态保存和清理的关键步骤、结果与耗时，不记录 Agent 原始输出或评论正文 |
 | PR-LOG-004 | 四个 Agent 默认实时记录进程就绪、步骤、脱敏工具动作、步骤耗时和 token/cache 汇总；Judge 事件必须标记 attempt |
 | PR-LOG-005 | Agent 连续 60 秒没有 OpenCode 事件时记录等待心跳；日志不得包含工具输出、源码、提示词或 Assistant 文本，动作最多 300 字符且路径相对 worktree |
@@ -110,13 +110,33 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 示例：
 
 ````markdown
-### [Critical][correctness][transaction] 事务提交前提前发送成功事件
+### 【Critical】事务提交前提前发送成功事件
 
-**位置**：`src/payment/PaymentService.java:184-189`
+**严重等级**：🟠 Critical<br>
+**问题类型**：`correctness`, `transaction`<br>
+**位置**：`src/payment/PaymentService.java` L184-L189<br>
+**置信度**：94<br>
+**适用规则**：`JAVA-TX-004`
 
-**问题**：事务确认提交前已经发送成功事件；如果事务随后回滚，下游会收到与真实状态不一致的通知。
+**问题描述**
 
-**修改建议**：将事件发送移动到事务提交后的回调中，并补充事务回滚时不发送事件的测试。例如：
+> 事务确认提交前已经发送成功事件，下游可能观察到尚未持久化的状态。
+
+**触发条件**
+
+> 事务发送成功事件后发生回滚。
+
+**影响**
+
+> 下游会收到与数据库真实状态不一致的通知。
+
+**证据**
+
+> 最终代码在事务方法返回前直接发送事件，没有提交后回调。
+
+**修复建议**
+
+> 将事件发送移动到事务提交后的回调中，并补充事务回滚时不发送事件的测试。
 
 ```java
 @Transactional
@@ -133,10 +153,6 @@ public void completePayment(Payment payment) {
     );
 }
 ```
-
-**置信度**：94%
-
-**规则**：`JAVA-TX-004`
 ````
 
 严重等级：
@@ -189,7 +205,7 @@ observability
 | 扫描 Open MR | 仅首次发现、此前失败或 `updated_at` 变化的 MR 创建 Review Run；其他状态或未变化 MR 被忽略 |
 | Workflow 准备环境 | 完成 clone/fetch、工作区创建、source 分支切换和 commit 列表读取，不生成 diff 摘要或逐 commit 任务 |
 | 检视多 commit MR | Agent 基于最终整体净变化检视，前序 commit 中已被后续修复的问题不输出 |
-| 裁判与评论 | `new` 问题发布一条包含全部必填字段和代码示例的普通 MR 评论；`PASS` 和 `duplicate_of` 不评论 |
-| 本地意见文档 | `new` 问题的 CodeHub 评论 Markdown 原文保存到对应 Agent 结果目录的 `review.md` |
+| 裁判与评论 | `NEW` 问题发布一条包含全部必填字段和代码示例的普通 MR 评论；`PASS` 和 `DUPLICATE` 不评论 |
+| 本地意见文档 | `NEW` 问题的 CodeHub 评论 Markdown 原文保存到对应 Agent 结果目录的 `review.md` |
 | MR 在检视期间变化 | MR 更新或关闭时不发布当前结果；不同更新发现的不同新问题允许分别评论 |
 | 失败、重启或自身评论 | 失败和中断任务在后续扫描从头执行；连续错误达到阈值时服务终止；相同问题不重复发布；ReviewX 评论造成的 `updated_at` 变化不触发循环 |

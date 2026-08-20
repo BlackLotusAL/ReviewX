@@ -207,8 +207,8 @@ async function main(): Promise<void> {
     passReports,
     [],
   );
-  if (pass.decision.verdict !== "pass") {
-    throw new Error(`Expected pass verdict, received ${pass.decision.verdict}.`);
+  if (pass.decision.verdict !== "PASS") {
+    throw new Error(`Expected PASS verdict, received ${pass.decision.verdict}.`);
   }
 
   const fresh = await runCase(
@@ -220,8 +220,8 @@ async function main(): Promise<void> {
     findingReports,
     [],
   );
-  if (fresh.decision.verdict !== "new" || fresh.markdown.trim() === "") {
-    throw new Error(`Expected non-empty new verdict, received ${fresh.decision.verdict}.`);
+  if (fresh.decision.verdict !== "NEW" || fresh.markdown.trim() === "") {
+    throw new Error(`Expected non-empty NEW verdict, received ${fresh.decision.verdict}.`);
   }
 
   const duplicate = await runCase(
@@ -240,11 +240,11 @@ async function main(): Promise<void> {
     ],
   );
   if (
-    duplicate.decision.verdict !== "duplicate_of" ||
+    duplicate.decision.verdict !== "DUPLICATE" ||
     duplicate.decision.duplicate_comment_id !== "simulation-comment-1"
   ) {
     throw new Error(
-      `Expected duplicate_of simulation-comment-1, received ${JSON.stringify(duplicate.decision)}.`,
+      `Expected DUPLICATE simulation-comment-1, received ${JSON.stringify(duplicate.decision)}.`,
     );
   }
 
@@ -261,9 +261,9 @@ async function main(): Promise<void> {
         simulation_dir: simulationRoot,
         model,
         verdicts: {
-          pass: pass.decision,
-          new: fresh.decision,
-          duplicate: duplicate.decision,
+          PASS: pass.decision,
+          NEW: fresh.decision,
+          DUPLICATE: duplicate.decision,
         },
         codehub_calls: 0,
       },

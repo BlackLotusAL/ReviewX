@@ -229,10 +229,10 @@ async function snapshotInputs(artifactDir: string, inputPaths: readonly string[]
 }
 
 const judgeHeaders = [
-  '<!-- reviewx-decision: {"verdict":"pass"} -->',
-  '<!-- reviewx-decision: {"verdict":"duplicate_of","duplicate_comment_id":"comment-id"} -->',
-  '<!-- reviewx-decision: {"verdict":"duplicate_of","duplicate_comment_id":null} -->',
-  '<!-- reviewx-decision: {"verdict":"new","severity":"Major"} -->',
+  '<!-- reviewx-decision: {"verdict":"PASS"} -->',
+  '<!-- reviewx-decision: {"verdict":"DUPLICATE","duplicate_comment_id":"comment-id"} -->',
+  '<!-- reviewx-decision: {"verdict":"DUPLICATE","duplicate_comment_id":null} -->',
+  '<!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->',
 ].join("\n");
 
 export class OpenCodeClient {
@@ -412,7 +412,7 @@ export class OpenCodeClient {
         const attemptDir = path.join(artifactDir, `attempt-${attempt}`);
         const message =
           attempt === 1
-            ? "综合检视附加的 MR 上下文和三份专家 Markdown 报告。首行输出约定的 reviewx-decision 隐藏控制头，随后输出 Markdown 裁决报告。"
+            ? "综合检视附加的 MR 上下文和三份专家 Markdown 报告。首行输出约定的 reviewx-decision 隐藏控制头；仅 NEW 裁决在其后输出 Markdown 问题卡片。"
             : `上一次输出的 reviewx-decision 控制头无效：${redactText(lastError instanceof Error ? lastError.message : String(lastError))}\n请重新完成裁决，并严格使用以下四种首行之一：\n${judgeHeaders}\n首行不要使用 Markdown 代码围栏。`;
         lastDocument = await this.invokeText(
           "review-judge",
@@ -437,7 +437,7 @@ export class OpenCodeClient {
               "decision.json",
               `${JSON.stringify(report.decision, null, 2)}\n`,
             ),
-            ...(report.decision.verdict === "new"
+            ...(report.decision.verdict === "NEW"
               ? [writeArtifact(artifactDir, "comment.md", report.markdown)]
               : []),
             writeArtifact(artifactDir, "metadata.json", `${JSON.stringify(metadata, null, 2)}\n`),

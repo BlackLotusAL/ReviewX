@@ -51,10 +51,18 @@ export function parseJudgeDocument(document: string): JudgeReport {
   }
 
   const headerEnd = headerStart + match[0].length;
+  const canonicalHeader = normalized.slice(headerStart, headerEnd);
   const bodyStart = normalized[headerEnd] === "\n" ? headerEnd + 1 : headerEnd;
   const markdown = normalized.slice(bodyStart);
-  if (parsed.data.verdict === "new" && markdown.trim() === "") {
-    throw new JudgeDocumentError("A new Judge decision requires a non-empty Markdown body.");
+  if (parsed.data.verdict !== "NEW") {
+    return {
+      decision: parsed.data,
+      markdown: "",
+      document: canonicalHeader,
+    };
+  }
+  if (parsed.data.verdict === "NEW" && markdown.trim() === "") {
+    throw new JudgeDocumentError("A NEW Judge decision requires a non-empty Markdown body.");
   }
 
   return {

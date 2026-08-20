@@ -122,7 +122,7 @@ export type LogEvent =
       level: "info";
       event: "agent_finished";
       agent: AgentName;
-      verdict?: "pass" | "duplicate_of" | "new";
+      verdict?: "PASS" | "DUPLICATE" | "NEW";
       report_chars?: number;
       severity?: Severity;
       duplicate_of_comment_id?: string | null;
@@ -281,11 +281,11 @@ function agentResult(record: Extract<LogEvent, { event: "agent_finished" }>): st
   if (record.agent !== "review-judge") {
     return `a Markdown report with ${record.report_chars ?? 0} characters`;
   }
-  if (record.verdict === "new" && record.severity !== undefined) {
-    return `verdict new and selected severity ${record.severity}`;
+  if (record.verdict === "NEW" && record.severity !== undefined) {
+    return `verdict NEW and selected severity ${record.severity}`;
   }
-  if (record.verdict === "duplicate_of") {
-    return `verdict duplicate_of and duplicate comment ${oneLine(record.duplicate_of_comment_id ?? "unknown")}`;
+  if (record.verdict === "DUPLICATE") {
+    return `verdict DUPLICATE and duplicate comment ${oneLine(record.duplicate_of_comment_id ?? "unknown")}`;
   }
   return `verdict ${record.verdict}`;
 }

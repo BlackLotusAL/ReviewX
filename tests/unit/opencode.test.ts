@@ -75,33 +75,39 @@ Trailing prose.`;
 
 describe("Judge Markdown control header", () => {
   it.each([
-    [{ verdict: "pass" }, "# Internal rationale"],
-    [{ verdict: "duplicate_of", duplicate_comment_id: "comment-1" }, ""],
-    [{ verdict: "duplicate_of", duplicate_comment_id: null }, "# Unknown publication"],
-    [{ verdict: "new", severity: "Major" }, "\n# Flexible comment\n\n{braces} and prose"],
+    [{ verdict: "PASS" }, "# Internal rationale"],
+    [{ verdict: "DUPLICATE", duplicate_comment_id: "comment-1" }, ""],
+    [{ verdict: "DUPLICATE", duplicate_comment_id: null }, "# Unknown publication"],
+    [{ verdict: "NEW", severity: "Major" }, "\n# Flexible comment\n\n{braces} and prose"],
   ] as Array<[JudgeDecision, string]>)
   ("parses %s while preserving the Markdown body", (decision, markdown) => {
     const document = `${formatJudgeDecisionHeader(decision)}${markdown === "" ? "" : `\n${markdown}`}`;
-    expect(parseJudgeDocument(document)).toEqual({ decision, markdown, document });
+    const isNew = decision.verdict === "NEW";
+    expect(parseJudgeDocument(document)).toEqual({
+      decision,
+      markdown: isNew ? markdown : "",
+      document: isNew ? document : formatJudgeDecisionHeader(decision),
+    });
   });
 
   it("discards transient narration before the single standalone control header", () => {
-    const canonical = '<!-- reviewx-decision: {"verdict":"pass"} -->\n\n# Rationale';
+    const canonical = '<!-- reviewx-decision: {"verdict":"PASS"} -->\n\n# Rationale';
     expect(parseJudgeDocument(`I inspected the worktree.\n\n${canonical}`)).toEqual({
-      decision: { verdict: "pass" },
-      markdown: "\n# Rationale",
-      document: canonical,
+      decision: { verdict: "PASS" },
+      markdown: "",
+      document: '<!-- reviewx-decision: {"verdict":"PASS"} -->',
     });
   });
 
   it.each([
     "# Missing header",
-    '<!-- reviewx-decision: {"verdict":"pass",} -->',
-    '<!-- reviewx-decision: {"verdict":"pass","extra":true} -->',
-    '<!-- reviewx-decision: {"verdict":"new","severity":"High"} -->\n# Comment',
-    '<!-- reviewx-decision: {"verdict":"new","severity":"Major"} -->',
-    '```html\n<!-- reviewx-decision: {"verdict":"pass"} -->\n```',
-    '<!-- reviewx-decision: {"verdict":"pass"} -->\n<!-- reviewx-decision: {"verdict":"pass"} -->',
+    '<!-- reviewx-decision: {"verdict":"PASS",} -->',
+    '<!-- reviewx-decision: {"verdict":"PASS","extra":true} -->',
+    '<!-- reviewx-decision: {"verdict":"NEW","severity":"High"} -->\n# Comment',
+    '<!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->',
+    '<!-- reviewx-decision: {"verdict":"pass"} -->',
+    '```html\n<!-- reviewx-decision: {"verdict":"PASS"} -->\n```',
+    '<!-- reviewx-decision: {"verdict":"PASS"} -->\n<!-- reviewx-decision: {"verdict":"PASS"} -->',
   ])("rejects an invalid control document", (document) => {
     expect(() => parseJudgeDocument(document)).toThrow();
   });
