@@ -43,15 +43,20 @@ describe("OpenCode agent prompts", () => {
     expect(prompt).toContain("Do not add a blank line, Markdown body, rationale, heading, table, or prose.");
     expect(prompt).toContain("After the control header, add one blank line");
     expect(prompt).toContain("Write the body in Chinese");
-    expect(prompt).toContain("Express confidence as an integer from 0 to 100");
+    expect(prompt).toContain("based on the supplied reference document");
     expect(prompt).not.toContain("## 检视结论：PASS");
     expect(prompt).not.toContain("## 检视结论：重复问题");
     expect(prompt).not.toContain("### 变更摘要");
     expect(prompt).not.toContain("### 判定依据");
     expect(prompt).not.toContain("| 项目 | 内容 |");
     expect(prompt).toContain("`🔴 Blocker`, `🟠 Critical`, `🟡 Major`, and `🔵 Minor`");
-    expect(prompt).toContain("Keep narrative text under each bold field as a blockquote");
-    expect(prompt).toContain("**严重等级**：<severity-icon> <severity><br>");
+    expect(prompt).toContain("Keep each narrative section to one concise blockquote paragraph");
+    expect(prompt).toContain("**严重等级**：<severity-icon> <severity>");
+    expect(prompt).not.toContain("<br>");
+    expect(prompt).not.toContain("**置信度**");
+    expect(prompt).not.toContain("**适用规则**");
+    expect(prompt).not.toContain("**触发条件**");
+    expect(prompt).not.toContain("**证据**");
 
     expectInOrder(prompt, [
       "For `PASS` and `DUPLICATE`",
@@ -60,12 +65,8 @@ describe("OpenCode agent prompts", () => {
       "**严重等级**：<severity-icon> <severity>",
       "**问题类型**：`<tag-1>`, `<tag-2>`",
       "**位置**：`path/to/file.ext` L<line-or-range>",
-      "**置信度**：<0-100>",
-      "**适用规则**：",
       "**问题描述**",
-      "**触发条件**",
       "**影响**",
-      "**证据**",
       "**修复建议**",
     ]);
   });

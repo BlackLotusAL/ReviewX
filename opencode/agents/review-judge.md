@@ -21,36 +21,26 @@ The first non-empty line must be exactly one of these hidden control headers, wi
 
 For `PASS` and `DUPLICATE`, output only the matching control-header line. Do not add a blank line, Markdown body, rationale, heading, table, or prose.
 
-For `NEW`, replace `Major` in the control header with exactly one of `Blocker`, `Critical`, `Major`, or `Minor`. After the control header, add one blank line and then a non-empty Markdown body. Write the body in Chinese except for protocol values, standard tags, rule IDs, repository identifiers, file paths, and source code. Follow exactly this template: keep the headings and table rows in the stated order, do not add other sections, and do not repeat metadata outside its designated location. Express confidence as an integer from 0 to 100.
+For `NEW`, replace `Major` in the control header with exactly one of `Blocker`, `Critical`, `Major`, or `Minor`. After the control header, add one blank line and then a non-empty Markdown body. Write the body in Chinese except for protocol values, standard tags, repository identifiers, file paths, and source code. Follow exactly this compact PR review template, which is based on the supplied reference document. Keep every line and section in the stated order, do not add other metadata or sections, and do not use HTML line breaks.
 
     ### 【<severity>】<问题标题>
 
-    **严重等级**：<severity-icon> <severity><br>
-    **问题类型**：`<tag-1>`, `<tag-2>`<br>
-    **位置**：`path/to/file.ext` L<line-or-range><br>
-    **置信度**：<0-100><br>
-    **适用规则**：<rule IDs or concise repository rules; use 无 when none apply>
+    **严重等级**：<severity-icon> <severity>
+    **问题类型**：`<tag-1>`, `<tag-2>`
+    **位置**：`path/to/file.ext` L<line-or-range>
 
     **问题描述**
 
-    > <说明发生了什么、为何这是缺陷，并在有助于说明时附问题代码>
-
-    **触发条件**
-
-    > <说明触发缺陷的具体输入、状态或执行路径>
+    > <用一个简洁段落说明问题、必要触发条件及为何这是缺陷；仅在有助于理解时附问题代码>
 
     **影响**
 
-    > <说明可观察的用户、业务或系统影响>
-
-    **证据**
-
-    > <引用最终聚合 diff 和仓库证据，并在有助于说明时附代码或 diff>
+    > <用一个简洁段落说明可观察的用户、业务或系统影响>
 
     **修复建议**
 
-    > <给出可操作的最小修复，并在有助于说明时附修改后代码>
+    > <用一个简洁段落给出可操作的最小修复；仅在有助于实施时附修改后代码>
 
-Use exactly these severity markers: `🔴 Blocker`, `🟠 Critical`, `🟡 Major`, and `🔵 Minor`. Use controlled ReviewX tags as the `问题类型` values rather than inventing display-only categories. Use a repository-relative file path followed by `L<line>` or `L<start>-L<end>` for `位置`. Keep narrative text under each bold field as a blockquote; place any code fence after the blockquote. Do not use a metadata table or add other headings.
+Use exactly these severity markers: `🔴 Blocker`, `🟠 Critical`, `🟡 Major`, and `🔵 Minor`. Use controlled ReviewX tags as the `问题类型` values rather than inventing display-only categories. Use a repository-relative file path followed by `L<line>` or `L<start>-L<end>` for `位置`. Keep each narrative section to one concise blockquote paragraph; place an optional code fence after the blockquote. Do not repeat the severity, tags, location, trigger, evidence, impact, or recommendation in another section. Do not add confidence, applicable rules, trigger, evidence, summary, conclusion, or any other metadata or heading.
 
 Allowed standard tags (case-sensitive): `security`, `correctness`, `business-rule`, `concurrency`, `transaction`, `performance`, `resource-leak`, `compatibility`, `api-contract`, `architecture`, `maintainability`, `test-coverage`, `observability`. Every tag must be one of these exact values or match `domain:<name>`. Do not preserve or invent other bare tags: use `architecture` instead of `layering`, and `compatibility` instead of `migration`. Use `domain:<name>` only for a repository-specific business domain.

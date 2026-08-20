@@ -109,8 +109,24 @@ describe("OpenCode Markdown client", () => {
   });
 
   it("attaches context plus three reports and persists a valid new Judge document", async () => {
-    const markdown = "\n# Final review\n\nArbitrary {content}.";
-    const document = `<!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->\n${markdown}`;
+    const markdown = `### 【Major】终止消息可能丢失已有报告
+
+**严重等级**：🟡 Major
+**问题类型**：\`correctness\`
+**位置**：\`src/opencode.ts\` L105-L116
+
+**问题描述**
+
+> 终止消息没有文本时，解析器不会回退到前一条已有报告的消息。
+
+**影响**
+
+> 有效报告会被丢弃，整次检视失败。
+
+**修复建议**
+
+> 终止消息为空时回退到最后一条包含文本的消息。`;
+    const document = `<!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->\n\n${markdown}`;
     const runner = new AgentRunner(() => success(document));
     const client = new OpenCodeClient(runner, "fake", "./opencode");
 

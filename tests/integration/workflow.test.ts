@@ -201,10 +201,8 @@ Prose with { "json": true } and code:
     expect(findLog(value.logs, "review_run_finished")).toContain("result failed");
   });
 
-  it("publishes the Judge Markdown unchanged and stores Markdown history", async () => {
-    const markdown = `# Flexible review
-
-Any valid Markdown body may be published, including {braces}.`;
+  it("publishes validated Judge Markdown unchanged and stores Markdown history", async () => {
+    const markdown = finalComment();
     const value = await harness({ verdict: "NEW", severity: "Critical" }, markdown);
     process.env.CODEHUB_TEST_TOKEN = "must-not-leak";
     try {

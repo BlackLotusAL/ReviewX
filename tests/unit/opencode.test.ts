@@ -10,6 +10,24 @@ function event(text: string): string {
   return JSON.stringify({ type: "text", part: { text } });
 }
 
+const validNewMarkdown = `### 【Major】终止消息可能丢失已有报告
+
+**严重等级**：🟡 Major
+**问题类型**：\`correctness\`
+**位置**：\`src/opencode.ts\` L105-L116
+
+**问题描述**
+
+> 终止消息没有文本时，解析器不会回退到前一条已有报告的消息。
+
+**影响**
+
+> 有效报告会被丢弃，整次检视失败。
+
+**修复建议**
+
+> 终止消息为空时回退到最后一条包含文本的消息。`;
+
 describe("OpenCode Markdown event parsing and permissions", () => {
   it("reassembles every completed text part in event order", () => {
     const value = parseOpenCodeText(
@@ -78,10 +96,10 @@ describe("Judge Markdown control header", () => {
     [{ verdict: "PASS" }, "# Internal rationale"],
     [{ verdict: "DUPLICATE", duplicate_comment_id: "comment-1" }, ""],
     [{ verdict: "DUPLICATE", duplicate_comment_id: null }, "# Unknown publication"],
-    [{ verdict: "NEW", severity: "Major" }, "\n# Flexible comment\n\n{braces} and prose"],
+    [{ verdict: "NEW", severity: "Major" }, validNewMarkdown],
   ] as Array<[JudgeDecision, string]>)
   ("parses %s while preserving the Markdown body", (decision, markdown) => {
-    const document = `${formatJudgeDecisionHeader(decision)}${markdown === "" ? "" : `\n${markdown}`}`;
+    const document = `${formatJudgeDecisionHeader(decision)}${markdown === "" ? "" : decision.verdict === "NEW" ? `\n\n${markdown}` : `\n${markdown}`}`;
     const isNew = decision.verdict === "NEW";
     expect(parseJudgeDocument(document)).toEqual({
       decision,
@@ -103,12 +121,23 @@ describe("Judge Markdown control header", () => {
     "# Missing header",
     '<!-- reviewx-decision: {"verdict":"PASS",} -->',
     '<!-- reviewx-decision: {"verdict":"PASS","extra":true} -->',
-    '<!-- reviewx-decision: {"verdict":"NEW","severity":"High"} -->\n# Comment',
+    '<!-- reviewx-decision: {"verdict":"NEW","severity":"High"} -->\n\n# Comment',
     '<!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->',
     '<!-- reviewx-decision: {"verdict":"pass"} -->',
     '```html\n<!-- reviewx-decision: {"verdict":"PASS"} -->\n```',
     '<!-- reviewx-decision: {"verdict":"PASS"} -->\n<!-- reviewx-decision: {"verdict":"PASS"} -->',
   ])("rejects an invalid control document", (document) => {
+    expect(() => parseJudgeDocument(document)).toThrow();
+  });
+
+  it.each([
+    validNewMarkdown.replace("\n\n**影响**", "\n\n**触发条件**\n\n> 最后一条消息没有文本。\n\n**影响**"),
+    validNewMarkdown.replace("**位置**：`src/opencode.ts` L105-L116", "**位置**：`C:\\src\\opencode.ts` L105-L116"),
+    validNewMarkdown.replace("> 终止消息没有文本时", "终止消息没有文本时"),
+    validNewMarkdown.replace("**问题类型**：`correctness`", "**问题类型**：`缺陷`"),
+    validNewMarkdown.replace("### 【Major】", "### 【Minor】"),
+  ])("rejects NEW Markdown that diverges from the reference template", (markdown) => {
+    const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity: "Major" })}\n\n${markdown}`;
     expect(() => parseJudgeDocument(document)).toThrow();
   });
 });

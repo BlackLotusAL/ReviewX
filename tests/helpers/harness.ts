@@ -25,27 +25,17 @@ import { ReviewWorkflow } from "../../src/workflow.js";
 export function finalComment(): string {
   return `### 【Critical】事务提交前发送成功事件
 
-**严重等级**：🟠 Critical<br>
-**问题类型**：\`correctness\`, \`transaction\`<br>
-**位置**：\`service.ts\` L1<br>
-**置信度**：94<br>
-**适用规则**：\`TX-001\`
+**严重等级**：🟠 Critical
+**问题类型**：\`correctness\`, \`transaction\`
+**位置**：\`service.ts\` L1
 
 **问题描述**
 
-> 事务提交前已经发送成功事件。
-
-**触发条件**
-
-> 事务随后回滚。
+> 事务提交前已经发送成功事件；事务随后回滚时，该事件仍然可见。
 
 **影响**
 
 > 下游状态与数据库不一致。
-
-**证据**
-
-> 最终代码在事务提交前直接发送事件。
 
 **修复建议**
 
@@ -176,7 +166,7 @@ export class ScriptedAgentRunner implements CommandRunner {
         this.invalidJudgeAttempts -= 1;
         output = "# Missing control header";
       } else {
-        const body = this.judgeDecision.verdict === "NEW" ? `\n${this.judgeMarkdown}` : "";
+        const body = this.judgeDecision.verdict === "NEW" ? `\n\n${this.judgeMarkdown}` : "";
         output = `${formatJudgeDecisionHeader(this.judgeDecision)}${body}`;
       }
     } else {

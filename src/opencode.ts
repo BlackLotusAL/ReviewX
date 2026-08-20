@@ -413,7 +413,7 @@ export class OpenCodeClient {
         const message =
           attempt === 1
             ? "综合检视附加的 MR 上下文和三份专家 Markdown 报告。首行输出约定的 reviewx-decision 隐藏控制头；仅 NEW 裁决在其后输出 Markdown 问题卡片。"
-            : `上一次输出的 reviewx-decision 控制头无效：${redactText(lastError instanceof Error ? lastError.message : String(lastError))}\n请重新完成裁决，并严格使用以下四种首行之一：\n${judgeHeaders}\n首行不要使用 Markdown 代码围栏。`;
+            : `上一次输出不符合 reviewx-decision 或 NEW 评论模板：${redactText(lastError instanceof Error ? lastError.message : String(lastError))}\n请重新完成裁决，并严格使用以下四种首行之一：\n${judgeHeaders}\n首行不要使用 Markdown 代码围栏。NEW 正文必须严格使用：标题、严重等级、问题类型、位置、问题描述、影响、修复建议；不得加入置信度、适用规则、触发条件、证据或其他章节。`;
         lastDocument = await this.invokeText(
           "review-judge",
           worktreePath,

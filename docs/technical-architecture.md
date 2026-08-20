@@ -275,11 +275,11 @@ type JudgeDecision =
 <!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->
 ```
 
-`NEW` 必须在控制头后提供非空 Markdown；ReviewX 只剥离控制头，其余正文不做字段级校验或改写，并原样保存和发布。`PASS`、`DUPLICATE` 的 canonical 产物强制只保留控制头；模型原始 attempt 仍完整留档。以下情况判定失败：
+`NEW` 必须在控制头和一个分隔空行后提供非空 Markdown。ReviewX 剥离控制头与分隔空行，并校验正文严格使用固定顺序：标题、严重等级、问题类型、位置、问题描述、影响、修复建议；正文不得加入其他元数据或章节。校验后的正文不再改写，并原样保存和发布。`PASS`、`DUPLICATE` 的 canonical 产物强制只保留控制头；模型原始 attempt 仍完整留档。以下情况判定失败：
 
 - 子进程非零退出、超时或缺少最终响应。
 - OpenCode JSONL 事件非法或最终 Markdown 为空。
-- Judge 控制头缺失、JSON 非法、包含额外字段、枚举非法，或 `NEW` 正文为空；控制头错误只重试一次。
+- Judge 控制头缺失、JSON 非法、包含额外字段、枚举非法，或 `NEW` 正文为空/偏离固定模板；控制头或模板错误只重试一次。
 
 ## 6. 扫描、检视与发布流程
 
