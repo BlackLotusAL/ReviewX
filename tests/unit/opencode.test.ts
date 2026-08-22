@@ -178,6 +178,24 @@ describe("Judge Markdown control header", () => {
     });
   });
 
+  it("semantically extracts body variants and rebuilds the strict NEW template", () => {
+    const header = formatJudgeDecisionHeader({ verdict: "NEW", severity: "minor" });
+    const variant = validNewMarkdown
+      .replace("- 严重级别：Minor", "- **严重级别**：minor")
+      .replace("**问题描述**：\n\n- **严重级别**：minor", "**问题描述**：\n\n已核实该问题。\n\n- **严重级别**：minor")
+      .replace("- 标签：`#correctness` `#observability`", "* **标签**: #correctness, #observability")
+      .replace("- 简述：终止消息", "**简述**: 终止消息")
+      .replace("**影响分析**：", "**额外章节**：\n\n临时分析\n\n**影响分析**：")
+      .replace("- 增加空终止消息的回归测试", "* 增加空终止消息的回归测试");
+    const document = `${header}\n\n${variant}\nI need to revise the report again.`;
+
+    expect(parseJudgeDocument(document)).toEqual({
+      decision: { verdict: "NEW", severity: "minor" },
+      markdown: validNewMarkdown,
+      document: `${header}\n\n${validNewMarkdown}`,
+    });
+  });
+
   it("discards transient narration before the single standalone control header", () => {
     const canonical = '<!-- reviewx-decision: {"verdict":"PASS"} -->\n\n# Rationale';
     expect(parseJudgeDocument(`I inspected the worktree.\n\n${canonical}`)).toEqual({
@@ -242,16 +260,15 @@ describe("Judge Markdown control header", () => {
   });
 
   it.each([
-    validNewMarkdown.replace("**影响分析**：", "**额外章节**：\n\n内容\n\n**影响分析**："),
     validNewMarkdown.replace("`src/opencode.ts:105-116`", "`C:\\src\\opencode.ts:105-116`"),
     validNewMarkdown.replace(
       "- 简述：终止消息没有文本时，解析器不会回退到前一条已有报告的消息",
       "- 简述：",
     ),
     validNewMarkdown.replace("`#correctness`", "`#缺陷`"),
+    validNewMarkdown.replace("- 严重级别：Minor", "- 严重级别：Major"),
     validNewMarkdown.replace("### 🟡 Minor:", "### 🟢 Suggestion:"),
     validNewMarkdown.replace("```ts\nconst text", "const text"),
-    `${validNewMarkdown}\nI need to fix a typo.`,
   ])("rejects NEW Markdown that diverges from the reference template", (markdown) => {
     const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity: "minor" })}\n\n${markdown}`;
     expect(() => parseJudgeDocument(document)).toThrow();

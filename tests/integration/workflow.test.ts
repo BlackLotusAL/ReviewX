@@ -203,7 +203,12 @@ Prose with { "json": true } and code:
 
   it("extracts and publishes validated Judge Markdown while retaining raw narration", async () => {
     const markdown = finalComment();
-    const value = await harness({ verdict: "NEW", severity: "major" }, markdown);
+    const rawMarkdown = markdown
+      .replace("- 严重级别：Major", "- **严重级别**：major")
+      .replace("- 标签：`#correctness` `#transaction`", "* **标签**: #correctness, #transaction")
+      .replace("- 简述：事务提交前", "**简述**: 事务提交前")
+      .replace("- 增加事务回滚时不发送事件的测试", "* 增加事务回滚时不发送事件的测试");
+    const value = await harness({ verdict: "NEW", severity: "major" }, rawMarkdown);
     value.agents.judgePrefix = [
       "```html",
       '<!-- reviewx-decision: {"verdict":"PASS"} -->',
@@ -237,7 +242,7 @@ Prose with { "json": true } and code:
     expect(await readFile(`${value.paths.agentOutputs}/${runId}/review.md`, "utf8")).toBe(markdown);
     const judgeDirectory = `${value.paths.agentOutputs}/${runId}/04-review-judge`;
     expect(await readFile(`${judgeDirectory}/attempt-1/report.md`, "utf8")).toBe(
-      `${value.agents.judgePrefix}<!-- reviewx-decision: {"verdict":"NEW","severity":"major"} -->\n\n${markdown}${value.agents.judgeSuffix}`,
+      `${value.agents.judgePrefix}<!-- reviewx-decision: {"verdict":"NEW","severity":"major"} -->\n\n${rawMarkdown}${value.agents.judgeSuffix}`,
     );
     expect(await readFile(`${judgeDirectory}/report.md`, "utf8")).toBe(
       `<!-- reviewx-decision: {"verdict":"NEW","severity":"major"} -->\n\n${markdown}`,

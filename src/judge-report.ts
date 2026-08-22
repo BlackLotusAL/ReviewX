@@ -167,6 +167,209 @@ function extractNewMarkdown(markdown: string, severity: Severity): string {
   return markdown.slice(0, records[cursor - 1]!.contentEnd);
 }
 
+interface FieldMatch {
+  index: number;
+  value: string;
+}
+
+interface CodeBlockMatch {
+  end: number;
+  markdown: string;
+}
+
+function isSectionHeading(line: string, label: string): boolean {
+  const value = line.trim();
+  return [
+    `**${label}**：`,
+    `**${label}**:`,
+    `**${label}**`,
+    `${label}：`,
+    `${label}:`,
+    `### ${label}`,
+  ].includes(value);
+}
+
+function findSectionHeading(
+  lines: readonly string[],
+  label: string,
+  start: number,
+): number {
+  const index = lines.findIndex((line, candidate) =>
+    candidate >= start && isSectionHeading(line, label)
+  );
+  if (index === -1) {
+    throw new JudgeDocumentError(`NEW Judge Markdown must contain the ${label} section.`);
+  }
+  return index;
+}
+
+function parseFieldValue(line: string, label: string): string | undefined {
+  const value = line.trim().replace(/^[-*+]\s+/u, "");
+  for (const prefix of [
+    `**${label}**：`,
+    `**${label}**:`,
+    `${label}：`,
+    `${label}:`,
+  ]) {
+    if (value.startsWith(prefix)) return value.slice(prefix.length).trim();
+  }
+  return undefined;
+}
+
+function findRequiredField(
+  lines: readonly string[],
+  label: string,
+  start: number,
+  end: number,
+): FieldMatch {
+  for (let index = start; index < end; index += 1) {
+    const value = parseFieldValue(lines[index] ?? "", label);
+    if (value === undefined) continue;
+    if (value === "") {
+      throw new JudgeDocumentError(`NEW Judge Markdown ${label} must be non-empty.`);
+    }
+    return { index, value };
+  }
+  throw new JudgeDocumentError(`NEW Judge Markdown must contain the ${label} field.`);
+}
+
+function findCodeBlock(
+  lines: readonly string[],
+  start: number,
+  end: number,
+  field: string,
+): CodeBlockMatch {
+  for (let index = start; index < end; index += 1) {
+    if (!/^```[A-Za-z0-9][A-Za-z0-9_+.#-]*$/u.test(lines[index] ?? "")) continue;
+    const close = lines.indexOf("```", index + 1);
+    if (close <= index + 1 || close >= end) {
+      throw new JudgeDocumentError(
+        `NEW Judge Markdown ${field} code fence must be non-empty and closed within its section.`,
+      );
+    }
+    return {
+      end: close,
+      markdown: lines.slice(index, close + 1).join("\n"),
+    };
+  }
+  throw new JudgeDocumentError(
+    `NEW Judge Markdown ${field} must contain a language-tagged code fence.`,
+  );
+}
+
+function normalizeLocation(value: string): string {
+  const trimmed = value.trim();
+  const backticked = /^`([^`]+)`$/u.exec(trimmed)?.[1];
+  const location = backticked ?? trimmed;
+  validateLocation(`**问题位置**： \`${location}\``);
+  return location;
+}
+
+function normalizeTags(value: string): string[] {
+  const tags = [...value.matchAll(/#([^`\s,，]+)/gu)]
+    .map((match) => match[1]!);
+  const unique = [...new Set(tags)];
+  validateTags(`- 标签：${unique.map((tag) => `\`#${tag}\``).join(" ")}`);
+  return unique;
+}
+
+function normalizeSeverity(value: string, severity: Severity): void {
+  const normalized = value.replace(/[`*_]/gu, "").trim().toLowerCase();
+  if (normalized !== severity) {
+    throw new JudgeDocumentError(
+      `NEW Judge Markdown severity field ${JSON.stringify(value)} does not match ${severity}.`,
+    );
+  }
+}
+
+function collectPreventionItems(lines: readonly string[], start: number): string[] {
+  const items: string[] = [];
+  for (let index = start; index < lines.length; index += 1) {
+    const line = lines[index]!.trim();
+    if (line === "") {
+      if (items.length > 0) break;
+      continue;
+    }
+    const match = /^(?:[-*+]|\d+[.)])\s+(.+)$/u.exec(line);
+    if (!match?.[1]) {
+      if (items.length > 0) break;
+      continue;
+    }
+    items.push(match[1].trim());
+  }
+  if (items.length === 0) {
+    throw new JudgeDocumentError("NEW Judge Markdown 预防措施 must contain at least one list item.");
+  }
+  return items;
+}
+
+function extractCanonicalNewMarkdown(markdown: string, severity: Severity): string {
+  const lines = splitMarkdownLines(markdown).map((record) => record.text);
+  const display = severityDisplays[severity];
+  const titlePrefix = `### ${display.signal} ${display.label}: `;
+  requireContent(lines[0], titlePrefix, "title");
+  const title = `${titlePrefix}${lines[0]!.slice(titlePrefix.length).trim()}`;
+
+  const problem = findSectionHeading(lines, "问题描述", 1);
+  const impact = findSectionHeading(lines, "影响分析", problem + 1);
+  const solutions = findSectionHeading(lines, "解决方案", impact + 1);
+  const prevention = findSectionHeading(lines, "预防措施", solutions + 1);
+  const location = findRequiredField(lines, "问题位置", problem + 1, impact);
+
+  const severityField = findRequiredField(lines, "严重级别", problem + 1, location.index);
+  normalizeSeverity(severityField.value, severity);
+  const tags = normalizeTags(
+    findRequiredField(lines, "标签", severityField.index + 1, location.index).value,
+  );
+  const summary = findRequiredField(lines, "简述", severityField.index + 1, location.index).value;
+  const normalizedLocation = normalizeLocation(location.value);
+  const locationCode = findCodeBlock(lines, location.index + 1, impact, "问题位置");
+
+  const directImpact = findRequiredField(lines, "直接后果", impact + 1, solutions).value;
+  const impactScope = findRequiredField(lines, "影响范围", impact + 1, solutions).value;
+  const trigger = findRequiredField(lines, "触发条件", impact + 1, solutions).value;
+
+  const preferred = findRequiredField(lines, "方案1（推荐）", solutions + 1, prevention);
+  const alternative = findRequiredField(lines, "方案2", preferred.index + 1, prevention);
+  const preferredCode = findCodeBlock(lines, preferred.index + 1, alternative.index, "方案1");
+  const alternativeCode = findCodeBlock(lines, alternative.index + 1, prevention, "方案2");
+  const preventionItems = collectPreventionItems(lines, prevention + 1);
+
+  return [
+    title,
+    "",
+    "**问题描述**：",
+    "",
+    `- 严重级别：${display.label}`,
+    `- 标签：${tags.map((tag) => `\`#${tag}\``).join(" ")}`,
+    `- 简述：${summary}`,
+    "",
+    `**问题位置**： \`${normalizedLocation}\``,
+    "",
+    locationCode.markdown,
+    "",
+    "**影响分析**：",
+    "",
+    `- **直接后果**：${directImpact}`,
+    `- **影响范围**：${impactScope}`,
+    `- **触发条件**：${trigger}`,
+    "",
+    "**解决方案**：",
+    "",
+    `**方案1（推荐）**：${preferred.value}`,
+    "",
+    preferredCode.markdown,
+    "",
+    `**方案2**：${alternative.value}`,
+    "",
+    alternativeCode.markdown,
+    "",
+    "**预防措施**：",
+    "",
+    ...preventionItems.map((item) => `- ${item}`),
+  ].join("\n");
+}
+
 function extractNewMarkdownFromRegion(region: string, severity: Severity): string {
   const display = severityDisplays[severity];
   const titlePattern = new RegExp(`^### ${display.signal} ${display.label}: `, "gmu");
@@ -178,7 +381,15 @@ function extractNewMarkdownFromRegion(region: string, severity: Severity): strin
       extracted = extractNewMarkdown(region.slice(title.index), severity);
     } catch (error) {
       if (!(error instanceof JudgeDocumentError)) throw error;
-      lastError = error;
+      try {
+        extracted = extractCanonicalNewMarkdown(region.slice(title.index), severity);
+      } catch (fallbackError) {
+        if (!(fallbackError instanceof JudgeDocumentError)) throw fallbackError;
+        lastError = new JudgeDocumentError(
+          `${error.message} Semantic extraction also failed: ${fallbackError.message}`,
+          { cause: fallbackError },
+        );
+      }
     }
   }
 
