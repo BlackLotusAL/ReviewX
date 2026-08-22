@@ -219,9 +219,9 @@ opencode run \
   "检视当前 MR 的最终整体净变化，输出一份完整 Markdown 评审报告。"
 ```
 
-`--format json` 只保证 OpenCode 事件流为 JSONL。ReviewX 按 `messageID` 重建最后一个正常结束的 assistant message；三个专家的正文作为自由 Markdown 原样保存，不执行 JSON 提取、fence 识别或结构补全。Judge 同时附加 MR context JSON 和三份专家报告，正文只要求恰好一个独立行的隐藏 `reviewx-decision` 控制头；控制头前的瞬时旁白不进入 canonical 报告。
+`--format json` 只保证 OpenCode 事件流为 JSONL。ReviewX 按 `messageID` 重建最后一个正常结束的 assistant message；三个专家的正文作为自由 Markdown 原样保存，不执行 JSON 提取、fence 识别或结构补全。Judge 同时附加 MR context JSON 和三份专家报告，正文只允许恰好一个独立行的隐藏 `reviewx-decision` 控制头。控制头前的瞬时旁白不进入 canonical 报告；严格报告在连续预防措施后结束，只有经空行分隔的尾随旁白可被剥离。完整原始输出仍保存在对应 `attempt-N/report.md`。
 
-Judge 控制头无效时，ReviewX 以新会话反馈合法首行示例并只重试一次；两次调用的原始产物分目录保留。OpenCode 非零退出、超时、非法 JSONL 事件或空正文不重试。
+Judge 决策文档无效时，ReviewX 以新会话反馈实际校验原因和合法首行示例并只重试一次；两次调用的原始产物分目录保留。最终错误包含脱敏后的模板校验原因，不再把所有正文错误归类为控制头错误。OpenCode 非零退出、超时、非法 JSONL 事件或空正文不重试。
 
 三个专家按设计、业务、代码顺序执行，全部成功后才调用裁判。每个进程最多运行 `--agent-timeout`；超时后 ReviewX 终止进程并判定本次 Review Run 失败。
 

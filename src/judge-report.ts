@@ -83,9 +83,37 @@ function validateCodeBlock(lines: readonly string[], start: number, field: strin
   return end;
 }
 
-function validateNewMarkdown(markdown: string, severity: Severity): void {
-  const normalized = markdown.replace(/\r\n/gu, "\n").replace(/\n$/u, "");
-  const lines = normalized.split("\n");
+interface MarkdownLine {
+  text: string;
+  contentEnd: number;
+}
+
+function splitMarkdownLines(markdown: string): MarkdownLine[] {
+  const records: MarkdownLine[] = [];
+  let start = 0;
+  while (true) {
+    const newline = markdown.indexOf("\n", start);
+    if (newline === -1) {
+      records.push({ text: markdown.slice(start), contentEnd: markdown.length });
+      break;
+    }
+    const contentEnd = newline > start && markdown[newline - 1] === "\r" ? newline - 1 : newline;
+    records.push({ text: markdown.slice(start, contentEnd), contentEnd });
+    start = newline + 1;
+    if (start === markdown.length) {
+      records.push({ text: "", contentEnd: start });
+      break;
+    }
+  }
+  if (records.length > 1 && records.at(-1)!.text === "") {
+    records.pop();
+  }
+  return records;
+}
+
+function extractNewMarkdown(markdown: string, severity: Severity): string {
+  const records = splitMarkdownLines(markdown);
+  const lines = records.map((record) => record.text);
   const display = severityDisplays[severity];
   const titlePrefix = `### ${display.signal} ${display.label}: `;
   requireContent(lines[0], titlePrefix, "title");
@@ -121,12 +149,20 @@ function validateNewMarkdown(markdown: string, severity: Severity): void {
   requireExact(lines[cursor++], "**预防措施**：");
   requireExact(lines[cursor++], "");
 
-  if (cursor >= lines.length) {
+  const preventionStart = cursor;
+  while (cursor < lines.length && lines[cursor]!.startsWith("- ")) {
+    requireContent(lines[cursor], "- ", "预防措施");
+    cursor += 1;
+  }
+  if (cursor === preventionStart) {
     throw new JudgeDocumentError("NEW Judge Markdown 预防措施 must contain at least one bullet.");
   }
-  for (; cursor < lines.length; cursor += 1) {
-    requireContent(lines[cursor], "- ", "预防措施");
+  if (cursor === lines.length) {
+    return markdown;
   }
+
+  requireExact(lines[cursor], "");
+  return markdown.slice(0, records[cursor - 1]!.contentEnd);
 }
 
 export function parseJudgeDocument(document: string): JudgeReport {
@@ -179,15 +215,15 @@ export function parseJudgeDocument(document: string): JudgeReport {
   if (separator === undefined) {
     throw new JudgeDocumentError("A NEW Judge decision requires one blank line before its Markdown body.");
   }
-  const markdown = bodyWithSeparator.slice(separator.length);
-  if (markdown.trim() === "") {
+  const rawMarkdown = bodyWithSeparator.slice(separator.length);
+  if (rawMarkdown.trim() === "") {
     throw new JudgeDocumentError("A NEW Judge decision requires a non-empty Markdown body.");
   }
-  validateNewMarkdown(markdown, parsed.data.severity);
+  const markdown = extractNewMarkdown(rawMarkdown, parsed.data.severity);
 
   return {
     decision: parsed.data,
     markdown,
-    document: normalized.slice(headerStart),
+    document: `${canonicalHeader}${separator}${markdown}`,
   };
 }

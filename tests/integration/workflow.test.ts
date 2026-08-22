@@ -197,13 +197,15 @@ Prose with { "json": true } and code:
 
     expect(value.agents.agents.filter((agent) => agent === "review-judge")).toHaveLength(2);
     expect((await value.state.read()).repositories["1"]!.merge_requests["7"]).toBeUndefined();
-    expect(findLog(value.logs, "agent_failed")).toContain("invalid reviewx-decision header");
+    expect(findLog(value.logs, "agent_failed")).toContain("invalid decision document");
     expect(findLog(value.logs, "review_run_finished")).toContain("result failed");
   });
 
-  it("publishes validated Judge Markdown unchanged and stores Markdown history", async () => {
+  it("extracts and publishes validated Judge Markdown while retaining raw narration", async () => {
     const markdown = finalComment();
     const value = await harness({ verdict: "NEW", severity: "major" }, markdown);
+    value.agents.judgePrefix = "I have sufficient evidence.\n\n";
+    value.agents.judgeSuffix = "\n\nI need to fix a typo. Let me re-output the final answer cleanly.";
     process.env.CODEHUB_TEST_TOKEN = "must-not-leak";
     try {
       await value.workflow.scanOnce();
@@ -226,6 +228,14 @@ Prose with { "json": true } and code:
     expect(value.logs.join("")).not.toContain(markdown);
     const [runId] = await readdir(value.paths.agentOutputs);
     expect(await readFile(`${value.paths.agentOutputs}/${runId}/review.md`, "utf8")).toBe(markdown);
+    const judgeDirectory = `${value.paths.agentOutputs}/${runId}/04-review-judge`;
+    expect(await readFile(`${judgeDirectory}/attempt-1/report.md`, "utf8")).toBe(
+      `${value.agents.judgePrefix}<!-- reviewx-decision: {"verdict":"NEW","severity":"major"} -->\n\n${markdown}${value.agents.judgeSuffix}`,
+    );
+    expect(await readFile(`${judgeDirectory}/report.md`, "utf8")).toBe(
+      `<!-- reviewx-decision: {"verdict":"NEW","severity":"major"} -->\n\n${markdown}`,
+    );
+    expect(value.agents.agents.filter((agent) => agent === "review-judge")).toHaveLength(1);
   });
 
   it("persists duplicate_of without publishing", async () => {

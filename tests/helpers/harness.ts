@@ -145,6 +145,8 @@ export class ScriptedAgentRunner implements CommandRunner {
   invalidExpert: string | undefined;
   invalidJudgeAttempts = 0;
   failedToolAgent: string | undefined;
+  judgePrefix = "";
+  judgeSuffix = "";
   expertMarkdown = "# PASS\n\nNo actionable issue remains in the final aggregate change.";
 
   constructor(
@@ -188,7 +190,7 @@ export class ScriptedAgentRunner implements CommandRunner {
         output = "# Missing control header";
       } else {
         const body = this.judgeDecision.verdict === "NEW" ? `\n\n${this.judgeMarkdown}` : "";
-        output = `${formatJudgeDecisionHeader(this.judgeDecision)}${body}`;
+        output = `${this.judgePrefix}${formatJudgeDecisionHeader(this.judgeDecision)}${body}${this.judgeSuffix}`;
       }
     } else {
       output = this.expertMarkdown;

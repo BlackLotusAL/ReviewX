@@ -167,6 +167,17 @@ describe("Judge Markdown control header", () => {
     expect(() => parseJudgeDocument(document)).toThrow();
   });
 
+  it("extracts a canonical NEW report from surrounding assistant narration", () => {
+    const header = formatJudgeDecisionHeader({ verdict: "NEW", severity: "minor" });
+    const document = `I have sufficient evidence.\n\n${header}\n\n${validNewMarkdown}\n\nI need to fix a typo. Let me re-output the final answer cleanly.`;
+
+    expect(parseJudgeDocument(document)).toEqual({
+      decision: { verdict: "NEW", severity: "minor" },
+      markdown: validNewMarkdown,
+      document: `${header}\n\n${validNewMarkdown}`,
+    });
+  });
+
   it("discards transient narration before the single standalone control header", () => {
     const canonical = '<!-- reviewx-decision: {"verdict":"PASS"} -->\n\n# Rationale';
     expect(parseJudgeDocument(`I inspected the worktree.\n\n${canonical}`)).toEqual({
@@ -199,6 +210,7 @@ describe("Judge Markdown control header", () => {
     validNewMarkdown.replace("`#correctness`", "`#缺陷`"),
     validNewMarkdown.replace("### 🟡 Minor:", "### 🟢 Suggestion:"),
     validNewMarkdown.replace("```ts\nconst text", "const text"),
+    `${validNewMarkdown}\nI need to fix a typo.`,
   ])("rejects NEW Markdown that diverges from the reference template", (markdown) => {
     const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity: "minor" })}\n\n${markdown}`;
     expect(() => parseJudgeDocument(document)).toThrow();

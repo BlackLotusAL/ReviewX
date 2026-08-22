@@ -149,7 +149,8 @@ return previousReport;
 - 增加空终止消息测试
 - 统一最终文本选择逻辑`;
     const document = `<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->\n\n${markdown}`;
-    const runner = new AgentRunner(() => success(document));
+    const rawDocument = `I have sufficient evidence.\n\n${document}\n\nI need to fix a typo. Let me regenerate the code block cleanly.`;
+    const runner = new AgentRunner(() => success(rawDocument));
     const client = new OpenCodeClient(runner, "fake", "./opencode");
 
     await expect(
@@ -166,6 +167,10 @@ return previousReport;
       .toEqual({ verdict: "NEW", severity: "minor" });
     expect(await readFile(path.join(artifactRoot, "judge", "comment.md"), "utf8"))
       .toBe(markdown);
+    expect(await readFile(path.join(artifactRoot, "judge", "report.md"), "utf8"))
+      .toBe(document);
+    expect(await readFile(path.join(artifactRoot, "judge", "attempt-1", "report.md"), "utf8"))
+      .toBe(rawDocument);
     expect(JSON.parse(await readFile(
       path.join(artifactRoot, "judge", "input-manifest.json"),
       "utf8",
@@ -200,7 +205,7 @@ return previousReport;
 
     await expect(client.runJudge(artifactRoot, inputPaths, runOptions("invalid")))
       .rejects.toMatchObject({
-        message: expect.stringMatching(/after one retry/u),
+        message: expect.stringMatching(/invalid decision document after one retry.*reviewx-decision/u),
         details: {
           agent: "review-judge",
           agent_output: "# Still invalid",
