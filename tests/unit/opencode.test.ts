@@ -188,16 +188,57 @@ describe("Judge Markdown control header", () => {
   });
 
   it.each([
+    '  <!-- reviewx-decision: {"verdict":"PASS"} -->',
+    '```html\n<!-- reviewx-decision: {"verdict":"PASS"} -->\n```',
+    'Narration <!--  reviewx-decision : {"verdict":"PASS"}-->',
+  ])("extracts and canonicalizes a wrapped control header from %s", (document) => {
+    expect(parseJudgeDocument(document)).toEqual({
+      decision: { verdict: "PASS" },
+      markdown: "",
+      document: '<!-- reviewx-decision: {"verdict":"PASS"} -->',
+    });
+  });
+
+  it("selects the last complete valid decision/report combination", () => {
+    const minorHeader = formatJudgeDecisionHeader({ verdict: "NEW", severity: "minor" });
+    const majorHeader = formatJudgeDecisionHeader({ verdict: "NEW", severity: "major" });
+    const minorMarkdown = markdownForSeverity("minor");
+    const majorMarkdown = markdownForSeverity("major");
+    const document = [
+      `${minorHeader}\n\n${minorMarkdown}`,
+      "I need to correct the final decision.",
+      `${majorHeader}\n\n${majorMarkdown}`,
+      '<!-- reviewx-decision: {"verdict":"PASS",} -->',
+    ].join("\n\n");
+
+    expect(parseJudgeDocument(document)).toEqual({
+      decision: { verdict: "NEW", severity: "major" },
+      markdown: majorMarkdown,
+      document: `${majorHeader}\n\n${majorMarkdown}`,
+    });
+  });
+
+  it.each([
     "# Missing header",
     '<!-- reviewx-decision: {"verdict":"PASS",} -->',
     '<!-- reviewx-decision: {"verdict":"PASS","extra":true} -->',
     '<!-- reviewx-decision: {"verdict":"NEW","severity":"High"} -->\n\n# Comment',
     '<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->',
     '<!-- reviewx-decision: {"verdict":"pass"} -->',
-    '```html\n<!-- reviewx-decision: {"verdict":"PASS"} -->\n```',
-    '<!-- reviewx-decision: {"verdict":"PASS"} -->\n<!-- reviewx-decision: {"verdict":"PASS"} -->',
   ])("rejects an invalid control document", (document) => {
     expect(() => parseJudgeDocument(document)).toThrow();
+  });
+
+  it("reports candidate failure categories when extraction finds no valid combination", () => {
+    const document = [
+      '<!-- reviewx-decision: {"verdict":"PASS",} -->',
+      '<!-- reviewx-decision: {"verdict":"NEW","severity":"High"} -->',
+      '<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->',
+    ].join("\n");
+
+    expect(() => parseJudgeDocument(document)).toThrow(
+      /3 candidate\(s\), 1 invalid JSON, 1 protocol-invalid, 1 NEW-body-invalid/u,
+    );
   });
 
   it.each([

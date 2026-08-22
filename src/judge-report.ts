@@ -8,6 +8,8 @@ import {
 
 const decisionPrefix = "<!-- reviewx-decision: ";
 const decisionSuffix = " -->";
+const decisionCandidatePattern =
+  /<!--[ \t]*reviewx-decision[ \t]*:[ \t]*(\{[^\r\n]*\})[ \t]*-->/gmu;
 
 export class JudgeDocumentError extends Error {
   constructor(message: string, options: { cause?: unknown } = {}) {
@@ -165,65 +167,118 @@ function extractNewMarkdown(markdown: string, severity: Severity): string {
   return markdown.slice(0, records[cursor - 1]!.contentEnd);
 }
 
+function extractNewMarkdownFromRegion(region: string, severity: Severity): string {
+  const display = severityDisplays[severity];
+  const titlePattern = new RegExp(`^### ${display.signal} ${display.label}: `, "gmu");
+  let extracted: string | undefined;
+  let lastError: JudgeDocumentError | undefined;
+
+  for (const title of region.matchAll(titlePattern)) {
+    try {
+      extracted = extractNewMarkdown(region.slice(title.index), severity);
+    } catch (error) {
+      if (!(error instanceof JudgeDocumentError)) throw error;
+      lastError = error;
+    }
+  }
+
+  if (extracted !== undefined) return extracted;
+  if (lastError !== undefined) {
+    throw new JudgeDocumentError(lastError.message, { cause: lastError });
+  }
+  throw new JudgeDocumentError(
+    `NEW Judge Markdown must contain a ${display.signal} ${display.label} title after its decision header.`,
+  );
+}
+
+interface DecisionCandidate {
+  encoded: string;
+  start: number;
+  end: number;
+}
+
+function findDecisionCandidates(document: string): DecisionCandidate[] {
+  return [...document.matchAll(decisionCandidatePattern)].map((match) => ({
+    encoded: match[1]!,
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+}
+
 export function parseJudgeDocument(document: string): JudgeReport {
   const normalized = document.replace(/^\uFEFF/u, "");
-  const matches = [...normalized.matchAll(
-    /^<!-- reviewx-decision: (\{[^\r\n]*\}) -->[ \t]*\r?$/gmu,
-  )];
-  if (matches.length !== 1) {
+  const candidates = findDecisionCandidates(normalized);
+  if (candidates.length === 0) {
     throw new JudgeDocumentError(
-      "Judge document must contain exactly one standalone reviewx-decision HTML comment.",
+      "Judge document does not contain a reviewx-decision HTML comment candidate.",
     );
   }
 
-  const match = matches[0]!;
-  const headerStart = match.index;
-  const prefix = normalized.slice(0, headerStart);
-  const previousLine = prefix.trimEnd().split(/\r?\n/u).at(-1) ?? "";
-  if (/^[ \t]*(`{3,}|~{3,})/u.test(previousLine)) {
-    throw new JudgeDocumentError("Judge reviewx-decision header must not be fenced.");
+  let selected: JudgeReport | undefined;
+  let invalidJson = 0;
+  let invalidProtocol = 0;
+  let invalidNewBody = 0;
+  let lastFailure: JudgeDocumentError | undefined;
+
+  for (const [index, candidate] of candidates.entries()) {
+    let rawDecision: unknown;
+    try {
+      rawDecision = JSON.parse(candidate.encoded);
+    } catch (error) {
+      invalidJson += 1;
+      lastFailure = new JudgeDocumentError(
+        "Judge reviewx-decision header candidate is not valid JSON.",
+        { cause: error },
+      );
+      continue;
+    }
+
+    const parsed = judgeDecisionSchema.safeParse(rawDecision);
+    if (!parsed.success) {
+      invalidProtocol += 1;
+      lastFailure = new JudgeDocumentError(
+        "Judge reviewx-decision header candidate does not match the protocol.",
+        { cause: parsed.error },
+      );
+      continue;
+    }
+
+    const canonicalHeader = formatJudgeDecisionHeader(parsed.data);
+    if (parsed.data.verdict !== "NEW") {
+      selected = {
+        decision: parsed.data,
+        markdown: "",
+        document: canonicalHeader,
+      };
+      continue;
+    }
+
+    const bodyEnd = candidates[index + 1]?.start ?? normalized.length;
+    const bodyRegion = normalized.slice(candidate.end, bodyEnd);
+    try {
+      const markdown = extractNewMarkdownFromRegion(bodyRegion, parsed.data.severity);
+      selected = {
+        decision: parsed.data,
+        markdown,
+        document: `${canonicalHeader}\n\n${markdown}`,
+      };
+    } catch (error) {
+      if (!(error instanceof JudgeDocumentError)) throw error;
+      invalidNewBody += 1;
+      lastFailure = error;
+    }
   }
 
-  const encoded = match[1]!;
-  let rawDecision: unknown;
-  try {
-    rawDecision = JSON.parse(encoded);
-  } catch (error) {
-    throw new JudgeDocumentError("Judge reviewx-decision header is not valid JSON.", {
-      cause: error,
-    });
-  }
+  if (selected !== undefined) return selected;
 
-  const parsed = judgeDecisionSchema.safeParse(rawDecision);
-  if (!parsed.success) {
-    throw new JudgeDocumentError("Judge reviewx-decision header does not match the protocol.", {
-      cause: parsed.error,
-    });
-  }
-
-  const headerEnd = headerStart + match[0].length;
-  const canonicalHeader = normalized.slice(headerStart, headerEnd);
-  if (parsed.data.verdict !== "NEW") {
-    return {
-      decision: parsed.data,
-      markdown: "",
-      document: canonicalHeader,
-    };
-  }
-  const bodyWithSeparator = normalized.slice(headerEnd);
-  const separator = /^(?:\r?\n){2}/u.exec(bodyWithSeparator)?.[0];
-  if (separator === undefined) {
-    throw new JudgeDocumentError("A NEW Judge decision requires one blank line before its Markdown body.");
-  }
-  const rawMarkdown = bodyWithSeparator.slice(separator.length);
-  if (rawMarkdown.trim() === "") {
-    throw new JudgeDocumentError("A NEW Judge decision requires a non-empty Markdown body.");
-  }
-  const markdown = extractNewMarkdown(rawMarkdown, parsed.data.severity);
-
-  return {
-    decision: parsed.data,
-    markdown,
-    document: `${canonicalHeader}${separator}${markdown}`,
-  };
+  const summary = [
+    `${candidates.length} candidate(s)`,
+    `${invalidJson} invalid JSON`,
+    `${invalidProtocol} protocol-invalid`,
+    `${invalidNewBody} NEW-body-invalid`,
+  ].join(", ");
+  throw new JudgeDocumentError(
+    `Judge document contains no extractable valid reviewx-decision decision/report pair (${summary}).${lastFailure === undefined ? "" : ` Last candidate error: ${lastFailure.message}`}`,
+    { cause: lastFailure },
+  );
 }
