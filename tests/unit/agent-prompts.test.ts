@@ -35,7 +35,11 @@ describe("OpenCode agent prompts", () => {
     const prompt = await readFile(new URL(`../../opencode/agents/${file}`, import.meta.url), "utf8");
 
     expect(prompt).toContain("`fatal`, `major`, `minor`, or `suggestion`");
-    expect(prompt).toContain("Never use `Blocker`, `Critical`, `Major`, or `Minor`");
+    if (file === "review-judge.md") {
+      expect(prompt).toContain("`suggestion` = `🟢 Suggestion`");
+    } else {
+      expect(prompt).toContain("Never use `Blocker`, `Critical`, `Major`, or `Minor`");
+    }
   });
 
   it("keeps non-new verdicts header-only and defines the ordered Chinese new template", async () => {
@@ -50,31 +54,39 @@ describe("OpenCode agent prompts", () => {
     expect(prompt).toContain("Do not add a blank line, Markdown body, rationale, heading, table, or prose.");
     expect(prompt).toContain("After the control header, add one blank line");
     expect(prompt).toContain("Write the body in Chinese");
-    expect(prompt).toContain("based on the supplied reference document");
+    expect(prompt).toContain("Follow exactly the template below");
     expect(prompt).not.toContain("## 检视结论：PASS");
     expect(prompt).not.toContain("## 检视结论：重复问题");
     expect(prompt).not.toContain("### 变更摘要");
     expect(prompt).not.toContain("### 判定依据");
     expect(prompt).not.toContain("| 项目 | 内容 |");
-    expect(prompt).toContain("`🔴 fatal`, `🟠 major`, `🟡 minor`, and `🔵 suggestion`");
-    expect(prompt).toContain("Keep each narrative section to one concise blockquote paragraph");
-    expect(prompt).toContain("**严重等级**：<severity-icon> <severity>");
+    expect(prompt).toContain("`fatal` = `🔴 Fatal`");
+    expect(prompt).toContain("`major` = `🟠 Major`");
+    expect(prompt).toContain("`minor` = `🟡 Minor`");
+    expect(prompt).toContain("`suggestion` = `🟢 Suggestion`");
+    expect(prompt).toContain("Every one of the three code blocks is required");
     expect(prompt).not.toContain("<br>");
     expect(prompt).not.toContain("**置信度**");
     expect(prompt).not.toContain("**适用规则**");
-    expect(prompt).not.toContain("**触发条件**");
     expect(prompt).not.toContain("**证据**");
 
     expectInOrder(prompt, [
       "For `PASS` and `DUPLICATE`",
       "For `NEW`",
-      "### 【<severity>】<问题标题>",
-      "**严重等级**：<severity-icon> <severity>",
-      "**问题类型**：`<tag-1>`, `<tag-2>`",
-      "**位置**：`path/to/file.ext` L<line-or-range>",
-      "**问题描述**",
-      "**影响**",
-      "**修复建议**",
+      "### <signal> <display-severity>: <问题标题>",
+      "**问题描述**：",
+      "- 严重级别：<display-severity>",
+      "- 标签：`#<tag-1>` `#<tag-2>`",
+      "- 简述：",
+      "**问题位置**： `path/to/file.ext:<start-line>-<end-line>`",
+      "**影响分析**：",
+      "- **直接后果**：",
+      "- **影响范围**：",
+      "- **触发条件**：",
+      "**解决方案**：",
+      "**方案1（推荐）**：",
+      "**方案2**：",
+      "**预防措施**：",
     ]);
   });
 });

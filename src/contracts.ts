@@ -105,6 +105,7 @@ export const standardTags = [
   "api-contract",
   "architecture",
   "maintainability",
+  "naming-convention",
   "test-coverage",
   "observability",
 ] as const;

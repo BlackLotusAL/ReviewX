@@ -98,33 +98,43 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 
 最终评论必须包含：
 
-- 标题和不带数字前缀的严重等级。
-- 一个或多个受控 Tag。
-- 待修改代码的文件和行号或明确代码范围。
-- 问题说明，并在同一段落中包含必要的触发条件或失败场景。
-- 对业务或系统的影响。
-- 可操作的修改建议，以及与目标代码语言一致的最小替换代码块。
+- 带信号灯、展示等级和标题的三级标题。
+- 问题描述，严格包含严重级别、一个或多个受控 `#Tag` 和简述。
+- 待修改代码的仓库相对路径、行号范围和带语言标记的问题代码块。
+- 影响分析，严格包含直接后果、影响范围和触发条件。
+- 两个带语言标记代码块的解决方案，其中方案 1 为推荐方案。
+- 一条或多条预防措施。
 
 示例：
 
 ````markdown
-### 【major】事务提交前提前发送成功事件
+### 🟠 Major: 事务提交前提前发送成功事件
 
-**严重等级**：🟠 major
-**问题类型**：`correctness`, `transaction`
-**位置**：`src/payment/PaymentService.java` L184-L189
+**问题描述**：
 
-**问题描述**
+- 严重级别：Major
+- 标签：`#correctness` `#transaction`
+- 简述：事务确认提交前已经发送成功事件；事务回滚后，下游仍可能观察到从未持久化的成功状态
 
-> 事务确认提交前已经发送成功事件；若发送后事务发生回滚，下游仍可能观察到从未持久化的成功状态。
+**问题位置**： `src/payment/PaymentService.java:184-189`
 
-**影响**
+```java
+@Transactional
+public void completePayment(Payment payment) {
+    payment.markSucceeded();
+    publishSuccess(payment.getId()); // [!code warning] 事务提交前发送
+}
+```
 
-> 下游会收到与数据库真实状态不一致的通知。
+**影响分析**：
 
-**修复建议**
+- **直接后果**：下游会收到与数据库真实状态不一致的通知
+- **影响范围**：所有消费支付成功事件的下游服务
+- **触发条件**：事件发送成功后当前事务提交失败或回滚
 
-> 将事件发送移动到事务提交后的回调中，并补充事务回滚时不发送事件的测试。
+**解决方案**：
+
+**方案1（推荐）**：将事件发送移动到事务提交后的回调
 
 ```java
 @Transactional
@@ -141,16 +151,31 @@ public void completePayment(Payment payment) {
     );
 }
 ```
+
+**方案2**：通过事务发件箱保存并异步发送事件
+
+```java
+@Transactional
+public void completePayment(Payment payment) {
+    payment.markSucceeded();
+    outboxRepository.save(PaymentSucceeded.from(payment));
+}
+```
+
+**预防措施**：
+
+- 增加事务回滚时不发送成功事件的测试
+- 审查事务内所有不可回滚的外部副作用
 ````
 
 严重等级：
 
 | 等级 | 含义 |
 | --- | --- |
-| fatal | 明确的安全事故、数据损坏或大面积不可用风险 |
-| major | 高概率严重错误，需要合入前处理 |
-| minor | 真实的功能、性能或维护风险，建议合入前处理 |
-| suggestion | 局部低风险问题 |
+| 🔴 Fatal (`fatal`) | 明确的安全事故、数据损坏或大面积不可用风险 |
+| 🟠 Major (`major`) | 高概率严重错误，需要合入前处理 |
+| 🟡 Minor (`minor`) | 真实的功能、性能或维护风险，建议合入前处理 |
+| 🟢 Suggestion (`suggestion`) | 局部低风险问题 |
 
 标准 Tag：
 
@@ -166,6 +191,7 @@ compatibility
 api-contract
 architecture
 maintainability
+naming-convention
 test-coverage
 observability
 ```

@@ -174,14 +174,14 @@ CodeHub CLI 会把服务端缺失的投影字段输出为 `null`。ReviewX 接�
 
 ### 4.2 评论发布
 
-Workflow 使用 Node 子进程参数数组调用 `mr comment create`，先把裁判生成的完整 Markdown 序列化为带转义序列的 JSON 字符串表示，再作为一个 `--body` 参数传入，不经过 shell 拼接。Reviewer、Judge 控制协议、评论 Markdown 和 CodeHub CLI 全链路统一使用以下小写严重等级：
+Workflow 使用 Node 子进程参数数组调用 `mr comment create`，先把裁判生成的完整 Markdown 序列化为带转义序列的 JSON 字符串表示，再作为一个 `--body` 参数传入，不经过 shell 拼接。Reviewer、Judge 控制协议和 CodeHub CLI 全链路统一使用以下小写严重等级；评论 Markdown 使用对应的信号灯和首字母大写展示名：
 
 | 等级 | 含义 |
 | --- | --- |
-| `fatal` | 明确的安全事故、数据损坏或大面积不可用风险 |
-| `major` | 高概率严重错误，需要合入前处理 |
-| `minor` | 真实的功能、性能或维护风险，建议合入前处理 |
-| `suggestion` | 局部低风险问题 |
+| `fatal` / 🔴 Fatal | 明确的安全事故、数据损坏或大面积不可用风险 |
+| `major` / 🟠 Major | 高概率严重错误，需要合入前处理 |
+| `minor` / 🟡 Minor | 真实的功能、性能或维护风险，建议合入前处理 |
+| `suggestion` / 🟢 Suggestion | 局部低风险问题 |
 
 Judge 选定的 severity 不做名称映射，直接作为 `--severity` 的值传给 CodeHub。`WRITE_RESULT_UNKNOWN` 的处理规则见第 7.1 节。
 
@@ -275,7 +275,7 @@ type JudgeDecision =
 <!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->
 ```
 
-`NEW` 必须在控制头和一个分隔空行后提供非空 Markdown。ReviewX 剥离控制头与分隔空行，并校验正文严格使用固定顺序：标题、严重等级、问题类型、位置、问题描述、影响、修复建议；正文不得加入其他元数据或章节。校验后的正文不再改写，并原样保存和发布。`PASS`、`DUPLICATE` 的 canonical 产物强制只保留控制头；模型原始 attempt 仍完整留档。以下情况判定失败：
+`NEW` 必须在控制头和一个分隔空行后提供非空 Markdown。ReviewX 剥离控制头与分隔空行，并校验正文严格使用固定顺序：信号灯标题；包含严重级别、`#Tag`、简述的问题描述；`path:start-end` 问题位置及代码块；包含直接后果、影响范围、触发条件的影响分析；两个带代码块的解决方案；预防措施。三个代码块都必须包含语言标记和非空代码，正文不得加入其他元数据或章节。校验后的正文不再改写，并原样保存和发布。`PASS`、`DUPLICATE` 的 canonical 产物强制只保留控制头；模型原始 attempt 仍完整留档。以下情况判定失败：
 
 - 子进程非零退出、超时或缺少最终响应。
 - OpenCode JSONL 事件非法或最终 Markdown 为空。

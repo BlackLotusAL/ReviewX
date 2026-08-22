@@ -21,26 +21,47 @@ The first non-empty line must be exactly one of these hidden control headers, wi
 
 For `PASS` and `DUPLICATE`, output only the matching control-header line. Do not add a blank line, Markdown body, rationale, heading, table, or prose.
 
-For `NEW`, replace `minor` in the control header with exactly one of CodeHub's lowercase severity values: `fatal`, `major`, `minor`, or `suggestion`. Use `fatal` for a confirmed security incident, data corruption, or broad outage risk; `major` for a high-probability severe defect that must be fixed before merge; `minor` for a real functional, performance, or maintainability risk that should normally be fixed before merge; and `suggestion` for a localized low-risk improvement. After the control header, add one blank line and then a non-empty Markdown body. Write the body in Chinese except for protocol values, standard tags, repository identifiers, file paths, and source code. Follow exactly this compact PR review template, which is based on the supplied reference document. Keep every line and section in the stated order, do not add other metadata or sections, and do not use HTML line breaks.
+For `NEW`, replace `minor` in the control header with exactly one of CodeHub's lowercase severity values: `fatal`, `major`, `minor`, or `suggestion`. Use `fatal` for a confirmed security incident, data corruption, or broad outage risk; `major` for a high-probability severe defect that must be fixed before merge; `minor` for a real functional, performance, or maintainability risk that should normally be fixed before merge; and `suggestion` for a localized low-risk improvement. After the control header, add one blank line and then a non-empty Markdown body. Write the body in Chinese except for severity display labels, standard tags, repository identifiers, file paths, and source code. Follow exactly the template below. Keep every line, blank line, field, section, and code fence in the stated order; do not add other metadata or sections, and do not use HTML line breaks.
 
-    ### 【<severity>】<问题标题>
+    ### <signal> <display-severity>: <问题标题>
 
-    **严重等级**：<severity-icon> <severity>
-    **问题类型**：`<tag-1>`, `<tag-2>`
-    **位置**：`path/to/file.ext` L<line-or-range>
+    **问题描述**：
 
-    **问题描述**
+    - 严重级别：<display-severity>
+    - 标签：`#<tag-1>` `#<tag-2>`
+    - 简述：<用一个简洁段落说明问题及为何这是缺陷>
 
-    > <用一个简洁段落说明问题、必要触发条件及为何这是缺陷；仅在有助于理解时附问题代码>
+    **问题位置**： `path/to/file.ext:<start-line>-<end-line>`
 
-    **影响**
+    ```<language>
+    <包含问题上下文的代码；使用 [!code warning] 注释标出问题行>
+    ```
 
-    > <用一个简洁段落说明可观察的用户、业务或系统影响>
+    **影响分析**：
 
-    **修复建议**
+    - **直接后果**：<可观察的用户、业务或系统后果>
+    - **影响范围**：<受影响的调用、模块、数据或接口范围>
+    - **触发条件**：<问题发生所需的具体条件>
 
-    > <用一个简洁段落给出可操作的最小修复；仅在有助于实施时附修改后代码>
+    **解决方案**：
 
-Use exactly these severity markers: `🔴 fatal`, `🟠 major`, `🟡 minor`, and `🔵 suggestion`. Never use `Blocker`, `Critical`, `Major`, or `Minor` as severity names. Use controlled ReviewX tags as the `问题类型` values rather than inventing display-only categories. Use a repository-relative file path followed by `L<line>` or `L<start>-L<end>` for `位置`. Keep each narrative section to one concise blockquote paragraph; place an optional code fence after the blockquote. Do not repeat the severity, tags, location, trigger, evidence, impact, or recommendation in another section. Do not add confidence, applicable rules, trigger, evidence, summary, conclusion, or any other metadata or heading.
+    **方案1（推荐）**：<首选修复及理由>
 
-Allowed standard tags (case-sensitive): `security`, `correctness`, `business-rule`, `concurrency`, `transaction`, `performance`, `resource-leak`, `compatibility`, `api-contract`, `architecture`, `maintainability`, `test-coverage`, `observability`. Every tag must be one of these exact values or match `domain:<name>`. Do not preserve or invent other bare tags: use `architecture` instead of `layering`, and `compatibility` instead of `migration`. Use `domain:<name>` only for a repository-specific business domain.
+    ```<language>
+    <首选方案的完整关键代码>
+    ```
+
+    **方案2**：<备选修复及其取舍>
+
+    ```<language>
+    <备选方案的完整关键代码>
+    ```
+
+    **预防措施**：
+
+    - <预防措施一>
+    - <预防措施二>
+
+The severity display must match the control-header value exactly: `fatal` = `🔴 Fatal`, `major` = `🟠 Major`, `minor` = `🟡 Minor`, and `suggestion` = `🟢 Suggestion`. Tags must be controlled names prefixed with `#`, wrapped individually in backticks, and separated by one space. Use one repository-relative location in `path:start-end` form. Every one of the three code blocks is required, must use a language tag, and must contain code. Include exactly the three impact bullets, both solution headings, and one or more prevention bullets.
+
+Allowed standard tags (case-sensitive): `security`, `correctness`, `business-rule`, `concurrency`, `transaction`, `performance`, `resource-leak`, `compatibility`, `api-contract`, `architecture`, `maintainability`, `naming-convention`, `test-coverage`, `observability`. Every tag name must be one of these exact values or match `domain:<name>`. In the report, prefix each tag name with `#`. Do not preserve or invent other bare tags: use `architecture` instead of `layering`, and `compatibility` instead of `migration`. Use `domain:<name>` only for a repository-specific business domain.

@@ -109,23 +109,45 @@ describe("OpenCode Markdown client", () => {
   });
 
   it("attaches context plus three reports and persists a valid new Judge document", async () => {
-    const markdown = `### 【minor】终止消息可能丢失已有报告
+    const markdown = `### 🟡 Minor: 终止消息可能丢失已有报告
 
-**严重等级**：🟡 minor
-**问题类型**：\`correctness\`
-**位置**：\`src/opencode.ts\` L105-L116
+**问题描述**：
 
-**问题描述**
+- 严重级别：Minor
+- 标签：\`#correctness\` \`#observability\`
+- 简述：终止消息为空时不会回退到之前的有效报告
 
-> 终止消息没有文本时，解析器不会回退到前一条已有报告的消息。
+**问题位置**： \`src/opencode.ts:105-116\`
 
-**影响**
+\`\`\`ts
+return terminalMessage.text; // [!code warning] 可能为空
+\`\`\`
 
-> 有效报告会被丢弃，整次检视失败。
+**影响分析**：
 
-**修复建议**
+- **直接后果**：有效报告被丢弃
+- **影响范围**：空终止消息的 Agent 调用
+- **触发条件**：已有报告后收到空终止消息
 
-> 终止消息为空时回退到最后一条包含文本的消息。`;
+**解决方案**：
+
+**方案1（推荐）**：回退到最后一条有效文本
+
+\`\`\`ts
+return terminalMessage.text || lastText;
+\`\`\`
+
+**方案2**：忽略空终止消息
+
+\`\`\`ts
+if (terminalMessage.text) return terminalMessage.text;
+return previousReport;
+\`\`\`
+
+**预防措施**：
+
+- 增加空终止消息测试
+- 统一最终文本选择逻辑`;
     const document = `<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->\n\n${markdown}`;
     const runner = new AgentRunner(() => success(document));
     const client = new OpenCodeClient(runner, "fake", "./opencode");

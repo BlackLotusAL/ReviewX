@@ -23,27 +23,45 @@ import { StateStore } from "../../src/state.js";
 import { ReviewWorkflow } from "../../src/workflow.js";
 
 export function finalComment(): string {
-  return `### 【major】事务提交前发送成功事件
+  return `### 🟠 Major: 事务提交前发送成功事件
 
-**严重等级**：🟠 major
-**问题类型**：\`correctness\`, \`transaction\`
-**位置**：\`service.ts\` L1
+**问题描述**：
 
-**问题描述**
+- 严重级别：Major
+- 标签：\`#correctness\` \`#transaction\`
+- 简述：事务提交前发送成功事件，回滚后下游仍可观察到未持久化的状态
 
-> 事务提交前已经发送成功事件；事务随后回滚时，该事件仍然可见。
+**问题位置**： \`service.ts:1-3\`
 
-**影响**
+\`\`\`ts
+publish(); // [!code warning] 事务提交前发送
+commit();
+\`\`\`
 
-> 下游状态与数据库不一致。
+**影响分析**：
 
-**修复建议**
+- **直接后果**：下游状态与数据库不一致
+- **影响范围**：消费成功事件的所有下游服务
+- **触发条件**：事件发送成功后事务提交失败
 
-> 将事件发送移动到提交后的回调。
+**解决方案**：
+
+**方案1（推荐）**：在事务提交后的回调中发送事件
 
 \`\`\`ts
 afterCommit(() => publish());
-\`\`\``;
+\`\`\`
+
+**方案2**：使用事务发件箱异步发送事件
+
+\`\`\`ts
+outbox.save(successEvent);
+\`\`\`
+
+**预防措施**：
+
+- 增加事务回滚时不发送事件的测试
+- 审查所有事务内的外部副作用`;
 }
 
 function ok(value: unknown): CommandResult {

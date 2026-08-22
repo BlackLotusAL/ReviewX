@@ -10,23 +10,60 @@ function event(text: string): string {
   return JSON.stringify({ type: "text", part: { text } });
 }
 
-const validNewMarkdown = `### 【minor】终止消息可能丢失已有报告
+const validNewMarkdown = `### 🟡 Minor: 终止消息可能丢失已有报告
 
-**严重等级**：🟡 minor
-**问题类型**：\`correctness\`
-**位置**：\`src/opencode.ts\` L105-L116
+**问题描述**：
 
-**问题描述**
+- 严重级别：Minor
+- 标签：\`#correctness\` \`#observability\`
+- 简述：终止消息没有文本时，解析器不会回退到前一条已有报告的消息
 
-> 终止消息没有文本时，解析器不会回退到前一条已有报告的消息。
+**问题位置**： \`src/opencode.ts:105-116\`
 
-**影响**
+\`\`\`ts
+const text = terminalMessage.text; // [!code warning] 空文本会覆盖已有报告
+return text;
+\`\`\`
 
-> 有效报告会被丢弃，整次检视失败。
+**影响分析**：
 
-**修复建议**
+- **直接后果**：有效报告会被丢弃，整次检视失败
+- **影响范围**：所有以空终止消息结束的 Agent 调用
+- **触发条件**：终止消息不含文本但之前已经产生有效报告
 
-> 终止消息为空时回退到最后一条包含文本的消息。`;
+**解决方案**：
+
+**方案1（推荐）**：空终止消息回退到最后一条有效文本
+
+\`\`\`ts
+return terminalMessage.text || lastTextMessage.text;
+\`\`\`
+
+**方案2**：忽略不含文本的终止消息
+
+\`\`\`ts
+if (terminalMessage.text) return terminalMessage.text;
+return previousReport;
+\`\`\`
+
+**预防措施**：
+
+- 增加空终止消息的回归测试
+- 统一最终文本选择逻辑`;
+
+const severityDisplay = {
+  fatal: ["🔴", "Fatal"],
+  major: ["🟠", "Major"],
+  minor: ["🟡", "Minor"],
+  suggestion: ["🟢", "Suggestion"],
+} as const;
+
+function markdownForSeverity(severity: keyof typeof severityDisplay): string {
+  const [signal, label] = severityDisplay[severity];
+  return validNewMarkdown
+    .replace("🟡 Minor", `${signal} ${label}`)
+    .replace("严重级别：Minor", `严重级别：${label}`);
+}
 
 describe("OpenCode Markdown event parsing and permissions", () => {
   it("reassembles every completed text part in event order", () => {
@@ -109,20 +146,25 @@ describe("Judge Markdown control header", () => {
   });
 
   it.each([
-    ["fatal", "🔴"],
-    ["major", "🟠"],
-    ["minor", "🟡"],
-    ["suggestion", "🔵"],
-  ] as const)("accepts the CodeHub severity %s and its marker", (severity, icon) => {
-    const markdown = validNewMarkdown
-      .replaceAll("minor", severity)
-      .replace("🟡", icon);
+    "fatal",
+    "major",
+    "minor",
+    "suggestion",
+  ] as const)("accepts the CodeHub severity %s and its marker", (severity) => {
+    const markdown = markdownForSeverity(severity);
     const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity })}\n\n${markdown}`;
 
     expect(parseJudgeDocument(document)).toMatchObject({
       decision: { verdict: "NEW", severity },
       markdown,
     });
+  });
+
+  it("rejects the legacy blue Suggestion signal", () => {
+    const markdown = markdownForSeverity("suggestion").replace("🟢 Suggestion", "🔵 Suggestion");
+    const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity: "suggestion" })}\n\n${markdown}`;
+
+    expect(() => parseJudgeDocument(document)).toThrow();
   });
 
   it("discards transient narration before the single standalone control header", () => {
@@ -148,11 +190,15 @@ describe("Judge Markdown control header", () => {
   });
 
   it.each([
-    validNewMarkdown.replace("\n\n**影响**", "\n\n**触发条件**\n\n> 最后一条消息没有文本。\n\n**影响**"),
-    validNewMarkdown.replace("**位置**：`src/opencode.ts` L105-L116", "**位置**：`C:\\src\\opencode.ts` L105-L116"),
-    validNewMarkdown.replace("> 终止消息没有文本时", "终止消息没有文本时"),
-    validNewMarkdown.replace("**问题类型**：`correctness`", "**问题类型**：`缺陷`"),
-    validNewMarkdown.replace("### 【minor】", "### 【suggestion】"),
+    validNewMarkdown.replace("**影响分析**：", "**额外章节**：\n\n内容\n\n**影响分析**："),
+    validNewMarkdown.replace("`src/opencode.ts:105-116`", "`C:\\src\\opencode.ts:105-116`"),
+    validNewMarkdown.replace(
+      "- 简述：终止消息没有文本时，解析器不会回退到前一条已有报告的消息",
+      "- 简述：",
+    ),
+    validNewMarkdown.replace("`#correctness`", "`#缺陷`"),
+    validNewMarkdown.replace("### 🟡 Minor:", "### 🟢 Suggestion:"),
+    validNewMarkdown.replace("```ts\nconst text", "const text"),
   ])("rejects NEW Markdown that diverges from the reference template", (markdown) => {
     const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity: "minor" })}\n\n${markdown}`;
     expect(() => parseJudgeDocument(document)).toThrow();
