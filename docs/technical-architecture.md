@@ -160,7 +160,7 @@ codehub mr commits <mr-iid> --project-id <repo-id> --output json
 codehub mr comment create <mr-iid> \
   --project-id <repo-id> \
   --body <serialized-markdown-string> \
-  --severity <suggestion|minor|major|fatal> \
+  --severity <fatal|major|minor|suggestion> \
   --output json
 ```
 
@@ -174,16 +174,16 @@ CodeHub CLI 会把服务端缺失的投影字段输出为 `null`。ReviewX 接�
 
 ### 4.2 评论发布
 
-Workflow 使用 Node 子进程参数数组调用 `mr comment create`，先把裁判生成的完整 Markdown 序列化为带转义序列的 JSON 字符串表示，再作为一个 `--body` 参数传入，不经过 shell 拼接。严重等级映射固定为：
+Workflow 使用 Node 子进程参数数组调用 `mr comment create`，先把裁判生成的完整 Markdown 序列化为带转义序列的 JSON 字符串表示，再作为一个 `--body` 参数传入，不经过 shell 拼接。Reviewer、Judge 控制协议、评论 Markdown 和 CodeHub CLI 全链路统一使用以下小写严重等级：
 
-| ReviewX | CodeHub |
+| 等级 | 含义 |
 | --- | --- |
-| Blocker | `fatal` |
-| Critical | `major` |
-| Major | `minor` |
-| Minor | `suggestion` |
+| `fatal` | 明确的安全事故、数据损坏或大面积不可用风险 |
+| `major` | 高概率严重错误，需要合入前处理 |
+| `minor` | 真实的功能、性能或维护风险，建议合入前处理 |
+| `suggestion` | 局部低风险问题 |
 
-评论 Markdown 仍展示 ReviewX 原始等级。`WRITE_RESULT_UNKNOWN` 的处理规则见第 7.1 节。
+Judge 选定的 severity 不做名称映射，直接作为 `--severity` 的值传给 CodeHub。`WRITE_RESULT_UNKNOWN` 的处理规则见第 7.1 节。
 
 ### 4.3 Git 与 worktree 生命周期
 
@@ -259,7 +259,7 @@ permission:
 工作流只要求 Judge 输出中恰好一个独立行使用以下最小控制协议；提示词仍要求它作为首个非空行：
 
 ```ts
-type Severity = "Blocker" | "Critical" | "Major" | "Minor";
+type Severity = "fatal" | "major" | "minor" | "suggestion";
 type JudgeDecision =
   | { verdict: "PASS" }
   | { verdict: "DUPLICATE"; duplicate_comment_id: string | null }
@@ -272,7 +272,7 @@ type JudgeDecision =
 <!-- reviewx-decision: {"verdict":"PASS"} -->
 <!-- reviewx-decision: {"verdict":"DUPLICATE","duplicate_comment_id":"comment-id"} -->
 <!-- reviewx-decision: {"verdict":"DUPLICATE","duplicate_comment_id":null} -->
-<!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->
+<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->
 ```
 
 `NEW` 必须在控制头和一个分隔空行后提供非空 Markdown。ReviewX 剥离控制头与分隔空行，并校验正文严格使用固定顺序：标题、严重等级、问题类型、位置、问题描述、影响、修复建议；正文不得加入其他元数据或章节。校验后的正文不再改写，并原样保存和发布。`PASS`、`DUPLICATE` 的 canonical 产物强制只保留控制头；模型原始 attempt 仍完整留档。以下情况判定失败：
@@ -345,7 +345,7 @@ reviewx run
 2. MR 命令始终使用 Project ID 和 MR IID；仅 CLI 返回的首次、此前失败或 `updated_at` 变化的 Open MR 进入检视。
 3. CodeHub CLI 只执行第 4.1 节的五类命令；本地 Git 按 SSH 优先规则准备 clone/fetch 和 worktree，不生成 diff 包。
 4. 三个专家顺序执行；非零退出、非法结构或单个进程超过 20 分钟时停止本次运行。
-5. `NEW` 按固定 severity 映射发布；`PASS` 和 `DUPLICATE` 不发布评论。
+5. `NEW` 将 Judge 的 CodeHub severity 原值直接传给 `--severity` 发布；`PASS` 和 `DUPLICATE` 不发布评论。
 6. 检视期间 MR 更新或关闭时不评论；成功评论刷新 `updated_at`，`WRITE_RESULT_UNKNOWN` 记录未知历史且不自动重试。
 7. 所有代码托管操作都对应第 4.1 节的 CodeHub CLI 命令；并发命令不损坏状态，Agent 不能编辑代码、运行项目命令、访问网络或发布评论。
 8. 专家 Markdown 中的代码块、JSON 片段和自由说明会原样保留；每个 Agent 的可重放输入和完整报告可通过 `run_id` 在 `runtime/agent-output/` 定位。

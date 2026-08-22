@@ -91,6 +91,26 @@ describe("CodeHub fixed CLI contract", () => {
     ]);
   });
 
+  it.each(["fatal", "major", "minor", "suggestion"] as const)(
+    "passes the CodeHub severity %s unchanged",
+    async (severity) => {
+      const runner = new HandlerRunner((args) => result({
+        comment_id: "c1",
+        repo_id: "1",
+        mr_iid: "2",
+        severity: args[args.indexOf("--severity") + 1],
+        resolved: false,
+        web_url: null,
+      }));
+      const client = new CodeHubClient(runner);
+
+      await expect(client.createComment("1", "2", "body", severity)).resolves.toMatchObject({
+        severity,
+      });
+      expect(runner.calls[0]!.slice(-4)).toEqual(["--severity", severity, "--output", "json"]);
+    },
+  );
+
   it("classifies stable errors using stderr code and status", async () => {
     const runner = new HandlerRunner(() => ({
       exitCode: 8,

@@ -10,9 +10,9 @@ function event(text: string): string {
   return JSON.stringify({ type: "text", part: { text } });
 }
 
-const validNewMarkdown = `### 【Major】终止消息可能丢失已有报告
+const validNewMarkdown = `### 【minor】终止消息可能丢失已有报告
 
-**严重等级**：🟡 Major
+**严重等级**：🟡 minor
 **问题类型**：\`correctness\`
 **位置**：\`src/opencode.ts\` L105-L116
 
@@ -96,7 +96,7 @@ describe("Judge Markdown control header", () => {
     [{ verdict: "PASS" }, "# Internal rationale"],
     [{ verdict: "DUPLICATE", duplicate_comment_id: "comment-1" }, ""],
     [{ verdict: "DUPLICATE", duplicate_comment_id: null }, "# Unknown publication"],
-    [{ verdict: "NEW", severity: "Major" }, validNewMarkdown],
+    [{ verdict: "NEW", severity: "minor" }, validNewMarkdown],
   ] as Array<[JudgeDecision, string]>)
   ("parses %s while preserving the Markdown body", (decision, markdown) => {
     const document = `${formatJudgeDecisionHeader(decision)}${markdown === "" ? "" : decision.verdict === "NEW" ? `\n\n${markdown}` : `\n${markdown}`}`;
@@ -105,6 +105,23 @@ describe("Judge Markdown control header", () => {
       decision,
       markdown: isNew ? markdown : "",
       document: isNew ? document : formatJudgeDecisionHeader(decision),
+    });
+  });
+
+  it.each([
+    ["fatal", "🔴"],
+    ["major", "🟠"],
+    ["minor", "🟡"],
+    ["suggestion", "🔵"],
+  ] as const)("accepts the CodeHub severity %s and its marker", (severity, icon) => {
+    const markdown = validNewMarkdown
+      .replaceAll("minor", severity)
+      .replace("🟡", icon);
+    const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity })}\n\n${markdown}`;
+
+    expect(parseJudgeDocument(document)).toMatchObject({
+      decision: { verdict: "NEW", severity },
+      markdown,
     });
   });
 
@@ -122,7 +139,7 @@ describe("Judge Markdown control header", () => {
     '<!-- reviewx-decision: {"verdict":"PASS",} -->',
     '<!-- reviewx-decision: {"verdict":"PASS","extra":true} -->',
     '<!-- reviewx-decision: {"verdict":"NEW","severity":"High"} -->\n\n# Comment',
-    '<!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->',
+    '<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->',
     '<!-- reviewx-decision: {"verdict":"pass"} -->',
     '```html\n<!-- reviewx-decision: {"verdict":"PASS"} -->\n```',
     '<!-- reviewx-decision: {"verdict":"PASS"} -->\n<!-- reviewx-decision: {"verdict":"PASS"} -->',
@@ -135,9 +152,9 @@ describe("Judge Markdown control header", () => {
     validNewMarkdown.replace("**位置**：`src/opencode.ts` L105-L116", "**位置**：`C:\\src\\opencode.ts` L105-L116"),
     validNewMarkdown.replace("> 终止消息没有文本时", "终止消息没有文本时"),
     validNewMarkdown.replace("**问题类型**：`correctness`", "**问题类型**：`缺陷`"),
-    validNewMarkdown.replace("### 【Major】", "### 【Minor】"),
+    validNewMarkdown.replace("### 【minor】", "### 【suggestion】"),
   ])("rejects NEW Markdown that diverges from the reference template", (markdown) => {
-    const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity: "Major" })}\n\n${markdown}`;
+    const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity: "minor" })}\n\n${markdown}`;
     expect(() => parseJudgeDocument(document)).toThrow();
   });
 });

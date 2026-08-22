@@ -109,9 +109,9 @@ describe("OpenCode Markdown client", () => {
   });
 
   it("attaches context plus three reports and persists a valid new Judge document", async () => {
-    const markdown = `### 【Major】终止消息可能丢失已有报告
+    const markdown = `### 【minor】终止消息可能丢失已有报告
 
-**严重等级**：🟡 Major
+**严重等级**：🟡 minor
 **问题类型**：\`correctness\`
 **位置**：\`src/opencode.ts\` L105-L116
 
@@ -126,14 +126,14 @@ describe("OpenCode Markdown client", () => {
 **修复建议**
 
 > 终止消息为空时回退到最后一条包含文本的消息。`;
-    const document = `<!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->\n\n${markdown}`;
+    const document = `<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->\n\n${markdown}`;
     const runner = new AgentRunner(() => success(document));
     const client = new OpenCodeClient(runner, "fake", "./opencode");
 
     await expect(
       client.runJudge(artifactRoot, inputPaths, runOptions("judge")),
     ).resolves.toEqual({
-      decision: { verdict: "NEW", severity: "Major" },
+      decision: { verdict: "NEW", severity: "minor" },
       markdown,
       document,
     });
@@ -141,7 +141,7 @@ describe("OpenCode Markdown client", () => {
     const files = runner.calls[0]!.args.filter((value) => value === "--file");
     expect(files).toHaveLength(4);
     expect(JSON.parse(await readFile(path.join(artifactRoot, "judge", "decision.json"), "utf8")))
-      .toEqual({ verdict: "NEW", severity: "Major" });
+      .toEqual({ verdict: "NEW", severity: "minor" });
     expect(await readFile(path.join(artifactRoot, "judge", "comment.md"), "utf8"))
       .toBe(markdown);
     expect(JSON.parse(await readFile(

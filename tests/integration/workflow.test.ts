@@ -203,7 +203,7 @@ Prose with { "json": true } and code:
 
   it("publishes validated Judge Markdown unchanged and stores Markdown history", async () => {
     const markdown = finalComment();
-    const value = await harness({ verdict: "NEW", severity: "Critical" }, markdown);
+    const value = await harness({ verdict: "NEW", severity: "major" }, markdown);
     process.env.CODEHUB_TEST_TOKEN = "must-not-leak";
     try {
       await value.workflow.scanOnce();
@@ -274,7 +274,7 @@ Prose with { "json": true } and code:
     ["closed", "closed", "2026-08-12T00:00:00Z"],
     ["updated", "opened", "2026-08-12T00:00:30Z"],
   ] as const)("does not publish when the MR is %s", async (result, state, updatedAt) => {
-    const value = await harness({ verdict: "NEW", severity: "Critical" }, finalComment());
+    const value = await harness({ verdict: "NEW", severity: "major" }, finalComment());
     value.codeHub.prePublishState = state;
     value.codeHub.prePublishUpdatedAt = updatedAt;
     await value.workflow.scanOnce();
@@ -289,7 +289,7 @@ Prose with { "json": true } and code:
   it.each(["unknown", "missing_id"] as const)(
     "records %s publication history and treats the update as processed",
     async (publication) => {
-      const value = await harness({ verdict: "NEW", severity: "Critical" }, finalComment());
+      const value = await harness({ verdict: "NEW", severity: "major" }, finalComment());
       value.codeHub.publication = publication;
       await value.workflow.scanOnce();
       const mrState = (await value.state.read()).repositories["1"]!.merge_requests["7"]!;

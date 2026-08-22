@@ -4,7 +4,6 @@ import path from "node:path";
 import {
   expertInputSchema,
   judgeContextSchema,
-  severityToCodeHub,
   type CommentResult,
   type Commit,
   type ExpertName,
@@ -333,7 +332,7 @@ export class ReviewWorkflow {
         repoId,
         mr.iid,
         judge.markdown,
-        severityToCodeHub[judge.decision.severity],
+        judge.decision.severity,
         signal,
       );
     } catch (error) {

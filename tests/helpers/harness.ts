@@ -23,9 +23,9 @@ import { StateStore } from "../../src/state.js";
 import { ReviewWorkflow } from "../../src/workflow.js";
 
 export function finalComment(): string {
-  return `### 【Critical】事务提交前发送成功事件
+  return `### 【major】事务提交前发送成功事件
 
-**严重等级**：🟠 Critical
+**严重等级**：🟠 major
 **问题类型**：\`correctness\`, \`transaction\`
 **位置**：\`service.ts\` L1
 

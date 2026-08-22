@@ -5,7 +5,7 @@ import {
   mergeRequestSchema,
   normalizePositiveId,
   repositorySchema,
-  severityToCodeHub,
+  severitySchema,
   stateSchema,
 } from "../../src/contracts.js";
 import { parseDuration, parseInterval } from "../../src/duration.js";
@@ -101,16 +101,16 @@ describe("public contracts", () => {
     expect(
       judgeDecisionSchema.parse({ verdict: "DUPLICATE", duplicate_comment_id: null }),
     ).toEqual({ verdict: "DUPLICATE", duplicate_comment_id: null });
-    expect(judgeDecisionSchema.parse({ verdict: "NEW", severity: "Critical" })).toEqual({
+    expect(judgeDecisionSchema.parse({ verdict: "NEW", severity: "major" })).toEqual({
       verdict: "NEW",
-      severity: "Critical",
+      severity: "major",
     });
     expect(() => judgeDecisionSchema.parse({ verdict: "NEW" })).toThrow();
     expect(() => judgeDecisionSchema.parse({ verdict: "NEW", severity: "High" })).toThrow();
     expect(() => judgeDecisionSchema.parse({ verdict: "PASS", explanation: "extra" })).toThrow();
     expect(() => judgeDecisionSchema.parse({ verdict: "pass" })).toThrow();
     expect(() => judgeDecisionSchema.parse({ verdict: "duplicate_of" })).toThrow();
-    expect(() => judgeDecisionSchema.parse({ verdict: "new", severity: "Critical" })).toThrow();
+    expect(() => judgeDecisionSchema.parse({ verdict: "new", severity: "major" })).toThrow();
   });
 
   it("accepts legacy and Markdown history while rejecting malformed state", () => {
@@ -155,12 +155,13 @@ describe("public contracts", () => {
     ).toThrow();
   });
 
-  it("maps severity to CodeHub", () => {
-    expect(severityToCodeHub).toEqual({
-      Blocker: "fatal",
-      Critical: "major",
-      Major: "minor",
-      Minor: "suggestion",
-    });
-  });
+  it.each(["fatal", "major", "minor", "suggestion"] as const)(
+    "accepts the CodeHub severity %s",
+    (severity) => expect(severitySchema.parse(severity)).toBe(severity),
+  );
+
+  it.each(["Blocker", "Critical", "Major", "Minor"])(
+    "rejects the legacy severity %s",
+    (severity) => expect(() => severitySchema.parse(severity)).toThrow(),
+  );
 });

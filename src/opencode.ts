@@ -232,7 +232,7 @@ const judgeHeaders = [
   '<!-- reviewx-decision: {"verdict":"PASS"} -->',
   '<!-- reviewx-decision: {"verdict":"DUPLICATE","duplicate_comment_id":"comment-id"} -->',
   '<!-- reviewx-decision: {"verdict":"DUPLICATE","duplicate_comment_id":null} -->',
-  '<!-- reviewx-decision: {"verdict":"NEW","severity":"Major"} -->',
+  '<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->',
 ].join("\n");
 
 export class OpenCodeClient {
@@ -382,7 +382,7 @@ export class OpenCodeClient {
       worktreePath,
       [inputPath],
       options,
-      "检视当前 MR 的最终整体净变化，输出一份完整 Markdown 评审报告。",
+      "检视当前 MR 的最终整体净变化，输出一份完整 Markdown 评审报告；严重等级仅使用 CodeHub 的小写 fatal、major、minor、suggestion。",
     );
     await writeArtifact(artifactDir, "report.md", markdown);
     return { expert, markdown };

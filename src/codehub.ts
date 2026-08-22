@@ -11,6 +11,7 @@ import {
   type Commit,
   type MergeRequest,
   type Repository,
+  type Severity,
 } from "./contracts.js";
 import { redactText, ReviewXError } from "./errors.js";
 import { DefaultCommandRunner, type CommandRunner } from "./process.js";
@@ -111,7 +112,7 @@ export class CodeHubClient {
     repoId: string,
     mrIid: string,
     body: string,
-    severity: "suggestion" | "minor" | "major" | "fatal",
+    severity: Severity,
     signal?: AbortSignal,
   ): Promise<CommentResult> {
     const result = await this.json(

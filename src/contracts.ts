@@ -62,12 +62,15 @@ export const commitSchema = z
   .passthrough();
 export type Commit = z.infer<typeof commitSchema>;
 
+export const severitySchema = z.enum(["fatal", "major", "minor", "suggestion"]);
+export type Severity = z.infer<typeof severitySchema>;
+
 export const commentCommandOutputSchema = z
   .object({
     comment_id: nonEmpty.nullable(),
     repo_id: positiveIdSchema,
     mr_iid: positiveIdSchema,
-    severity: z.enum(["suggestion", "minor", "major", "fatal"]),
+    severity: severitySchema,
     resolved: z.boolean().nullable(),
     web_url: z.string().nullable(),
   })
@@ -89,9 +92,6 @@ export const codeHubErrorSchema = z
   })
   .passthrough();
 export type CodeHubErrorBody = z.infer<typeof codeHubErrorSchema>;
-
-export const severitySchema = z.enum(["Blocker", "Critical", "Major", "Minor"]);
-export type Severity = z.infer<typeof severitySchema>;
 
 export const standardTags = [
   "security",
@@ -206,13 +206,6 @@ export const reviewResultSchema = z.enum([
 export type ReviewResult = z.infer<typeof reviewResultSchema>;
 
 export type AgentOutputSource = "assistant_text" | "opencode_stdout";
-
-export const severityToCodeHub = {
-  Blocker: "fatal",
-  Critical: "major",
-  Major: "minor",
-  Minor: "suggestion",
-} as const satisfies Record<Severity, "suggestion" | "minor" | "major" | "fatal">;
 
 export function emptyState(): State {
   return { repositories: {} };

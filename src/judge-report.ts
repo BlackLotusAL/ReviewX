@@ -21,10 +21,10 @@ export function formatJudgeDecisionHeader(decision: JudgeDecision): string {
 }
 
 const severityMarkers = {
-  Blocker: "🔴 Blocker",
-  Critical: "🟠 Critical",
-  Major: "🟡 Major",
-  Minor: "🔵 Minor",
+  fatal: "🔴 fatal",
+  major: "🟠 major",
+  minor: "🟡 minor",
+  suggestion: "🔵 suggestion",
 } as const satisfies Record<Severity, string>;
 
 const narrativeHeadings = ["**问题描述**", "**影响**", "**修复建议**"] as const;
@@ -75,7 +75,7 @@ function validateNarrative(lines: readonly string[], start: number, end: number,
 
 function validateNewMarkdown(markdown: string, severity: Severity): void {
   const lines = markdown.replace(/\r\n/gu, "\n").split("\n");
-  const title = /^### 【(Blocker|Critical|Major|Minor)】\S.*$/u.exec(lines[0] ?? "");
+  const title = /^### 【(fatal|major|minor|suggestion)】\S.*$/u.exec(lines[0] ?? "");
   if (title?.[1] !== severity) {
     throw new JudgeDocumentError("NEW Judge Markdown title severity must match the decision header.");
   }

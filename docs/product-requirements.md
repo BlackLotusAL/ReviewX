@@ -108,9 +108,9 @@ Commit 列表只用于理解变更目的和演进过程。检视对象是 source
 示例：
 
 ````markdown
-### 【Critical】事务提交前提前发送成功事件
+### 【major】事务提交前提前发送成功事件
 
-**严重等级**：🟠 Critical
+**严重等级**：🟠 major
 **问题类型**：`correctness`, `transaction`
 **位置**：`src/payment/PaymentService.java` L184-L189
 
@@ -147,10 +147,10 @@ public void completePayment(Payment payment) {
 
 | 等级 | 含义 |
 | --- | --- |
-| Blocker | 明确的安全事故、数据损坏或大面积不可用风险 |
-| Critical | 高概率严重错误，需要合入前处理 |
-| Major | 真实的功能、性能或维护风险，建议合入前处理 |
-| Minor | 局部低风险问题 |
+| fatal | 明确的安全事故、数据损坏或大面积不可用风险 |
+| major | 高概率严重错误，需要合入前处理 |
+| minor | 真实的功能、性能或维护风险，建议合入前处理 |
+| suggestion | 局部低风险问题 |
 
 标准 Tag：
 

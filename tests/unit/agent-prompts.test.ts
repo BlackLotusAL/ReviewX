@@ -31,6 +31,13 @@ describe("OpenCode agent prompts", () => {
     expect(prompt).toContain("`compatibility` instead of `migration`");
   });
 
+  it.each(agentFiles)("requires CodeHub severity values in %s", async (file) => {
+    const prompt = await readFile(new URL(`../../opencode/agents/${file}`, import.meta.url), "utf8");
+
+    expect(prompt).toContain("`fatal`, `major`, `minor`, or `suggestion`");
+    expect(prompt).toContain("Never use `Blocker`, `Critical`, `Major`, or `Minor`");
+  });
+
   it("keeps non-new verdicts header-only and defines the ordered Chinese new template", async () => {
     const prompt = await readFile(
       new URL("../../opencode/agents/review-judge.md", import.meta.url),
@@ -49,7 +56,7 @@ describe("OpenCode agent prompts", () => {
     expect(prompt).not.toContain("### 变更摘要");
     expect(prompt).not.toContain("### 判定依据");
     expect(prompt).not.toContain("| 项目 | 内容 |");
-    expect(prompt).toContain("`🔴 Blocker`, `🟠 Critical`, `🟡 Major`, and `🔵 Minor`");
+    expect(prompt).toContain("`🔴 fatal`, `🟠 major`, `🟡 minor`, and `🔵 suggestion`");
     expect(prompt).toContain("Keep each narrative section to one concise blockquote paragraph");
     expect(prompt).toContain("**严重等级**：<severity-icon> <severity>");
     expect(prompt).not.toContain("<br>");

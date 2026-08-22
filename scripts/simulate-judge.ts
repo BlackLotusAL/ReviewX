@@ -109,7 +109,7 @@ const passReports = [
 
 const findingReports = [
   "# PASS\n\nNo independent architecture issue was found.",
-  `# [Major][business-rule] Withdrawal permits an overdraft
+  `# [minor][business-rule] Withdrawal permits an overdraft
 
 - **Location:** \`src/withdraw.ts:2\`
 - **Problem:** The final change removes the established insufficient-funds guard.
@@ -118,7 +118,7 @@ const findingReports = [
 - **Evidence:** The target branch throws for this condition; the source branch immediately subtracts the amount.
 - **Recommendation:** Restore the guard before subtracting.
 - **Confidence:** 100`,
-  `# [Major][correctness] Missing insufficient-funds guard
+  `# [minor][correctness] Missing insufficient-funds guard
 
 The final diff deletes the \`amount > balance\` check in \`src/withdraw.ts\`. Calling \`withdraw(10, 20)\` now returns \`-10\`. Restore the guard. Confidence: 100.`,
 ];
