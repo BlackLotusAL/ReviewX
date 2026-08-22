@@ -46,6 +46,7 @@ function result(value: unknown): CommandResult {
 
 describe("CodeHub fixed CLI contract", () => {
   it("uses only the documented argument-array commands", async () => {
+    const commentBody = '### Review title\n\nQuoted: "value"\nPath: `src\\file.ts`';
     const runner = new HandlerRunner((args) => {
       if (args[0] === "repo") return result(repository);
       if (args[1] === "list") return result([mr]);
@@ -65,7 +66,7 @@ describe("CodeHub fixed CLI contract", () => {
     await expect(client.mrList("1")).resolves.toHaveLength(1);
     await expect(client.mrView("1", "2")).resolves.toMatchObject({ iid: "2" });
     await expect(client.mrCommits("1", "2")).resolves.toHaveLength(1);
-    await expect(client.createComment("1", "2", "body with spaces", "major")).resolves.toMatchObject({
+    await expect(client.createComment("1", "2", commentBody, "major")).resolves.toMatchObject({
       comment_id: "c1",
     });
     expect(runner.calls).toEqual([
@@ -81,7 +82,7 @@ describe("CodeHub fixed CLI contract", () => {
         "--project-id",
         "1",
         "--body",
-        "body with spaces",
+        JSON.stringify(commentBody),
         "--severity",
         "major",
         "--output",

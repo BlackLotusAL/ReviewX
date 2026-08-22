@@ -159,7 +159,7 @@ codehub mr view <mr-iid> --project-id <repo-id> --output json
 codehub mr commits <mr-iid> --project-id <repo-id> --output json
 codehub mr comment create <mr-iid> \
   --project-id <repo-id> \
-  --body <markdown> \
+  --body <serialized-markdown-string> \
   --severity <suggestion|minor|major|fatal> \
   --output json
 ```
@@ -174,7 +174,7 @@ CodeHub CLI 会把服务端缺失的投影字段输出为 `null`。ReviewX 接�
 
 ### 4.2 评论发布
 
-Workflow 使用 Node 子进程参数数组调用 `mr comment create`，把裁判生成的完整 Markdown 作为一个 `--body` 参数传入，不经过 shell 拼接。严重等级映射固定为：
+Workflow 使用 Node 子进程参数数组调用 `mr comment create`，先把裁判生成的完整 Markdown 序列化为带转义序列的 JSON 字符串表示，再作为一个 `--body` 参数传入，不经过 shell 拼接。严重等级映射固定为：
 
 | ReviewX | CodeHub |
 | --- | --- |

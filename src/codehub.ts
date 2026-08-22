@@ -123,7 +123,7 @@ export class CodeHubClient {
         "--project-id",
         repoId,
         "--body",
-        body,
+        JSON.stringify(body),
         "--severity",
         severity,
         "--output",

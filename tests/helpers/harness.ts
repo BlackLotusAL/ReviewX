@@ -99,7 +99,10 @@ export class ScriptedCodeHubRunner implements CommandRunner {
     if (call[0] === "mr" && call[1] === "comment" && call[2] === "create") {
       const bodyIndex = call.indexOf("--body");
       const severityIndex = call.indexOf("--severity");
-      this.comments.push({ body: call[bodyIndex + 1]!, severity: call[severityIndex + 1]! });
+      this.comments.push({
+        body: JSON.parse(call[bodyIndex + 1]!) as string,
+        severity: call[severityIndex + 1]!,
+      });
       if (this.publication === "unknown") return failed("WRITE_RESULT_UNKNOWN", "unknown result");
       if (this.publication === "failure") return failed("HTTP_ERROR", "forbidden");
       return ok({

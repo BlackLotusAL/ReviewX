@@ -107,7 +107,7 @@ class SimulationCodeHubRunner implements CommandRunner {
       const bodyIndex = args.indexOf("--body");
       const severityIndex = args.indexOf("--severity");
       const published = {
-        body: args[bodyIndex + 1],
+        body: JSON.parse(args[bodyIndex + 1]!) as string,
         severity: args[severityIndex + 1],
       };
       await writeFile(
