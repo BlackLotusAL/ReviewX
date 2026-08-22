@@ -10,60 +10,15 @@ function event(text: string): string {
   return JSON.stringify({ type: "text", part: { text } });
 }
 
-const validNewMarkdown = `### 🟡 Minor: 终止消息可能丢失已有报告
+const freeMarkdown = `### 🟡 Minor: 构建选项无法生效
 
-**问题描述**：
+这是一份没有固定字段或章节要求的自由 Markdown 评论。
 
-- 严重级别：Minor
-- 标签：\`#correctness\` \`#observability\`
-- 简述：终止消息没有文本时，解析器不会回退到前一条已有报告的消息
-
-**问题位置**： \`src/opencode.ts:105-116\`
-
-\`\`\`ts
-const text = terminalMessage.text; // [!code warning] 空文本会覆盖已有报告
-return text;
-\`\`\`
-
-**影响分析**：
-
-- **直接后果**：有效报告会被丢弃，整次检视失败
-- **影响范围**：所有以空终止消息结束的 Agent 调用
-- **触发条件**：终止消息不含文本但之前已经产生有效报告
-
-**解决方案**：
-
-**方案1（推荐）**：空终止消息回退到最后一条有效文本
-
-\`\`\`ts
-return terminalMessage.text || lastTextMessage.text;
-\`\`\`
-
-**方案2**：忽略不含文本的终止消息
-
-\`\`\`ts
-if (terminalMessage.text) return terminalMessage.text;
-return previousReport;
-\`\`\`
-
-**预防措施**：
-
-- 增加空终止消息的回归测试
-- 统一最终文本选择逻辑`;
-
-const severityDisplay = {
-  fatal: ["🔴", "Fatal"],
-  major: ["🟠", "Major"],
-  minor: ["🟡", "Minor"],
-  suggestion: ["🟢", "Suggestion"],
-} as const;
-
-function markdownForSeverity(severity: keyof typeof severityDisplay): string {
-  const [signal, label] = severityDisplay[severity];
-  return validNewMarkdown
-    .replace("🟡 Minor", `${signal} ${label}`)
-    .replace("严重级别：Minor", `严重级别：${label}`);
-}
+\`\`\`cmake
+if(ENABLE_ASAN)
+  add_compile_options(-fsanitize=address)
+endif()
+\`\`\``;
 
 describe("OpenCode Markdown event parsing and permissions", () => {
   it("reassembles every completed text part in event order", () => {
@@ -128,149 +83,138 @@ Trailing prose.`;
   });
 });
 
-describe("Judge Markdown control header", () => {
+describe("Judge decision protocol and free Markdown body", () => {
   it.each([
-    [{ verdict: "PASS" }, "# Internal rationale"],
+    [{ verdict: "PASS" }, ""],
     [{ verdict: "DUPLICATE", duplicate_comment_id: "comment-1" }, ""],
-    [{ verdict: "DUPLICATE", duplicate_comment_id: null }, "# Unknown publication"],
-    [{ verdict: "NEW", severity: "minor" }, validNewMarkdown],
+    [{ verdict: "DUPLICATE", duplicate_comment_id: null }, ""],
+    [{ verdict: "NEW", severity: "minor" }, freeMarkdown],
   ] as Array<[JudgeDecision, string]>)
-  ("parses %s while preserving the Markdown body", (decision, markdown) => {
-    const document = `${formatJudgeDecisionHeader(decision)}${markdown === "" ? "" : decision.verdict === "NEW" ? `\n\n${markdown}` : `\n${markdown}`}`;
-    const isNew = decision.verdict === "NEW";
+  ("parses canonical %s", (decision, markdown) => {
+    const header = formatJudgeDecisionHeader(decision);
+    const document = `${header}${markdown === "" ? "" : `\n\n${markdown}`}`;
+
     expect(parseJudgeDocument(document)).toEqual({
       decision,
-      markdown: isNew ? markdown : "",
-      document: isNew ? document : formatJudgeDecisionHeader(decision),
-    });
-  });
-
-  it.each([
-    "fatal",
-    "major",
-    "minor",
-    "suggestion",
-  ] as const)("accepts the CodeHub severity %s and its marker", (severity) => {
-    const markdown = markdownForSeverity(severity);
-    const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity })}\n\n${markdown}`;
-
-    expect(parseJudgeDocument(document)).toMatchObject({
-      decision: { verdict: "NEW", severity },
       markdown,
+      document,
     });
   });
 
-  it("rejects the legacy blue Suggestion signal", () => {
-    const markdown = markdownForSeverity("suggestion").replace("🟢 Suggestion", "🔵 Suggestion");
-    const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity: "suggestion" })}\n\n${markdown}`;
+  it.each(["fatal", "major", "minor", "suggestion"] as const)(
+    "accepts the CodeHub severity %s without inspecting the body",
+    (severity) => {
+      const header = formatJudgeDecisionHeader({ verdict: "NEW", severity });
+      expect(parseJudgeDocument(`${header}\n\nAny non-empty Markdown.`)).toEqual({
+        decision: { verdict: "NEW", severity },
+        markdown: "Any non-empty Markdown.",
+        document: `${header}\n\nAny non-empty Markdown.`,
+      });
+    },
+  );
 
-    expect(() => parseJudgeDocument(document)).toThrow();
-  });
+  it("accepts the reported narration and signaled body severity without field validation", () => {
+    const header = '<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->';
+    const markdown = `### 🟡 Minor: CMake 中 ASAN/TSAN 消毒器选项名不匹配
 
-  it("extracts a canonical NEW report from surrounding assistant narration", () => {
-    const header = formatJudgeDecisionHeader({ verdict: "NEW", severity: "minor" });
-    const document = `I have sufficient evidence.\n\n${header}\n\n${validNewMarkdown}\n\nI need to fix a typo. Let me re-output the final answer cleanly.`;
+**问题描述**：
 
-    expect(parseJudgeDocument(document)).toEqual({
+- 严重级别：🟡 Minor
+- 标签：\`#correctness\` \`#maintainability\``;
+    const raw = `The finding is confirmed across two expert reports.
+
+Severity: minor is appropriate.
+
+${header}
+
+${markdown}`;
+
+    expect(parseJudgeDocument(raw)).toEqual({
       decision: { verdict: "NEW", severity: "minor" },
-      markdown: validNewMarkdown,
-      document: `${header}\n\n${validNewMarkdown}`,
-    });
-  });
-
-  it("semantically extracts body variants and rebuilds the strict NEW template", () => {
-    const header = formatJudgeDecisionHeader({ verdict: "NEW", severity: "minor" });
-    const variant = validNewMarkdown
-      .replace("- 严重级别：Minor", "- **严重级别**：minor")
-      .replace("**问题描述**：\n\n- **严重级别**：minor", "**问题描述**：\n\n已核实该问题。\n\n- **严重级别**：minor")
-      .replace("- 标签：`#correctness` `#observability`", "* **标签**: #correctness, #observability")
-      .replace("- 简述：终止消息", "**简述**: 终止消息")
-      .replace("**影响分析**：", "**额外章节**：\n\n临时分析\n\n**影响分析**：")
-      .replace("- 增加空终止消息的回归测试", "* 增加空终止消息的回归测试");
-    const document = `${header}\n\n${variant}\nI need to revise the report again.`;
-
-    expect(parseJudgeDocument(document)).toEqual({
-      decision: { verdict: "NEW", severity: "minor" },
-      markdown: validNewMarkdown,
-      document: `${header}\n\n${validNewMarkdown}`,
-    });
-  });
-
-  it("discards transient narration before the single standalone control header", () => {
-    const canonical = '<!-- reviewx-decision: {"verdict":"PASS"} -->\n\n# Rationale';
-    expect(parseJudgeDocument(`I inspected the worktree.\n\n${canonical}`)).toEqual({
-      decision: { verdict: "PASS" },
-      markdown: "",
-      document: '<!-- reviewx-decision: {"verdict":"PASS"} -->',
+      markdown,
+      document: `${header}\n\n${markdown}`,
     });
   });
 
   it.each([
-    '  <!-- reviewx-decision: {"verdict":"PASS"} -->',
-    '```html\n<!-- reviewx-decision: {"verdict":"PASS"} -->\n```',
-    'Narration <!--  reviewx-decision : {"verdict":"PASS"}-->',
-  ])("extracts and canonicalizes a wrapped control header from %s", (document) => {
-    expect(parseJudgeDocument(document)).toEqual({
-      decision: { verdict: "PASS" },
-      markdown: "",
-      document: '<!-- reviewx-decision: {"verdict":"PASS"} -->',
+    "Plain text only.",
+    "# A heading with no prescribed signal",
+    "- one bullet",
+    "中文、English、JSON-like {text} and no report sections",
+  ])("accepts arbitrary non-empty NEW Markdown: %s", (markdown) => {
+    const header = formatJudgeDecisionHeader({ verdict: "NEW", severity: "major" });
+    expect(parseJudgeDocument(`${header}\n\n${markdown}`).markdown).toBe(markdown);
+  });
+
+  it("normalizes casing, multiline JSON, extra fields, and a fenced header", () => {
+    const raw = `Narration.
+\`\`\`html
+<!-- REVIEWX-DECISION:
+{
+  "verdict": "new",
+  "severity": "Minor",
+  "explanation": "ignored"
+}
+-->
+\`\`\`
+
+Free body.`;
+
+    expect(parseJudgeDocument(raw)).toEqual({
+      decision: { verdict: "NEW", severity: "minor" },
+      markdown: "Free body.",
+      document: '<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->\n\nFree body.',
     });
   });
 
-  it("selects the last complete valid decision/report combination", () => {
-    const minorHeader = formatJudgeDecisionHeader({ verdict: "NEW", severity: "minor" });
-    const majorHeader = formatJudgeDecisionHeader({ verdict: "NEW", severity: "major" });
-    const minorMarkdown = markdownForSeverity("minor");
-    const majorMarkdown = markdownForSeverity("major");
-    const document = [
-      `${minorHeader}\n\n${minorMarkdown}`,
-      "I need to correct the final decision.",
-      `${majorHeader}\n\n${majorMarkdown}`,
-      '<!-- reviewx-decision: {"verdict":"PASS",} -->',
-    ].join("\n\n");
+  it("normalizes a DUPLICATE without an ID to null and ignores extra fields", () => {
+    expect(parseJudgeDocument(
+      '<!-- reviewx-decision: {"verdict":"duplicate","reason":"already reported"} -->',
+    )).toEqual({
+      decision: { verdict: "DUPLICATE", duplicate_comment_id: null },
+      markdown: "",
+      document: '<!-- reviewx-decision: {"verdict":"DUPLICATE","duplicate_comment_id":null} -->',
+    });
+  });
 
-    expect(parseJudgeDocument(document)).toEqual({
+  it("selects the last complete valid decision and ignores invalid candidates as body boundaries", () => {
+    const first = '<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->';
+    const last = '<!-- reviewx-decision: {"verdict":"NEW","severity":"major"} -->';
+    const raw = `${first}\n\nFirst body.
+
+<!-- reviewx-decision: {"verdict":"PASS",} -->
+
+Still first body.
+
+${last}\n\nFinal body.`;
+
+    expect(parseJudgeDocument(raw)).toEqual({
       decision: { verdict: "NEW", severity: "major" },
-      markdown: majorMarkdown,
-      document: `${majorHeader}\n\n${majorMarkdown}`,
+      markdown: "Final body.",
+      document: `${last}\n\nFinal body.`,
     });
   });
 
   it.each([
     "# Missing header",
     '<!-- reviewx-decision: {"verdict":"PASS",} -->',
-    '<!-- reviewx-decision: {"verdict":"PASS","extra":true} -->',
-    '<!-- reviewx-decision: {"verdict":"NEW","severity":"High"} -->\n\n# Comment',
-    '<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->',
-    '<!-- reviewx-decision: {"verdict":"pass"} -->',
-  ])("rejects an invalid control document", (document) => {
+    '<!-- reviewx-decision: {"verdict":"UNKNOWN"} -->',
+    '<!-- reviewx-decision: {"verdict":"NEW","severity":"critical"} -->\n\nBody',
+    '<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->\n\n   ',
+    '<!-- reviewx-decision: {"verdict":"DUPLICATE","duplicate_comment_id":42} -->',
+  ])("rejects only an invalid machine contract: %s", (document) => {
     expect(() => parseJudgeDocument(document)).toThrow();
   });
 
-  it("reports candidate failure categories when extraction finds no valid combination", () => {
+  it("reports machine-contract failure categories", () => {
     const document = [
       '<!-- reviewx-decision: {"verdict":"PASS",} -->',
-      '<!-- reviewx-decision: {"verdict":"NEW","severity":"High"} -->',
+      '<!-- reviewx-decision: {"verdict":"UNKNOWN"} -->',
       '<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->',
     ].join("\n");
 
     expect(() => parseJudgeDocument(document)).toThrow(
       /3 candidate\(s\), 1 invalid JSON, 1 protocol-invalid, 1 NEW-body-invalid/u,
     );
-  });
-
-  it.each([
-    validNewMarkdown.replace("`src/opencode.ts:105-116`", "`C:\\src\\opencode.ts:105-116`"),
-    validNewMarkdown.replace(
-      "- 简述：终止消息没有文本时，解析器不会回退到前一条已有报告的消息",
-      "- 简述：",
-    ),
-    validNewMarkdown.replace("`#correctness`", "`#缺陷`"),
-    validNewMarkdown.replace("- 严重级别：Minor", "- 严重级别：Major"),
-    validNewMarkdown.replace("### 🟡 Minor:", "### 🟢 Suggestion:"),
-    validNewMarkdown.replace("```ts\nconst text", "const text"),
-  ])("rejects NEW Markdown that diverges from the reference template", (markdown) => {
-    const document = `${formatJudgeDecisionHeader({ verdict: "NEW", severity: "minor" })}\n\n${markdown}`;
-    expect(() => parseJudgeDocument(document)).toThrow();
   });
 });

@@ -93,23 +93,6 @@ export const codeHubErrorSchema = z
   .passthrough();
 export type CodeHubErrorBody = z.infer<typeof codeHubErrorSchema>;
 
-export const standardTags = [
-  "security",
-  "correctness",
-  "business-rule",
-  "concurrency",
-  "transaction",
-  "performance",
-  "resource-leak",
-  "compatibility",
-  "api-contract",
-  "architecture",
-  "maintainability",
-  "naming-convention",
-  "test-coverage",
-  "observability",
-] as const;
-
 export const expertNameSchema = z.enum([
   "design-reviewer",
   "business-reviewer",

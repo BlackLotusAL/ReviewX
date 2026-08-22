@@ -412,8 +412,8 @@ export class OpenCodeClient {
         const attemptDir = path.join(artifactDir, `attempt-${attempt}`);
         const message =
           attempt === 1
-            ? "综合检视附加的 MR 上下文和三份专家 Markdown 报告。不要输出分析过程或解释；首行必须是约定的 reviewx-decision 隐藏控制头。仅 NEW 裁决在其后输出 Markdown 问题卡片，并在最后一条预防措施后立即结束。"
-            : `上一次输出不符合 reviewx-decision 或 NEW 评论模板：${redactText(lastError instanceof Error ? lastError.message : String(lastError))}\n请重新完成裁决，不要输出分析过程、解释或自我修正，并严格使用以下四种首行之一：\n${judgeHeaders}\n首行不要使用 Markdown 代码围栏。NEW 正文必须严格使用：信号灯标题、问题描述（严重级别、#标签、简述）、问题位置及代码、影响分析（直接后果、影响范围、触发条件）、两个带代码块的解决方案，以及预防措施；在最后一条预防措施后立即结束。`;
+            ? "综合检视附加的 MR 上下文和三份专家 Markdown 报告。输出约定的 reviewx-decision 隐藏控制头；仅 NEW 裁决在其后添加任意非空 Markdown 评论。"
+            : `上一次输出缺少可用的 reviewx-decision 控制头或 NEW 正文：${redactText(lastError instanceof Error ? lastError.message : String(lastError))}\n请重新完成裁决并使用以下控制头之一：\n${judgeHeaders}\nNEW 只需在控制头后添加任意非空 Markdown 评论，没有固定正文模板。`;
         lastDocument = await this.invokeText(
           "review-judge",
           worktreePath,

@@ -64,7 +64,7 @@ runtime/
 
 `state.json` 只保存仓库、MR 的 `last_processed_updated_at` 和历史评论 Markdown；旧版问题摘要仍可直接读取。每次 Agent 都是独立进程和会话；服务重启不会恢复中间阶段，未完成的 MR 会在后续扫描从头运行。
 
-三个专家各自生成自由 Markdown 报告，Judge 读取这些报告后输出隐藏的 `reviewx-decision` JSON 控制头。Judge verdict 固定为 `PASS`、`DUPLICATE` 或 `NEW`；ReviewX 从原始输出中选择最后一个完整有效的裁决组合，前两者的 canonical 产物只保留控制头。`NEW` 正文优先按严格模板提取；若模型只产生字段加粗、大小写、项目符号或间距等格式偏差，则按章节语义提取并重建严格模板后发送到 CodeHub。每个 attempt 的原始输出仍会完整保留。
+三个专家各自生成自由 Markdown 报告，Judge 读取这些报告后输出隐藏的 `reviewx-decision` JSON 控制头。Judge verdict 固定为 `PASS`、`DUPLICATE` 或 `NEW`；ReviewX 从原始输出中选择最后一个完整有效的裁决组合，并规范化 verdict、severity 和多余 JSON 字段。前两者的 canonical 产物只保留控制头；`NEW` 的严重等级以控制头为唯一来源，控制头后的非空自由 Markdown 经外围空白裁剪后原样发送到 CodeHub。正文没有标题、信号灯、字段、标签、路径、章节或代码块等运行时约束，每个 attempt 的原始输出仍会完整保留。
 
 每次 Agent 调用的原始 stdout/stderr、完整 Markdown、可重放输入、附件清单和元数据都会永久保存在 `agent-output/`。元数据同时汇总启动、步骤、工具和 token/cache 指标。Judge 首次控制头无效时只重试一次，并分别保留两个 attempt。产生新检视意见时，发送给 CodeHub 的 Markdown 原文同时保存为对应 `<run-id>/review.md`。其中可能包含未脱敏的源码和模型分析；请限制目录权限并自行清理历史产物。
 

@@ -148,8 +148,10 @@ return previousReport;
 
 - 增加空终止消息测试
 - 统一最终文本选择逻辑`;
-    const document = `<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->\n\n${markdown}`;
-    const rawDocument = `I have sufficient evidence.\n\n${document}\n\nI need to fix a typo. Let me regenerate the code block cleanly.`;
+    const header = '<!-- reviewx-decision: {"verdict":"NEW","severity":"minor"} -->';
+    const publishedMarkdown = `${markdown}\n\nI need to fix a typo. Let me regenerate the code block cleanly.`;
+    const document = `${header}\n\n${publishedMarkdown}`;
+    const rawDocument = `I have sufficient evidence.\n\n${document}`;
     const runner = new AgentRunner(() => success(rawDocument));
     const client = new OpenCodeClient(runner, "fake", "./opencode");
 
@@ -157,7 +159,7 @@ return previousReport;
       client.runJudge(artifactRoot, inputPaths, runOptions("judge")),
     ).resolves.toEqual({
       decision: { verdict: "NEW", severity: "minor" },
-      markdown,
+      markdown: publishedMarkdown,
       document,
     });
 
@@ -166,7 +168,7 @@ return previousReport;
     expect(JSON.parse(await readFile(path.join(artifactRoot, "judge", "decision.json"), "utf8")))
       .toEqual({ verdict: "NEW", severity: "minor" });
     expect(await readFile(path.join(artifactRoot, "judge", "comment.md"), "utf8"))
-      .toBe(markdown);
+      .toBe(publishedMarkdown);
     expect(await readFile(path.join(artifactRoot, "judge", "report.md"), "utf8"))
       .toBe(document);
     expect(await readFile(path.join(artifactRoot, "judge", "attempt-1", "report.md"), "utf8"))

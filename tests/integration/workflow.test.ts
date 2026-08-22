@@ -201,10 +201,10 @@ Prose with { "json": true } and code:
     expect(findLog(value.logs, "review_run_finished")).toContain("result failed");
   });
 
-  it("extracts and publishes validated Judge Markdown while retaining raw narration", async () => {
+  it("publishes free Judge Markdown while retaining the raw attempt", async () => {
     const markdown = finalComment();
     const rawMarkdown = markdown
-      .replace("- 严重级别：Major", "- **严重级别**：major")
+      .replace("- 严重级别：Major", "- **严重级别**：🟠 Major")
       .replace("- 标签：`#correctness` `#transaction`", "* **标签**: #correctness, #transaction")
       .replace("- 简述：事务提交前", "**简述**: 事务提交前")
       .replace("- 增加事务回滚时不发送事件的测试", "* 增加事务回滚时不发送事件的测试");
@@ -218,6 +218,7 @@ Prose with { "json": true } and code:
       "",
     ].join("\n");
     value.agents.judgeSuffix = "\n\nI need to fix a typo. Let me re-output the final answer cleanly.";
+    const publishedMarkdown = `${rawMarkdown}${value.agents.judgeSuffix}`;
     process.env.CODEHUB_TEST_TOKEN = "must-not-leak";
     try {
       await value.workflow.scanOnce();
@@ -225,27 +226,28 @@ Prose with { "json": true } and code:
       delete process.env.CODEHUB_TEST_TOKEN;
     }
 
-    expect(value.codeHub.comments).toEqual([{ body: markdown, severity: "major" }]);
+    expect(value.codeHub.comments).toEqual([{ body: publishedMarkdown, severity: "major" }]);
     const mrState = (await value.state.read()).repositories["1"]!.merge_requests["7"]!;
     expect(mrState.last_processed_updated_at).toBe("2026-08-12T00:01:00Z");
     expect(mrState.finding_history).toEqual([
       {
-        review_markdown: markdown,
+        review_markdown: publishedMarkdown,
         publication_status: "confirmed",
         comment_id: "comment-1",
       },
     ]);
     expect(value.agents.environments.every((env) => env.CODEHUB_TEST_TOKEN === undefined)).toBe(true);
     expect(value.logs.join("")).not.toContain("must-not-leak");
-    expect(value.logs.join("")).not.toContain(markdown);
+    expect(value.logs.join("")).not.toContain(publishedMarkdown);
     const [runId] = await readdir(value.paths.agentOutputs);
-    expect(await readFile(`${value.paths.agentOutputs}/${runId}/review.md`, "utf8")).toBe(markdown);
+    expect(await readFile(`${value.paths.agentOutputs}/${runId}/review.md`, "utf8"))
+      .toBe(publishedMarkdown);
     const judgeDirectory = `${value.paths.agentOutputs}/${runId}/04-review-judge`;
     expect(await readFile(`${judgeDirectory}/attempt-1/report.md`, "utf8")).toBe(
       `${value.agents.judgePrefix}<!-- reviewx-decision: {"verdict":"NEW","severity":"major"} -->\n\n${rawMarkdown}${value.agents.judgeSuffix}`,
     );
     expect(await readFile(`${judgeDirectory}/report.md`, "utf8")).toBe(
-      `<!-- reviewx-decision: {"verdict":"NEW","severity":"major"} -->\n\n${markdown}`,
+      `<!-- reviewx-decision: {"verdict":"NEW","severity":"major"} -->\n\n${publishedMarkdown}`,
     );
     expect(value.agents.agents.filter((agent) => agent === "review-judge")).toHaveLength(1);
   });
