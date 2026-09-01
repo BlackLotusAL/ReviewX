@@ -7,6 +7,8 @@
 
 # testing
 /coverage
+/test-results
+/playwright-report
 
 # next.js
 /.next/
@@ -14,6 +16,10 @@
 
 # production
 /build
+/dist
+
+# local pnpm cache
+/.pnpm-store
 
 # misc
 .DS_Store
