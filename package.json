@@ -1,0 +1,62 @@
+{
+  "name": "reviewx",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Windows 本地 CodeHub Merge Request 代码检视工具",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "reviewx": "dist/reviewx.js"
+  },
+  "files": [
+    ".next",
+    "dist",
+    "public",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3210",
+    "build": "next build && tsup",
+    "start": "node dist/reviewx.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm test:unit && pnpm test:integration",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:ai": "tsx tests/ai/real-opencode-smoke.ts",
+    "test:package": "tsx tests/package/verify-package.ts",
+    "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "next": "16.2.9",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-markdown": "10.1.0",
+    "rehype-sanitize": "6.0.0",
+    "remark-breaks": "4.0.0",
+    "remark-gfm": "4.0.1",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "eslint": "9.39.2",
+    "eslint-config-next": "16.2.9",
+    "jsdom": "30.0.1",
+    "tsup": "8.5.1",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}
