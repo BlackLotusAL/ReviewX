@@ -98,6 +98,12 @@ MR 列表每项至少展示：
 
 “重新检视”是用户对“相同 `updated_at` 默认不重复检视”的显式覆盖。它可以再次检视同一 MR 版本并产生新的 attempt。
 
+### 2.4 浏览器状态同步
+
+网页加载后立即请求一次 `GET /api/state`，之后每 1 秒轮询一次，用于自动同步 Project、MR、队列位置、检视阶段、发布进度和错误状态。客户端不得并发发起重叠的状态请求；响应中的 `revision` 发生变化时，客户端同时重新读取当前打开的 MR 详情。
+
+`GET /api/state` 只读取 ReviewX 进程内和本地持久化状态，不调用 CodeHub、Git、OpenCode 或评论接口，也不等同于用户点击“刷新 MR”。只有用户明确触发 `POST /api/mrs/refresh` 时才允许重新调用 CodeHub 获取 MR 列表和详情。完整本地 Web API 契约见 [API 接口说明](API.md)。
+
 ## 3. 对外依赖接口
 
 ### 3.1 CodeHub CLI
@@ -114,6 +120,7 @@ codehub mr comment create <mr-iid> --project-id <project-id> --body <markdown> -
 - `repo view` 用于添加 Project 时验证其存在，并取得唯一、不含凭据的 HTTPS clone URL。网页显示名取 URL 中的完整仓库路径。
 - `mr list` 只在用户点击“刷新 MR”后调用，用于发现命令实际返回的 open MR；每项必须提供 IID 和非空标题。
 - `mr view` 是 MR 详情、`updated_at`、源分支和目标分支的唯一来源。刷新时对每个 MR 调用一次；检视开始和 Git 准备完成后按核心流程再次调用。
+- `mr list` 的筛选参数固定使用 `--state open`；`mr view` JSON 中的 `state` 允许使用 `open` 或 `opened` 表示开放状态。ReviewX 对这两个值做大小写不敏感的等价判断，其他状态均视为非开放状态。
 - `mr comment create` 只能由用户点击“发布选中意见”触发，不得由 MR 刷新或 OpenCode 检视完成自动触发。
 - ReviewX 接受 `mr list` 当前可能不是全量结果的限制，只处理命令实际返回的 MR。
 

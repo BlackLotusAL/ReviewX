@@ -13,7 +13,7 @@ import type {
   ReviewPhase,
   SafeErrorView,
 } from "@/src/shared/types";
-import { CodeHubClient, type CodeHubPort } from "./codehub";
+import { CodeHubClient, isOpenMrState, type CodeHubPort } from "./codehub";
 import { AppError, conflictError, isAppError, notFoundError, unexpectedError, validationError } from "./errors";
 import { GitPreparer, type GitPreparerPort, type PreparedReview } from "./git";
 import { Logger, createLogFile } from "./logger";
@@ -33,13 +33,13 @@ function ensurePositiveId(value: string, label: string): void {
 }
 
 function assertOpen(mr: MergeRequestSnapshot): void {
-  if (mr.state.toLowerCase() !== "open") throw new AppError({
+  if (!isOpenMrState(mr.state)) throw new AppError({
     code: "MR_NOT_OPEN",
-    message: `MR !${mr.iid} 已不再是 open 状态。`,
+    message: `MR !${mr.iid} 已不再处于开放状态。`,
     reason: `CodeHub mr view 返回状态 ${mr.state}。`,
-    impact: "Git 和 OpenCode 未启动，本次 attempt 失败。",
-    nextStep: "手动刷新 MR 列表后选择仍然 open 的 MR。",
-    technical: "MR state was not open at review time.",
+    impact: "当前刷新或 attempt 已停止；Git 和 OpenCode 不会启动。",
+    nextStep: "手动刷新 MR 列表后选择状态为 open 或 opened 的 MR。",
+    technical: "MR state was neither open nor opened when validated.",
   });
 }
 

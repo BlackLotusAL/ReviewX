@@ -40,6 +40,7 @@
 
 - mutation 仅接受精确 loopback Host、同源 Origin 与 JSON；实际流式正文超过 1 MiB 时拒绝。
 - CodeHub 四组 argv 由真实 PowerShell shim 捕获并逐项比对；评论 body 是单个 argv，换行为真实 CRLF。
+- CodeHub `mr view` 返回 `opened` 时，手动刷新和检视前后两次状态校验均通过；`closed` 等终态仍在 Git 和 OpenCode 启动前拒绝。
 - Git 使用真实临时仓库验证两次固定 SHA、完整 `target...source` binary diff、路径排序、64 KiB/256 KiB 快照边界、UTF-8/普通文件限制及凭据阻断。
 - OpenCode 假 CLI 验证仅调用一次、prompt 走 stdin、bundle 走 `--file`、工具全部 deny、插件关闭且 CodeHub/Git/GitHub/SSH 环境变量为空。
 - 发布中断恢复验证当前 Finding 为 unknown、后续选中项为 not_attempted、attempt 为 publish_failed，且不补发。
@@ -51,7 +52,7 @@
 | --- | --- |
 | `pnpm lint` | PASS |
 | `pnpm typecheck` | PASS |
-| `pnpm test` | PASS：14 个单元测试、15 个集成测试 |
+| `pnpm test` | PASS：15 个单元测试、16 个集成测试 |
 | `pnpm test:e2e` | PASS：1 个完整浏览器业务流程 |
 | `pnpm build` | PASS：Next.js 生产构建与 tsup CLI 构建，无警告 |
 | `pnpm test:package` | PASS：npm tarball 隔离安装与真实 CLI 生命周期 |

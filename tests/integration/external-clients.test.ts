@@ -29,7 +29,7 @@ describe.runIf(process.platform === "win32")("real PowerShell adapters for exter
       "[IO.File]::AppendAllText($env:CODEHUB_CAPTURE, $line + [Environment]::NewLine, $utf8)",
       "if ($args[0] -eq 'repo') { [Console]::Out.Write('{\"repo_id\":\"101\",\"clone_urls\":{\"https\":\"https://codehub.example/team/repo.git\"}}'); exit 0 }",
       "if ($args[1] -eq 'list') { [Console]::Out.Write('[{\"iid\":\"7\",\"title\":\"Example MR\"}]'); exit 0 }",
-      "if ($args[1] -eq 'view') { [Console]::Out.Write('{\"repo_id\":\"101\",\"iid\":\"7\",\"title\":\"Example MR\",\"state\":\"open\",\"source_branch\":\"feature\",\"target_branch\":\"main\",\"updated_at\":\"2026-09-02T00:00:00Z\"}'); exit 0 }",
+      "if ($args[1] -eq 'view') { [Console]::Out.Write('{\"repo_id\":\"101\",\"iid\":\"7\",\"title\":\"Example MR\",\"state\":\"opened\",\"source_branch\":\"feature\",\"target_branch\":\"main\",\"updated_at\":\"2026-09-02T00:00:00Z\"}'); exit 0 }",
       "if ($args[1] -eq 'comment') { [Console]::Out.Write('{\"comment_id\":\"comment-1\",\"repo_id\":\"101\",\"mr_iid\":\"7\",\"severity\":\"major\"}'); exit 0 }",
       "exit 9",
     ].join("\n");
@@ -38,7 +38,7 @@ describe.runIf(process.platform === "win32")("real PowerShell adapters for exter
 
     await expect(client.viewRepo("101")).resolves.toEqual({ cloneUrl: "https://codehub.example/team/repo.git", name: "team/repo" });
     await expect(client.listOpenMrs("101")).resolves.toEqual([{ iid: "7", title: "Example MR" }]);
-    await expect(client.viewMr("101", "7")).resolves.toMatchObject({ projectId: "101", iid: "7", sourceBranch: "feature", targetBranch: "main" });
+    await expect(client.viewMr("101", "7")).resolves.toMatchObject({ projectId: "101", iid: "7", state: "opened", sourceBranch: "feature", targetBranch: "main" });
     await expect(client.createComment("101", "7", "first\nsecond\rthird\r\nfourth", "major")).resolves.toMatchObject({ kind: "success" });
 
     const calls = (await readFile(capture, "utf8")).trim().split(/\r?\n/u).map((line) => JSON.parse(line) as string[]);

@@ -192,7 +192,7 @@ export function configureMr(harness: RuntimeHarness, projectId: string, mrIid: s
     projectId,
     iid: mrIid,
     title,
-    state: "open",
+    state: "opened",
     updatedAt: `2026-09-01T00:00:${mrIid.padStart(2, "0")}Z`,
     sourceBranch: `feature-${mrIid}`,
     targetBranch: "main",
