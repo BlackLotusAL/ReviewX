@@ -78,6 +78,11 @@ export function normalizeCommentBody(body: string): string {
   return body.replace(/\r\n|\r|\n/gu, "\r\n");
 }
 
+export function isOpenMrState(state: string): boolean {
+  const normalized = state.trim().toLowerCase();
+  return normalized === "open" || normalized === "opened";
+}
+
 export function projectNameFromCloneUrl(cloneUrl: string): string {
   const url = new URL(cloneUrl);
   const decoded = decodeURIComponent(url.pathname).replace(/^\/+|\/+$/gu, "").replace(/\.git$/iu, "");

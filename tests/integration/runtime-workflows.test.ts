@@ -90,6 +90,32 @@ describe("ReviewX runtime workflows", () => {
     }
   });
 
+  it("accepts CodeHub opened states and rejects terminal states before Git or OpenCode", async () => {
+    const harness = await createRuntimeHarness();
+    try {
+      configureMr(harness, "101", "1", "Opened MR");
+      const laterClosed = configureMr(harness, "101", "2", "Later closed MR");
+      await registerAndRefresh(harness, ["101"]);
+
+      await harness.runtime.createReview("101", "1");
+      await harness.runtime.waitForIdle();
+      expect((await latest(harness, "101", "1")).status).toBe("completed");
+
+      harness.codeHub.viewIndexes.set("101:2", 0);
+      harness.codeHub.viewSequences.set("101:2", [{ ...laterClosed, state: "closed" }]);
+      await harness.runtime.createReview("101", "2");
+      await harness.runtime.waitForIdle();
+
+      const rejected = await latest(harness, "101", "2");
+      expect(rejected.status).toBe("review_failed");
+      expect(rejected.error?.code).toBe("MR_NOT_OPEN");
+      expect(harness.git.order).toEqual(["101:1"]);
+      expect(harness.reviewer.order).toEqual(["1"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("runs one strict FIFO worker and supports queued and active stops while continuing later work", async () => {
     const harness = await createRuntimeHarness();
     try {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { normalizeCommentBody, projectNameFromCloneUrl } from "@/src/server/codehub";
+import { isOpenMrState, normalizeCommentBody, projectNameFromCloneUrl } from "@/src/server/codehub";
 import { extractOpenCodeFinalBody, parseReviewerBody } from "@/src/server/opencode";
 import { reviewerResultSchema } from "@/src/server/schemas";
 import { safeMarkdownUrl } from "@/src/shared/markdown";
@@ -16,6 +16,11 @@ describe("PRD boundary contracts", () => {
   test("project display name comes from credential-free HTTPS repository path", () => {
     expect(projectNameFromCloneUrl("https://codehub.example/group/sub/repo.git")).toBe("group/sub/repo");
     expect(() => projectNameFromCloneUrl("https://codehub.example/")).toThrow();
+  });
+
+  test("CodeHub open-state aliases are accepted without accepting terminal states", () => {
+    for (const state of ["open", "opened", "OPEN", " Opened "]) expect(isOpenMrState(state)).toBe(true);
+    for (const state of ["closed", "merged", "locked", "reopened", ""]) expect(isOpenMrState(state)).toBe(false);
   });
 
   test("OpenCode accepts one final JSON body and rejects prose or any invalid finding", () => {
