@@ -3,6 +3,17 @@ import { severityValues } from "@/src/shared/types";
 
 export const positiveIdSchema = z.string().regex(/^[1-9]\d*$/u);
 
+export function isCredentialFreeHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+export const credentialFreeHttpsUrlSchema = z.string().url().refine(isCredentialFreeHttpsUrl, "URL must be credential-free HTTPS");
+
 export const codeHubRepoSchema = z.object({
   repo_id: positiveIdSchema.optional(),
   clone_urls: z.object({
@@ -28,6 +39,7 @@ export const codeHubMrSchema = z.object({
   source_branch: z.string().min(1),
   target_branch: z.string().min(1),
   updated_at: z.string().min(1),
+  web_url: credentialFreeHttpsUrlSchema,
 }).passthrough();
 
 export const codeHubCommentSchema = z.object({

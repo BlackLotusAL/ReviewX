@@ -66,7 +66,7 @@ function parseSuccess<T>(
       message: `ReviewX 无法解析${operation}结果。`,
       reason: "CodeHub CLI 成功输出不符合 PRD JSON 契约。",
       impact: `${operation}未完成，既有本地数据保持不变。`,
-      nextStep: "确认 CodeHub CLI 版本兼容后重新操作。",
+      nextStep: "升级到兼容版本的 CodeHub CLI，并确认 JSON 输出契约后重新操作。",
       technical: error instanceof Error ? error.message : String(error),
       httpStatus: 502,
       cause: error,
@@ -170,6 +170,7 @@ export class CodeHubClient implements CodeHubPort {
       updatedAt: mr.updated_at,
       sourceBranch: mr.source_branch,
       targetBranch: mr.target_branch,
+      webUrl: mr.web_url,
     };
   }
 
@@ -208,7 +209,7 @@ export class CodeHubClient implements CodeHubPort {
           code: "WRITE_RESULT_UNKNOWN",
           message: "ReviewX 无法确认评论是否已创建。",
           reason: "CodeHub 返回成功退出码，但成功 JSON 无法验证。",
-          impact: "该 Finding 记录为 unknown，后续选中项不会执行。",
+          impact: "该 Finding 记录为 unknown，其他待处理 Finding 不受影响。",
           nextStep: "在 CodeHub 人工核对评论，再重新检视处理剩余问题。",
           technical: error instanceof Error ? error.message : String(error),
           httpStatus: 502,
@@ -217,7 +218,7 @@ export class CodeHubClient implements CodeHubPort {
       }
     }
 
-    const failure = commandError("Finding 发布", result);
+    const failure = commandError("Finding 发送", result);
     let knownCode: string | undefined;
     try {
       const parsed = codeHubErrorSchema.safeParse(parseJson(result.stderr));
@@ -231,7 +232,7 @@ export class CodeHubClient implements CodeHubPort {
         code: "WRITE_RESULT_UNKNOWN",
         message: "ReviewX 无法确认评论是否已创建。",
         reason: failure.reason,
-        impact: "该 Finding 记录为 unknown，后续选中项不会执行。",
+        impact: "该 Finding 记录为 unknown，其他待处理 Finding 不受影响。",
         nextStep: "在 CodeHub 人工核对评论，再重新检视处理剩余问题。",
         technical: failure.technical,
         httpStatus: 502,
