@@ -2,16 +2,16 @@
 
 ## 1. 产品定义
 
-ReviewX 是一个面向 CodeHub Merge Request 的本机单用户代码检视网页。用户登记 Project ID 并手动刷新 open MR，按需将 MR 加入检视队列。ReviewX 通过 HTTPS 准备代码、调用一次 OpenCode 检视、保存本地 Markdown 报告，并在网页中等待用户确认。只有用户主动勾选意见并点击发布后，ReviewX 才调用 CodeHub CLI 创建 MR 评论。
+ReviewX 是一个面向 CodeHub Merge Request 的本机单用户代码检视网页。用户登记 Project ID 并手动刷新 open MR，按需将 MR 加入检视队列。ReviewX 通过 HTTPS 准备代码、调用一次 OpenCode 检视、保存本地 Markdown 报告，并在网页中等待用户逐条处理。只有用户在某条 Finding 上主动点击“发送到 CodeHub”后，ReviewX 才调用 CodeHub CLI 创建该条 MR 评论。
 
-ReviewX 不定时扫描、不自动开始检视、不自动发布评论。网页只提供完成核心流程所需的项目管理、MR 发现、任务控制、意见确认和错误查看能力。
+ReviewX 不定时扫描、不自动开始检视、不自动发布评论。网页只提供完成核心流程所需的项目管理、MR 发现、任务控制、意见处理和错误查看能力。
 
 ### 1.1 产品原则
 
 - **本机运行**：服务只监听 loopback 地址，继续使用本机已认证的 CodeHub、Git 和 OpenCode CLI。
 - **人工控制**：MR 由用户手动发现、手动开始，检视任务可停止或重新执行。
 - **检视串行**：MR 检视任务进入全局 FIFO 队列，同一时间只执行一个。
-- **发布有门禁**：检视结果先保存并展示，评论只能由用户明确选择后发布。
+- **发送有门禁**：检视结果先保存并展示，每条评论只能由用户在对应卡片上明确发送。
 - **结果可追溯**：每次成功检视形成独立 attempt 和不可变报告，历史不因重新检视或移除 Project 而删除。
 - **失败不自动恢复**：任何操作只尝试一次，不自动重试、补发或恢复。
 
@@ -22,7 +22,7 @@ ReviewX 不定时扫描、不自动开始检视、不自动发布评论。网页
 - 将单个 MR 加入检视队列，查看队列位置与执行进度。
 - 停止排队中或执行中的检视任务，并重新执行任意非活动任务。
 - 查看每次检视的 Markdown 报告和结构化 Findings。
-- 分批勾选 Findings，确认后顺序发布为 MR 评论。
+- 对每条 Finding 直接选择发送或不发送，并允许撤销尚属最新 attempt 的跳过决定。
 - 永久记录检视 attempt、发布结果、纯文本日志和错误诊断。
 
 ### 1.3 非目标
@@ -35,7 +35,7 @@ ReviewX 不提供：
 - 发布前 MR 版本校验、过时意见拦截或强制警告。
 - 自动重试、评论补发、失败恢复或网页内发布重试。
 - 多个 MR 检视任务并行执行。
-- “结束确认”、批量舍弃或自动清理长期待确认意见。
+- “结束处理”、批量舍弃或自动清理长期待处理意见。
 - 数据库、统计看板、通知中心或与核心流程无关的设置页。
 
 ## 2. 产品入口与网页界面
@@ -73,12 +73,14 @@ reviewx
 MR 列表每项至少展示：
 
 - Project 名称和 ID。
-- MR 标题和 IID。
+- MR 标题和可点击的 IID 外链；外链在新标签页打开对应 CodeHub MR，且不得触发本地详情抽屉。
 - 最近一次手动刷新取得的 `updated_at`。
 - 当前状态；排队时同时展示队列位置。
 - 当前可执行的一个主操作，例如“开始检视”“停止”或“重新检视”。
 
 任务状态和进度应自动更新，不要求用户刷新整个网页。网页不增加统计卡片、图表或多级导航。
+
+详情抽屉标题区同步提供 CodeHub MR 外链。“完整报告”使用默认收起的原生折叠区：首次展开时读取报告，收起时保留已加载内容，再次展开不得重复请求；切换 attempt 后新报告仍默认收起。
 
 ### 2.3 用户可见状态
 
@@ -90,10 +92,10 @@ MR 列表每项至少展示：
 | 停止中 | 已收到停止请求，正在终止子进程并清理 | 无 |
 | 已停止 | attempt 未完成且不会自动恢复 | 重新检视 |
 | 检视失败 | attempt 因错误终止 | 重新检视 |
-| 待确认 | 最新 attempt 已产生一个或多个未发布 Finding | 勾选并发布、重新检视 |
-| 发布中 | 正在顺序创建所选评论 | 无 |
-| 已完成 | PASS，或最新 attempt 的 Findings 已全部成功发布 | 重新检视 |
-| 发布失败 | 发布批次失败或结果未知，当前 attempt 不可再次发布 | 重新检视 |
+| 待处理 | 最新 attempt 仍有一个或多个 `pending` Finding | 逐条发送或不发送、重新检视 |
+| 发送中 | 正在创建一条用户指定的评论 | 无 |
+| 已完成 | PASS，或全部 Findings 均为已发送/已跳过 | 重新检视；最新 attempt 的已跳过项可撤销 |
+| 发布失败 | 已无待处理项，且存在失败、未知或旧版未执行项 | 重新检视 |
 | 已归档 | 新 attempt 已取代该 attempt，其未发布意见不可再操作 | 查看历史 |
 
 “重新检视”是用户对“相同 `updated_at` 默认不重复检视”的显式覆盖。它可以再次检视同一 MR 版本并产生新的 attempt。
@@ -119,9 +121,10 @@ codehub mr comment create <mr-iid> --project-id <project-id> --body <markdown> -
 
 - `repo view` 用于添加 Project 时验证其存在，并取得唯一、不含凭据的 HTTPS clone URL。网页显示名取 URL 中的完整仓库路径。
 - `mr list` 只在用户点击“刷新 MR”后调用，用于发现命令实际返回的 open MR；每项必须提供 IID 和非空标题。
-- `mr view` 是 MR 详情、`updated_at`、源分支和目标分支的唯一来源。刷新时对每个 MR 调用一次；检视开始和 Git 准备完成后按核心流程再次调用。
+- `mr view` 是 MR 详情、`updated_at`、源分支、目标分支和网页地址 `web_url` 的唯一来源。刷新时对每个 MR 调用一次；检视开始和 Git 准备完成后按核心流程再次调用。
 - `mr list` 的筛选参数固定使用 `--state open`；`mr view` JSON 中的 `state` 允许使用 `open` 或 `opened` 表示开放状态。ReviewX 对这两个值做大小写不敏感的等价判断，其他状态均视为非开放状态。
-- `mr comment create` 只能由用户点击“发布选中意见”触发，不得由 MR 刷新或 OpenCode 检视完成自动触发。
+- `mr view` JSON 中的 `web_url` 必须存在，且为不含用户名、密码的 HTTPS URL。缺失或非法值属于 CLI 兼容性错误，本次刷新失败并提示升级 CodeHub CLI；既有 v1 状态仍可启动。
+- `mr comment create` 只能由用户在单条 Finding 上点击“发送到 CodeHub”触发，不得由 MR 刷新或 OpenCode 检视完成自动触发。
 - ReviewX 接受 `mr list` 当前可能不是全量结果的限制，只处理命令实际返回的 MR。
 
 `--body` 的参数值在调用前将所有换行统一为真实的 CRLF，完整 Markdown 作为单个 argv 值传入。Windows PowerShell 适配层通过 JSON 参数信封恢复参数数组，因此换行、制表符、引号和反斜杠不会拆分参数。日志或 JSON 中显示的 `\r\n` 只是 CRLF 的序列化表示；实际 CLI 参数不得包含反斜杠加 `r`、反斜杠加 `n` 的字面序列。
@@ -143,25 +146,26 @@ ReviewX 继续使用本地文件持久化，不引入数据库。状态写入必
 本地状态至少保存：
 
 - 按添加顺序排列的 Project ID、Project 名称和 HTTPS clone URL 引用。
-- 每个 Project 最近一次成功刷新的 open MR 快照。
+- 每个 Project 最近一次成功刷新的 open MR 快照，包括可选的 CodeHub `webUrl`；可选性仅用于读取没有该字段的旧 v1 状态。
 - 全局检视 FIFO 队列及其顺序。
 - 每个 MR 的全部 review attempt。
 - 每个 attempt 的唯一 ID、`updated_at`、源/目标分支、状态、时间和报告引用。
-- 每个 Finding 的固定顺序、severity、Markdown body 和发布状态。
-- 每次发布批次中已发布、失败、结果未知和未执行的 Finding。
+- 每个 Finding 的固定顺序、severity、Markdown body、处理状态及可选 `dismissedAt`。
+- 每次发送的兼容批次记录；新记录固定只包含一个 Finding ordinal，旧版多条批次仍可读取和恢复。
 
 Finding 的持久化发布状态至少包括：
 
-- `pending`：尚未发布，最新 attempt 中可供选择。
+- `pending`：尚未处理，最新 attempt 中可发送或标记为不发送。
 - `published`：CodeHub 已明确确认创建成功。
+- `dismissed`：用户明确选择不发送；仅在仍是最新 attempt 时允许撤销为 `pending`。
 - `failed`：CodeHub 明确返回失败。
 - `unknown`：进程中断或 CodeHub 无法确认写入结果。
-- `not_attempted`：同一批次在前序失败后未执行。
+- `not_attempted`：旧版多条批次在前序失败后未执行；新单条记录不会产生该状态。
 - `archived`：被新 attempt 取代，不可再发布。
 
 每次成功检视必须生成独立报告；即使 Project、MR IID 和 `updated_at` 完全相同，也不得覆盖历史报告。移除 Project 只移除登记项和主列表入口，不删除 MR 快照、attempt、报告、发布记录或日志；重新添加后恢复可见。
 
-服务启动时，持久化为“排队中”“检视中”“停止中”的 attempt 一律恢复为“已停止”，不得自动继续。待确认、已完成、发布失败和已归档状态保持不变。
+服务启动时，持久化为“排队中”“检视中”“停止中”的 attempt 一律恢复为“已停止”，不得自动继续。待处理、已完成、发布失败和已归档状态保持不变。
 
 ## 5. 核心流程
 
@@ -176,7 +180,7 @@ Finding 的持久化发布状态至少包括：
 
 移除 Project：
 
-1. 如果该 Project 正在发布评论，移除按钮暂时禁用；已经开始的评论发布不可中断。
+1. 如果该 Project 正在发送评论，移除按钮暂时禁用；已经开始的评论发送不可中断。
 2. 如果该 Project 有执行中的检视，进入“停止中”，立即终止当前 Git/OpenCode 子进程并清理临时目录。
 3. 该 Project 的排队 attempt 全部转为“已停止”并移出队列。
 4. 停止和清理完成后移除登记项，并从主列表隐藏该 Project。
@@ -198,7 +202,7 @@ Finding 的持久化发布状态至少包括：
 
 某个 Project 刷新失败时，本次刷新停止：该 Project 和尚未处理 Project 保留上次成功结果，已经完整刷新的 Project 保留本次新结果。错误在网页和会话日志中显示。ReviewX 不自动重试。
 
-刷新发现新的 `updated_at` 时，MR 主列表显示新版本，但旧 attempt 不自动重检。由于本产品明确不做发布前版本校验，在新的成功 attempt 产生前，旧的最新 attempt 仍可由用户发布。
+刷新发现新的 `updated_at` 时，MR 主列表显示新版本，但旧 attempt 不自动重检。由于本产品明确不做发送前版本校验，在新的成功 attempt 产生前，旧的最新 attempt 仍可由用户发送其 pending Findings。
 
 ### 5.3 检视队列与任务控制
 
@@ -208,7 +212,7 @@ Finding 的持久化发布状态至少包括：
 
 - 该 MR 旧的可操作 attempt 立即转为“已归档”。
 - 旧 attempt 中已发布的记录保持不变。
-- 旧 attempt 中尚未发布的 Findings 转为 `archived`，不得再次勾选或发布。
+- 旧 attempt 中仍为 `pending` 的 Findings 转为 `archived`；已发送、已跳过、失败、未知和旧版未执行记录保持原状态，全部只读。
 - 新 attempt 即使使用相同 `updated_at`，仍作为一次新的人工检视执行。
 
 队列严格按点击顺序执行，同一时间只运行一个检视 attempt。
@@ -218,7 +222,7 @@ Finding 的持久化发布状态至少包括：
 - 排队中的 attempt 点击“停止”后立即移出队列并转为“已停止”。
 - 检视中的 attempt 点击“停止”后先转为“停止中”，立即向当前 Git 或 OpenCode 子进程发送取消信号，等待子进程退出并清理临时目录，再转为“已停止”。
 - 已停止 attempt 不保存不完整报告，不记录为成功检视版本，不创建评论。
-- attempt 已完成报告持久化并进入“待确认”或“已完成”后，不再显示“停止”。
+- attempt 已完成报告持久化并进入“待处理”或“已完成”后，不再显示“停止”。
 
 失败规则：
 
@@ -239,53 +243,57 @@ Finding 的持久化发布状态至少包括：
 6. 保存本次 attempt 的独立 Markdown 报告。
 7. 持久化 attempt、报告引用和全部 Findings。
 8. 清理临时工作区。
-9. 根据结果进入“已完成”或“待确认”。
+9. 根据结果进入“已完成”或“待处理”。
 
-第 7 步成功前不得把本次 attempt 展示为可发布。任何 Finding 存在时，结果进入“待确认”；`findings` 为空表示 PASS，直接进入“已完成”。两种结果都必须保存报告。
+第 7 步成功前不得把本次 attempt 展示为可处理。任何 Finding 存在时，结果进入“待处理”；`findings` 为空表示 PASS，直接进入“已完成”。两种结果都必须保存报告。
 
 检视流程不得调用 `mr comment create`。
 
 如果 MR 在 Git 准备期间变化，第 3 步失败，不调用 OpenCode、不保存报告。若 MR 在第 3 步之后再次提交代码，ReviewX 仍保存当前 attempt 的结果；只有用户再次刷新并主动重新检视，才会处理新版本。
 
-### 5.5 意见确认与发布
+### 5.5 意见处理与发送
 
-待确认 attempt 在详情抽屉中按 Reviewer 返回顺序展示全部 Findings。每项显示 severity、完整 Markdown 和发布状态。
+待处理 attempt 在详情抽屉中按 Reviewer 返回顺序展示全部 Findings。每项显示 severity、完整 Markdown、处理状态和卡片级动作；Finding 正文不可编辑，不显示复选框、全选或底部批量发布栏。
 
-- Finding 默认不勾选。
-- Finding 正文不可编辑。
-- 没有选中项时，“发布选中意见”按钮禁用。
-- 用户可以只选择部分 `pending` Findings。
-- 不提供全选后自动发布、离开页面自动舍弃或“结束确认”。
+最新 attempt 的每条 `pending` Finding 直接提供：
 
-用户点击“发布选中意见”后：
+- 次操作“不发送”：立即持久化为 `dismissed` 并记录 `dismissedAt`。
+- 主操作“发送到 CodeHub”：单击立即执行，不弹确认框。
 
-1. 固定本批次所选 Finding 集合和原始顺序。
-2. 当前 attempt 进入“发布中”，本批次控件禁用。
-3. 按 Reviewer 原顺序，对所选 Finding 逐条调用 `mr comment create`。
-4. 每条命令成功后立即把该 Finding 持久化为 `published`，再处理下一条。
-5. 批次全部成功后，未选择的 Findings 继续保持 `pending`。
-6. 仍有 `pending` Finding 时 attempt 回到“待确认”；全部 Findings 均为 `published` 时进入“已完成”。
+`dismissed` Finding 显示“已跳过 · 撤销”。只要该 attempt 仍是该 MR 的最新 attempt，即使它已进入“已完成”或“发布失败”，用户仍可撤销为 `pending`；新 attempt 创建后，历史 attempt 全部只读。
 
-同一时间只允许一个发布批次。发布批次内部严格串行，但发布通道与检视队列独立：一个发布批次可以与一个 Git/OpenCode 检视 attempt 并行运行。其他 attempt 的发布按钮在全局发布通道占用期间禁用。
+用户点击“发送到 CodeHub”后：
 
-发布前不得调用 `mr view` 或比较 `updated_at`。用户应通过手动刷新判断结果是否仍适用；ReviewX 接受旧版本意见被发布到已更新 MR 的风险。
+1. 当前 attempt 进入“发送中”，目标卡片显示“发送中…”。
+2. 全部 Finding 决策操作暂时禁用，保证全局同一时间最多一条评论命令。
+3. 对目标 Finding 调用一次 `mr comment create`。
+4. 命令成功后立即把该 Finding 持久化为 `published`。
+5. 兼容发布记录仍使用既有 batch 结构，但新 batch 的 `selectedOrdinals` 固定只含该 ordinal。
+6. 若仍有 `pending` Finding，attempt 回到“待处理”；否则按 5.6 节统一归并为“已完成”或“发布失败”。
 
-已经开始的发布批次不可停止。停止检视任务、检视失败或检视队列清空都不得中断该批次。
+发送通道与检视队列独立：一条评论可以与一个 Git/OpenCode 检视 attempt 并行运行。其他 Finding 的发送与决策操作在全局发送通道占用期间禁用。
+
+发送前不得调用 `mr view` 或比较 `updated_at`。用户可通过 MR 外链和手动刷新判断结果是否仍适用；ReviewX 接受旧版本意见被发送到已更新 MR 的风险。
+
+已经开始的评论发送不可停止。停止检视任务、检视失败或检视队列清空都不得中断它。
 
 ### 5.6 发布失败
 
-任一评论创建失败或结果未知时：
+单条评论创建失败或结果未知时：
 
-1. 立即停止当前发布批次，不继续创建剩余评论。
-2. 已明确成功的 Findings 保持 `published`。
-3. 当前 Finding 根据证据记录为 `failed` 或 `unknown`。
-4. 本批次后续已选择但未执行的 Findings 记录为 `not_attempted`。
-5. attempt 进入“发布失败”，全部未发布 Finding 只读展示，不再提供发布操作。
-6. 不影响正在执行或排队的检视任务。
+1. 只终结目标 Finding，根据证据记录为 `failed` 或 `unknown`，且不提供重发操作。
+2. 其他 `pending` Findings 保持可处理，不自动重试或补发目标 Finding。
+3. 不影响正在执行或排队的检视任务。
 
-网页不提供发布重试。用户若需要再次处理，应先在 CodeHub 核对既有评论，再主动“重新检视”生成新 attempt，并自行避免重复选择已发布问题。
+每次 Finding 决策后集中归并 attempt 状态：
 
-如果服务在评论命令执行期间退出，无法确认结果的当前 Finding 在下次启动时恢复为 `unknown`，本批次其他未完成项恢复为 `not_attempted`，attempt 恢复为“发布失败”；不得自动补发。
+- 只要存在 `pending` Finding，attempt 为“待处理”，即使已有 `failed` 或 `unknown`。
+- 无 `pending` 且全部 Findings 均为 `published` 或 `dismissed` 时，attempt 为“已完成”。
+- 无 `pending` 且存在 `failed`、`unknown` 或旧版 `not_attempted` 时，attempt 为“发布失败”。
+
+网页不为失败、未知或旧版未执行 Finding 提供重发。用户应通过 MR 外链在 CodeHub 核对结果，再处理其他 pending 项或主动“重新检视”。
+
+如果服务在评论命令执行期间退出，无法确认结果的当前 Finding 在下次启动时恢复为 `unknown`；其他 `pending` Findings 保持可处理。旧版多条批次中已选但未执行的后续项仍恢复为 `not_attempted`。恢复后同样按上述集中规则归并，且不得自动补发。
 
 ## 6. 输出契约
 
@@ -323,7 +331,7 @@ OpenCode 最终正文必须是一个 JSON 对象：
 - 按原顺序排列的全部 Findings。
 - 每个 Finding 的 severity 和完整 Markdown body。
 
-报告记录 OpenCode 的原始成功结果，不因用户勾选、发布、失败或重新检视而修改。发布状态单独保存在本地状态中并由网页展示。
+报告记录 OpenCode 的原始成功结果，不因用户发送、跳过、失败或重新检视而修改。Finding 处理状态单独保存在本地状态中并由网页展示。
 
 报告路径必须位于 ReviewX 数据目录内；网页只能读取状态中已登记且解析后仍位于该目录内的文件。
 
@@ -426,7 +434,7 @@ Severity 展示：
 - Project 添加失败只影响本次添加。
 - MR 刷新失败停止本次刷新，不改变未完整刷新的 Project 数据。
 - 检视失败停止整个检视队列，并把剩余项转为“已停止”。
-- 发布失败只停止当前发布批次，不停止检视队列。
+- 评论发送失败只终结当前 Finding，不停止检视队列或阻塞其他 pending Finding。
 - 报告保存失败时，不持久化可发布 attempt。
 - attempt 状态保存失败时，报告可以保留在磁盘，但不得在网页中提供发布入口。
 - 日志无法创建时服务不得启动；运行期间日志不可写时，ReviewX 进入致命错误状态，不再启动新的刷新、检视或发布操作。
@@ -458,19 +466,21 @@ Severity 展示：
 | 检视失败 | 当前 attempt 失败，全部排队项转为已停止，不自动继续 |
 | 应用重开 | 原排队中、检视中和停止中 attempt 全部恢复为已停止 |
 | 重复检视 | 非活动 MR 可人工重新检视；同一 `updated_at` 生成独立 attempt 和报告 |
-| 旧结果 | 新 attempt 创建后，旧未发布意见归档，已发布记录保留 |
+| 旧结果 | 新 attempt 创建后，旧 pending 意见归档，其他 Finding 决策保留且全部只读 |
 | MR 中途变化 | Git 准备后校验失败，不调用 OpenCode、不保存报告 |
-| PASS | 保存报告并进入已完成，不进入确认、不创建评论 |
-| Findings | 保存完整报告和 Findings 后进入待确认，绝不自动评论 |
-| 默认选择 | Findings 默认不勾选且不可编辑，无选择时发布按钮禁用 |
-| 分批发布 | 只发布本批选中项；成功后未选项继续待确认 |
-| 发布顺序 | 所选 Findings 按 Reviewer 原顺序逐条调用评论接口 |
-| 发布并行 | 一个评论批次可与一个检视 attempt 并行；评论批次之间不并行 |
-| 无版本校验 | 发布前不调用 `mr view`，不拦截旧版本意见 |
-| 发布失败 | 停止当前批次，保留成功/失败/未知/未执行状态，不提供重试 |
-| 发布与队列隔离 | 发布失败或发布进行中不停止独立检视队列 |
-| 项目移除 | 停止该项目检视、取消排队；发布中暂不可移除；历史保留 |
-| 报告 | 每个成功 attempt 独立保存，不被后续检视或发布状态覆盖 |
+| PASS | 保存报告并进入已完成，不进入待处理、不创建评论 |
+| Findings | 保存完整报告和 Findings 后进入待处理，绝不自动评论 |
+| 卡片级决策 | 无复选框或批量栏；每条 pending Finding 直接提供“不发送”和“发送到 CodeHub” |
+| 跳过与撤销 | 不发送持久化为 dismissed；最新 attempt 可撤销，历史 attempt 只读 |
+| 逐条发送 | 一次只发送目标 Finding；内部 batch 新记录只含一个 ordinal，其他 pending 项不变 |
+| 发送并行 | 一条评论可与一个检视 attempt 并行；评论发送之间全局串行 |
+| 无版本校验 | 发送前不调用 `mr view`，不拦截旧版本意见 |
+| 发送失败 | 目标项记录 failed/unknown 且不可重发；其他 pending 项仍可处理；无 pending 后统一归并状态 |
+| 发送与队列隔离 | 发送失败或发送进行中不停止独立检视队列 |
+| 项目移除 | 停止该项目检视、取消排队；发送中暂不可移除；历史保留 |
+| 报告 | 默认收起、首次展开加载、收起保留缓存；每个成功 attempt 独立且不可变 |
+| MR 外链 | 列表 IID 和详情标题均使用经验证的 `web_url`，新标签页打开且点击不触发详情 |
+| CLI 兼容 | 新 `mr view` 缺少或返回非法 `web_url` 时刷新失败并提示升级；旧 v1 状态仍可启动 |
 | Markdown 安全 | 危险 HTML、脚本、URL 和嵌入内容不能执行或访问本机资源 |
 | 日志 | 每次服务一份永久日志，网页可查看简化进度和完整诊断 |
 | 凭据 | 不出现在网页、状态响应、日志、报告或 OpenCode 输入中 |

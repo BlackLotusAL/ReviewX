@@ -1,6 +1,6 @@
 # ReviewX
 
-ReviewX 是仅面向 Windows 10/11 的本地 CodeHub Merge Request 代码检视工具。它把 open MR 放入一个全局 FIFO 队列，每次只运行一个只读 OpenCode 检视；Finding 只有在用户明确勾选并点击发布后，才会逐条写入 CodeHub。
+ReviewX 是仅面向 Windows 10/11 的本地 CodeHub Merge Request 代码检视工具。它把 open MR 放入一个全局 FIFO 队列，每次只运行一个只读 OpenCode 检视；每条 Finding 只有在用户明确点击“发送到 CodeHub”后，才会写入 CodeHub。
 
 ReviewX 不会定时刷新、自动检视、自动评论，也不提供远程访问、数据库或发布重试。
 
@@ -13,7 +13,7 @@ ReviewX 不会定时刷新、自动检视、自动评论，也不提供远程访
 - CodeHub CLI，可在 `PATH` 中找到 `codehub.exe` 或安全的 `codehub.ps1` npm shim
 - OpenCode CLI，可在 `PATH` 中找到 `opencode.exe` 或安全的 `opencode.ps1` npm shim，并已配置默认模型及其认证
 
-CodeHub 必须返回不含用户信息、查询参数或片段的 HTTPS clone URL。ReviewX 不接收或保存 CodeHub、Git、SSH、GitHub 或模型供应商凭据。
+CodeHub 必须返回不含用户信息、查询参数或片段的 HTTPS clone URL，并在 `mr view` JSON 中返回不含凭据的 HTTPS `web_url`。缺少该字段表示 CLI 版本不兼容，刷新会失败并提示升级。ReviewX 不接收或保存 CodeHub、Git、SSH、GitHub 或模型供应商凭据。
 
 ## 安装与启动
 
@@ -37,10 +37,10 @@ reviewx
 1. 输入正整数 Project ID；ReviewX 会先调用 CodeHub 验证 Project。
 2. 点击“刷新 MR”手动获取各 Project 当前 open MR。
 3. 点击“开始检视”或“重新检视”；任务按点击顺序进入全局 FIFO。
-4. 查看独立 Markdown 报告。PASS 直接完成；有 Findings 时进入待确认。
-5. 勾选本批需要发布的 Findings，再点击“发布选中意见”。未选项继续待确认。
+4. 按需展开“完整报告”；报告首次展开时加载，收起后保留缓存。PASS 直接完成；有 Findings 时进入待处理。
+5. 在每张 Finding 卡片上直接选择“发送到 CodeHub”或“不发送”；已跳过项可在新 attempt 创建前撤销。
 
-停止活动检视会终止 Windows 子进程树并清理临时工作区；单次检视失败会停止其余排队项。发布批次与检视队列彼此独立，但任一时刻只允许一个评论批次。
+停止活动检视会终止 Windows 子进程树并清理临时工作区；单次检视失败会停止其余排队项。评论发送与检视队列彼此独立，但任一时刻只允许发送一条评论。MR 卡片和详情标题中的 `!IID ↗` 可直接在新标签页打开 CodeHub MR。
 
 ## 本地数据
 
@@ -82,6 +82,6 @@ pnpm test:ai
 - 无法自动打开浏览器：从终端复制 `http://127.0.0.1:<port>` 地址；服务通常仍在运行。
 - 页面操作被拒绝或服务进入致命状态：打开左栏“查看当前会话日志”，按 Cause、Impact、Next step 和 Technical details 排查。
 - MR 被误判为非开放状态：ReviewX 同时接受 `mr view` 返回的 `open` 和 `opened`；如果仍报错，请在日志中确认 CodeHub 实际返回的 `state` 值。
-- 意外退出后：排队中、检视中和停止中的 attempt 会恢复为已停止；中断评论的当前 Finding 会标为 unknown，后续选中项标为 not_attempted，ReviewX 不会自动补发。
+- 意外退出后：排队中、检视中和停止中的 attempt 会恢复为已停止；中断评论的当前 Finding 会标为 unknown，其他 pending Finding 仍可继续处理，ReviewX 不会自动补发。旧版多条批次中的后续项仍兼容恢复为 not_attempted。
 
 报告与 Finding Markdown 均按不可信输入处理：原始 HTML、危险 scheme、表单和嵌入内容会被丢弃，图片只展示为经过公共 HTTP(S) allowlist 校验的链接，不会自动加载。

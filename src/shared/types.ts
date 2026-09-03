@@ -18,6 +18,7 @@ export type AttemptStatus = (typeof attemptStatusValues)[number];
 export const findingStatusValues = [
   "pending",
   "published",
+  "dismissed",
   "failed",
   "unknown",
   "not_attempted",
@@ -76,6 +77,7 @@ export interface MergeRequestSnapshot {
   updatedAt: string;
   sourceBranch: string;
   targetBranch: string;
+  webUrl?: string;
 }
 
 export interface ProjectSnapshot {
@@ -90,6 +92,7 @@ export interface StoredFinding {
   status: FindingStatus;
   batchId?: string;
   publishedAt?: string;
+  dismissedAt?: string;
   commentId?: string;
   error?: SafeErrorView;
 }

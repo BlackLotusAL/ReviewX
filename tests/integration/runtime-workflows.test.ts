@@ -195,7 +195,7 @@ describe("ReviewX runtime workflows", () => {
     }
   });
 
-  it("saves immutable PASS/Finding reports, archives old actionable results, and publishes batches in reviewer order", async () => {
+  it("saves immutable reports and supports all-skipped completion, send, and undo per Finding", async () => {
     const harness = await createRuntimeHarness();
     try {
       configureMr(harness, "101", "1");
@@ -211,16 +211,29 @@ describe("ReviewX runtime workflows", () => {
       const firstReport = await harness.runtime.readReport(first.id);
       expect(firstReport).toContain("first body");
       await harness.runtime.removeProject("101");
-      await expect(harness.runtime.publishFindings(first.id, [1])).rejects.toMatchObject({ code: "PROJECT_NOT_AVAILABLE" });
+      await expect(harness.runtime.publishFinding(first.id, 1)).rejects.toMatchObject({ code: "PROJECT_NOT_AVAILABLE" });
       await harness.runtime.addProject("101");
       const mrViewsBeforePublish = harness.codeHub.calls.filter((call) => call[0] === "mr" && call[1] === "view").length;
 
-      await harness.runtime.publishFindings(first.id, [3, 1]);
-      expect(harness.codeHub.comments.map((comment) => comment.body)).toEqual(["first body", "third body"]);
-      expect((await latest(harness, "101", "1")).status).toBe("awaiting_confirmation");
-      expect((await latest(harness, "101", "1")).findings.map((finding) => finding.status)).toEqual(["published", "pending", "published"]);
-      await harness.runtime.publishFindings(first.id, [2]);
+      await harness.runtime.decideFinding(first.id, 1, "dismissed");
+      await harness.runtime.decideFinding(first.id, 2, "dismissed");
+      await harness.runtime.decideFinding(first.id, 3, "dismissed");
       expect((await latest(harness, "101", "1")).status).toBe("completed");
+      expect((await latest(harness, "101", "1")).findings.map((finding) => finding.status)).toEqual(["dismissed", "dismissed", "dismissed"]);
+      expect(harness.codeHub.comments).toEqual([]);
+
+      await harness.runtime.decideFinding(first.id, 1, "pending");
+      expect((await latest(harness, "101", "1")).status).toBe("awaiting_confirmation");
+      await harness.runtime.publishFinding(first.id, 1);
+      expect(harness.codeHub.comments.map((comment) => comment.body)).toEqual(["first body"]);
+      expect((await latest(harness, "101", "1")).status).toBe("completed");
+
+      await harness.runtime.decideFinding(first.id, 2, "pending");
+      await harness.runtime.publishFinding(first.id, 2);
+      const decided = await latest(harness, "101", "1");
+      expect(decided.status).toBe("completed");
+      expect(decided.findings.map((finding) => finding.status)).toEqual(["published", "published", "dismissed"]);
+      expect(decided.publishBatches.map((batch) => batch.selectedOrdinals)).toEqual([[1], [2]]);
       expect(harness.codeHub.calls.filter((call) => call[0] === "mr" && call[1] === "view")).toHaveLength(mrViewsBeforePublish);
 
       harness.reviewer.results.set("1", { findings: [] });
@@ -231,24 +244,24 @@ describe("ReviewX runtime workflows", () => {
       expect(history[0].status).toBe("completed");
       expect(history[0].result).toBe("pass");
       expect(history[1].status).toBe("archived");
-      expect(history[1].findings.every((finding) => finding.status === "published")).toBe(true);
+      expect(history[1].findings.map((finding) => finding.status)).toEqual(["published", "published", "dismissed"]);
       expect(history[0].reportUrl).not.toBe(history[1].reportUrl);
       expect(await harness.runtime.readReport(history[0].id)).toContain("**PASS**");
       expect(await harness.runtime.readReport(history[1].id)).toBe(firstReport);
-      expect(harness.codeHub.comments).toHaveLength(3);
+      expect(harness.codeHub.comments).toHaveLength(2);
     } finally {
       await harness.cleanup();
     }
   });
 
-  it("allows one publication batch alongside one review while keeping publication globally serial", async () => {
+  it("allows one comment send alongside one review while keeping sends globally serial", async () => {
     const harness = await createRuntimeHarness();
     try {
       configureMr(harness, "101", "1");
       configureMr(harness, "101", "2");
       configureMr(harness, "202", "3");
       await registerAndRefresh(harness, ["101", "202"]);
-      harness.reviewer.results.set("1", reviewerResult("one", "two"));
+      harness.reviewer.results.set("1", reviewerResult("one"));
       harness.reviewer.results.set("3", reviewerResult("other"));
       await harness.runtime.createReview("101", "1");
       await harness.runtime.createReview("202", "3");
@@ -258,9 +271,10 @@ describe("ReviewX runtime workflows", () => {
 
       harness.codeHub.commentDelayMs = 180;
       harness.reviewer.delayMs = 120;
-      const publishing = harness.runtime.publishFindings(publishA.id, [1, 2]);
+      const publishing = harness.runtime.publishFinding(publishA.id, 1);
       await waitUntil(() => harness.codeHub.activeComments === 1);
-      await expect(harness.runtime.publishFindings(publishB.id, [1])).rejects.toMatchObject({ code: "PUBLICATION_BUSY" });
+      await expect(harness.runtime.publishFinding(publishB.id, 1)).rejects.toMatchObject({ code: "PUBLICATION_BUSY" });
+      await expect(harness.runtime.decideFinding(publishB.id, 1, "dismissed")).rejects.toMatchObject({ code: "PUBLICATION_BUSY" });
       await expect(harness.runtime.removeProject("101")).rejects.toMatchObject({ code: "PROJECT_PUBLISHING" });
       await harness.runtime.createReview("101", "2");
       await waitUntil(() => harness.codeHub.activeComments === 1 && harness.reviewer.active === 1);
@@ -286,32 +300,36 @@ describe("ReviewX runtime workflows", () => {
       await harness.runtime.waitForIdle();
       const publishable = await latest(harness, "101", "1");
 
-      harness.codeHub.commentOutcomes = [
-        { kind: "success", comment: { comment_id: "saved" } },
-        { kind: "failed", error: failure("COMMENT_REJECTED") },
-      ];
+      harness.codeHub.commentOutcomes = [{ kind: "failed", error: failure("COMMENT_REJECTED") }];
       harness.codeHub.commentDelayMs = 90;
       harness.reviewer.delayMs = 120;
-      const publishing = harness.runtime.publishFindings(publishable.id, [1, 2, 3]);
+      const publishing = harness.runtime.publishFinding(publishable.id, 1);
       await waitUntil(() => harness.codeHub.activeComments === 1);
       await harness.runtime.createReview("101", "2");
       await expect(publishing).rejects.toMatchObject({ code: "COMMENT_REJECTED" });
       await harness.runtime.waitForIdle();
 
       const failed = await latest(harness, "101", "1");
-      expect(failed.status).toBe("publish_failed");
-      expect(failed.findings.map((finding) => finding.status)).toEqual(["published", "failed", "not_attempted"]);
+      expect(failed.status).toBe("awaiting_confirmation");
+      expect(failed.findings.map((finding) => finding.status)).toEqual(["failed", "pending", "pending"]);
       expect((await harness.store.read()).diagnostics.at(-1)).toMatchObject({ operation: "Finding publication", error: { code: "COMMENT_REJECTED" } });
       expect((await latest(harness, "101", "2")).status).toBe("completed");
-      await expect(harness.runtime.publishFindings(failed.id, [3])).rejects.toMatchObject({ code: "ATTEMPT_NOT_PUBLISHABLE" });
+      await expect(harness.runtime.publishFinding(failed.id, 1)).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+      await harness.runtime.publishFinding(failed.id, 2);
+      await harness.runtime.decideFinding(failed.id, 3, "dismissed");
+      expect((await latest(harness, "101", "1")).status).toBe("publish_failed");
+      expect((await latest(harness, "101", "1")).findings.map((finding) => finding.status)).toEqual(["failed", "published", "dismissed"]);
 
       harness.reviewer.results.set("1", reviewerResult("unknown", "never"));
       await harness.runtime.createReview("101", "1");
       await harness.runtime.waitForIdle();
       const second = await latest(harness, "101", "1");
       harness.codeHub.commentOutcomes = [{ kind: "unknown", error: failure("COMMENT_RESULT_UNKNOWN") }];
-      await expect(harness.runtime.publishFindings(second.id, [1, 2])).rejects.toMatchObject({ code: "COMMENT_RESULT_UNKNOWN" });
-      expect((await latest(harness, "101", "1")).findings.map((finding) => finding.status)).toEqual(["unknown", "not_attempted"]);
+      await expect(harness.runtime.publishFinding(second.id, 1)).rejects.toMatchObject({ code: "COMMENT_RESULT_UNKNOWN" });
+      expect((await latest(harness, "101", "1")).status).toBe("awaiting_confirmation");
+      expect((await latest(harness, "101", "1")).findings.map((finding) => finding.status)).toEqual(["unknown", "pending"]);
+      await harness.runtime.decideFinding(second.id, 2, "dismissed");
+      expect((await latest(harness, "101", "1")).status).toBe("publish_failed");
     } finally {
       await harness.cleanup();
     }

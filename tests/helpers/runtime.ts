@@ -73,6 +73,7 @@ export class FakeCodeHub implements CodeHubPort {
       updatedAt: "2026-09-01T00:00:00Z",
       sourceBranch: `feature-${mrIid}`,
       targetBranch: "main",
+      webUrl: `https://codehub.example/team/project-${projectId}/merge_requests/${mrIid}`,
     }];
     const index = this.viewIndexes.get(key) ?? 0;
     this.viewIndexes.set(key, index + 1);
@@ -196,6 +197,7 @@ export function configureMr(harness: RuntimeHarness, projectId: string, mrIid: s
     updatedAt: `2026-09-01T00:00:${mrIid.padStart(2, "0")}Z`,
     sourceBranch: `feature-${mrIid}`,
     targetBranch: "main",
+    webUrl: `https://codehub.example/team/project-${projectId}/merge_requests/${mrIid}`,
   };
   harness.codeHub.lists.set(projectId, [...(harness.codeHub.lists.get(projectId) ?? []), { iid: mrIid, title }]);
   harness.codeHub.viewSequences.set(`${projectId}:${mrIid}`, [details]);

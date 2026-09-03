@@ -12,9 +12,11 @@ import type {
   ReviewAttempt,
   ReviewPhase,
   SafeErrorView,
+  StoredFinding,
 } from "@/src/shared/types";
 import { CodeHubClient, isOpenMrState, type CodeHubPort } from "./codehub";
 import { AppError, conflictError, isAppError, notFoundError, unexpectedError, validationError } from "./errors";
+import { settleFindingDecisions } from "./finding-state";
 import { GitPreparer, type GitPreparerPort, type PreparedReview } from "./git";
 import { Logger, createLogFile } from "./logger";
 import { OpenCodeReviewer, type ReviewerPort } from "./opencode";
@@ -41,6 +43,12 @@ function assertOpen(mr: MergeRequestSnapshot): void {
     nextStep: "手动刷新 MR 列表后选择状态为 open 或 opened 的 MR。",
     technical: "MR state was neither open nor opened when validated.",
   });
+}
+
+function findFinding(attempt: ReviewAttempt, ordinal: number): StoredFinding {
+  const finding = attempt.findings.find((candidate) => candidate.ordinal === ordinal);
+  if (!finding) throw validationError(`Finding ${ordinal} 不存在。`);
+  return finding;
 }
 
 export interface RuntimeDependencies {
@@ -216,7 +224,7 @@ export class ReviewXRuntime {
       ? this.#state.attemptsById[this.#state.activePublishBatch.attemptId]
       : undefined;
     if (publishingAttempt?.projectId === projectId) {
-      throw conflictError("PROJECT_PUBLISHING", "该 Project 正在发布评论，暂时不能移除。", "等待当前发布批次结束后重试。");
+      throw conflictError("PROJECT_PUBLISHING", "该 Project 正在发送评论，暂时不能移除。", "等待当前评论发送结束后重试。");
     }
     this.#removingProjects.add(projectId);
     this.#viewRevision += 1;
@@ -229,7 +237,7 @@ export class ReviewXRuntime {
           ? draft.attemptsById[draft.activePublishBatch.attemptId]
           : undefined;
         if (activePublication?.projectId === projectId) {
-          throw conflictError("PROJECT_PUBLISHING", "该 Project 正在发布评论，暂时不能移除。", "等待当前发布批次结束后重试。");
+          throw conflictError("PROJECT_PUBLISHING", "该 Project 正在发送评论，暂时不能移除。", "等待当前评论发送结束后重试。");
         }
         draft.reviewQueue = draft.reviewQueue.filter((attemptId) => {
           const attempt = draft.attemptsById[attemptId];
@@ -680,123 +688,152 @@ export class ReviewXRuntime {
     });
   }
 
-  async publishFindings(attemptId: string, ordinals: number[]): Promise<AppStateView> {
+  async decideFinding(attemptId: string, ordinal: number, decision: "dismissed" | "pending"): Promise<AppStateView> {
     this.#assertOperational();
-    if (this.#state.activePublishBatch) throw conflictError("PUBLICATION_BUSY", "已有评论发布批次正在执行。", "等待当前批次结束。");
-    if (!Array.isArray(ordinals) || ordinals.length === 0 || ordinals.some((value) => !Number.isInteger(value) || value <= 0)) {
-      throw validationError("至少选择一个合法 Finding。");
+    if (this.#state.activePublishBatch) throw conflictError("PUBLICATION_BUSY", "已有评论正在发送。", "等待当前发送结束。");
+    if (!Number.isInteger(ordinal) || ordinal <= 0) throw validationError("Finding 序号必须是正整数。");
+    const attempt = this.#state.attemptsById[attemptId];
+    if (!attempt) throw notFoundError("找不到该 attempt。");
+    const ids = this.#state.attemptIdsByMr[mrKey(attempt.projectId, attempt.mrIid)] ?? [];
+    if (ids.at(-1) !== attemptId || !(["awaiting_confirmation", "completed", "publish_failed"] as AttemptStatus[]).includes(attempt.status)) {
+      throw conflictError("ATTEMPT_NOT_ACTIONABLE", "该 attempt 当前不可处理。", "选择最新 attempt，或重新检视。");
     }
-    const unique = [...new Set(ordinals)];
-    if (unique.length !== ordinals.length) throw validationError("Finding 选择中不能包含重复序号。");
+    const finding = findFinding(attempt, ordinal);
+    if (decision === "dismissed" && finding.status !== "pending") throw validationError(`Finding ${ordinal} 不再是待处理状态。`);
+    if (decision === "pending" && finding.status !== "dismissed") throw validationError(`Finding ${ordinal} 未被跳过。`);
+
+    const now = this.#now().toISOString();
+    await this.#mutate((draft) => {
+      if (draft.activePublishBatch) throw conflictError("PUBLICATION_BUSY", "已有评论正在发送。", "等待当前发送结束。");
+      const target = draft.attemptsById[attemptId];
+      if (!target) throw notFoundError("找不到该 attempt。");
+      const latestIds = draft.attemptIdsByMr[mrKey(target.projectId, target.mrIid)] ?? [];
+      if (latestIds.at(-1) !== attemptId || !(["awaiting_confirmation", "completed", "publish_failed"] as AttemptStatus[]).includes(target.status)) {
+        throw conflictError("ATTEMPT_NOT_ACTIONABLE", "该 attempt 当前不可处理。", "刷新页面后重试。");
+      }
+      const current = findFinding(target, ordinal);
+      if (decision === "dismissed") {
+        if (current.status !== "pending") throw validationError(`Finding ${ordinal} 不再是待处理状态。`);
+        current.status = "dismissed";
+        current.dismissedAt = now;
+      } else {
+        if (current.status !== "dismissed") throw validationError(`Finding ${ordinal} 未被跳过。`);
+        current.status = "pending";
+        current.dismissedAt = undefined;
+      }
+      settleFindingDecisions(target, now);
+    });
+    this.#info(
+      { ...this.#context(attempt), findingOrdinal: ordinal },
+      decision === "dismissed" ? "Finding marked as not to be published." : "Dismissed Finding restored to pending.",
+    );
+    return this.snapshot();
+  }
+
+  async publishFinding(attemptId: string, ordinal: number): Promise<AppStateView> {
+    this.#assertOperational();
+    if (this.#state.activePublishBatch) throw conflictError("PUBLICATION_BUSY", "已有评论正在发送。", "等待当前发送结束。");
+    if (!Number.isInteger(ordinal) || ordinal <= 0) throw validationError("Finding 序号必须是正整数。");
     const attempt = this.#state.attemptsById[attemptId];
     if (!attempt) throw notFoundError("找不到该 attempt。");
     if (!this.#state.registeredProjectIds.includes(attempt.projectId) || this.#removingProjects.has(attempt.projectId)) {
-      throw conflictError("PROJECT_NOT_AVAILABLE", "该 attempt 所属 Project 当前不可发布。", "重新添加 Project 或等待移除操作完成。");
+      throw conflictError("PROJECT_NOT_AVAILABLE", "该 attempt 所属 Project 当前不可发送评论。", "重新添加 Project 或等待移除操作完成。");
     }
     const ids = this.#state.attemptIdsByMr[mrKey(attempt.projectId, attempt.mrIid)] ?? [];
     if (ids.at(-1) !== attemptId || attempt.status !== "awaiting_confirmation") {
-      throw conflictError("ATTEMPT_NOT_PUBLISHABLE", "该 attempt 当前不可发布。", "选择最新待确认 attempt，或重新检视。");
+      throw conflictError("ATTEMPT_NOT_PUBLISHABLE", "该 attempt 当前不可发送。", "选择最新待处理 attempt，或重新检视。");
     }
-    const selected = unique.map((ordinal) => {
-      const finding = attempt.findings.find((item) => item.ordinal === ordinal);
-      if (!finding || finding.status !== "pending") throw validationError(`Finding ${ordinal} 不存在或不再是 pending。`);
-      return finding;
-    }).sort((left, right) => left.ordinal - right.ordinal);
+    const selected = findFinding(attempt, ordinal);
+    if (selected.status !== "pending") throw validationError(`Finding ${ordinal} 不再是待处理状态。`);
     const batchId = this.#id();
     const startedAt = this.#now().toISOString();
-    this.#info(this.#context(attempt), `Preparing to publish ${selected.length} selected Finding${selected.length === 1 ? "" : "s"} in reviewer order.`);
+    this.#info({ ...this.#context(attempt), findingOrdinal: ordinal }, "Preparing to publish one Finding.");
     this.#assertOperational();
     await this.#mutate((draft) => {
-      if (draft.activePublishBatch) throw conflictError("PUBLICATION_BUSY", "已有评论发布批次正在执行。", "等待当前批次结束。");
+      if (draft.activePublishBatch) throw conflictError("PUBLICATION_BUSY", "已有评论正在发送。", "等待当前发送结束。");
       const target = draft.attemptsById[attemptId];
-      if (!target || target.status !== "awaiting_confirmation") throw conflictError("ATTEMPT_NOT_PUBLISHABLE", "该 attempt 当前不可发布。", "刷新页面后重试。");
+      if (!target || target.status !== "awaiting_confirmation") throw conflictError("ATTEMPT_NOT_PUBLISHABLE", "该 attempt 当前不可发送。", "刷新页面后重试。");
       if (!draft.registeredProjectIds.includes(target.projectId) || this.#removingProjects.has(target.projectId)) {
-        throw conflictError("PROJECT_NOT_AVAILABLE", "该 attempt 所属 Project 当前不可发布。", "重新添加 Project 或等待移除操作完成。");
+        throw conflictError("PROJECT_NOT_AVAILABLE", "该 attempt 所属 Project 当前不可发送评论。", "重新添加 Project 或等待移除操作完成。");
       }
+      const current = findFinding(target, ordinal);
+      if (current.status !== "pending") throw validationError(`Finding ${ordinal} 不再是待处理状态。`);
       target.status = "publishing";
-      target.publishBatches.push({ id: batchId, selectedOrdinals: selected.map((finding) => finding.ordinal), status: "running", startedAt });
-      draft.activePublishBatch = { attemptId, batchId };
+      target.publishBatches.push({ id: batchId, selectedOrdinals: [ordinal], currentOrdinal: ordinal, status: "running", startedAt });
+      current.batchId = batchId;
+      draft.activePublishBatch = { attemptId, batchId, currentOrdinal: ordinal };
     });
-    let currentOrdinal: number | undefined;
     try {
-      for (let index = 0; index < selected.length; index += 1) {
-        const ordinal = selected[index].ordinal;
-        currentOrdinal = ordinal;
+      const outcome = await this.dependencies.codeHub.createComment(attempt.projectId, attempt.mrIid, selected.body, selected.severity);
+      if (outcome.kind === "success") {
         await this.#mutate((draft) => {
           const target = draft.attemptsById[attemptId];
           const batch = target?.publishBatches.find((item) => item.id === batchId);
-          if (!target || !batch || !draft.activePublishBatch) throw new Error("Active publication batch disappeared.");
-          batch.currentOrdinal = ordinal;
-          draft.activePublishBatch.currentOrdinal = ordinal;
-          const finding = target.findings.find((item) => item.ordinal === ordinal);
-          if (finding) finding.batchId = batchId;
+          if (!target || !batch) throw new Error("Active publication batch disappeared.");
+          const finding = findFinding(target, ordinal);
+          finding.status = "published";
+          finding.publishedAt = this.#now().toISOString();
+          finding.commentId = outcome.comment.comment_id;
+          finding.error = undefined;
+          batch.status = "completed";
+          batch.completedAt = this.#now().toISOString();
+          batch.currentOrdinal = undefined;
+          settleFindingDecisions(target, batch.completedAt);
+          draft.activePublishBatch = null;
         });
-        const current = this.#state.attemptsById[attemptId].findings.find((finding) => finding.ordinal === ordinal)!;
-        const outcome = await this.dependencies.codeHub.createComment(attempt.projectId, attempt.mrIid, current.body, current.severity);
-        if (outcome.kind === "success") {
-          await this.#mutate((draft) => {
-            const finding = draft.attemptsById[attemptId]?.findings.find((item) => item.ordinal === ordinal);
-            if (!finding) throw new Error(`Missing Finding ${ordinal}.`);
-            finding.status = "published";
-            finding.publishedAt = this.#now().toISOString();
-            finding.commentId = outcome.comment.comment_id;
-            finding.error = undefined;
-          });
-          this.#info({ ...this.#context(attempt), findingOrdinal: ordinal }, "Finding comment published and persisted.");
-          continue;
+        this.#info({ ...this.#context(attempt), findingOrdinal: ordinal }, "Finding comment published and persisted.");
+        return this.snapshot();
+      }
+
+      const failureView = this.dependencies.logger.safeError(outcome.error);
+      await this.#mutate((draft) => {
+        const target = draft.attemptsById[attemptId];
+        if (!target) throw new Error(`Missing attempt ${attemptId}.`);
+        const finding = findFinding(target, ordinal);
+        finding.status = outcome.kind === "unknown" ? "unknown" : "failed";
+        finding.error = failureView;
+        finding.batchId = batchId;
+        const batch = target.publishBatches.find((item) => item.id === batchId);
+        if (batch) {
+          batch.status = "failed";
+          batch.completedAt = this.#now().toISOString();
+          batch.currentOrdinal = undefined;
+          batch.error = failureView;
         }
-        const failureView = this.dependencies.logger.safeError(outcome.error);
+        target.error = failureView;
+        settleFindingDecisions(target, batch?.completedAt ?? this.#now().toISOString());
+        draft.activePublishBatch = null;
+      });
+      throw outcome.error;
+    } catch (error) {
+      const appError = this.#error(error, "Finding 发送");
+      const activeBatch = this.#state.activePublishBatch as PersistentState["activePublishBatch"];
+      if (activeBatch?.attemptId === attemptId && activeBatch.batchId === batchId) {
+        const failureView = this.dependencies.logger.safeError(appError);
         await this.#mutate((draft) => {
+          if (draft.activePublishBatch?.attemptId !== attemptId || draft.activePublishBatch.batchId !== batchId) return;
           const target = draft.attemptsById[attemptId];
-          if (!target) throw new Error(`Missing attempt ${attemptId}.`);
-          const currentFinding = target.findings.find((item) => item.ordinal === ordinal);
-          if (currentFinding) {
-            currentFinding.status = outcome.kind === "unknown" ? "unknown" : "failed";
-            currentFinding.error = failureView;
-            currentFinding.batchId = batchId;
-          }
-          for (const later of selected.slice(index + 1)) {
-            const finding = target.findings.find((item) => item.ordinal === later.ordinal);
-            if (finding?.status === "pending") {
-              finding.status = "not_attempted";
-              finding.batchId = batchId;
-            }
-          }
+          if (!target) return;
+          const finding = findFinding(target, ordinal);
+          finding.status = "unknown";
+          finding.error = failureView;
+          finding.batchId = batchId;
           const batch = target.publishBatches.find((item) => item.id === batchId);
           if (batch) {
             batch.status = "failed";
             batch.completedAt = this.#now().toISOString();
+            batch.currentOrdinal = undefined;
             batch.error = failureView;
           }
-          target.status = "publish_failed";
-          target.completedAt = this.#now().toISOString();
           target.error = failureView;
+          settleFindingDecisions(target, batch?.completedAt ?? this.#now().toISOString());
           draft.activePublishBatch = null;
-        });
-        throw outcome.error;
+        }).catch(() => undefined);
       }
-      await this.#mutate((draft) => {
-        const target = draft.attemptsById[attemptId];
-        if (!target) throw new Error(`Missing attempt ${attemptId}.`);
-        const batch = target.publishBatches.find((item) => item.id === batchId);
-        if (batch) {
-          batch.status = "completed";
-          batch.completedAt = this.#now().toISOString();
-          batch.currentOrdinal = undefined;
-        }
-        target.status = target.findings.some((finding) => finding.status === "pending") ? "awaiting_confirmation" : "completed";
-        target.completedAt = this.#now().toISOString();
-        target.error = undefined;
-        draft.activePublishBatch = null;
-      });
-    } catch (error) {
-      const appError = this.#error(error, "Finding 发布");
-      await this.#recordDiagnostic("Finding publication", { ...this.#context(attempt), findingOrdinal: currentOrdinal }, appError);
-      this.#logError({ ...this.#context(attempt), findingOrdinal: currentOrdinal }, appError);
+      await this.#recordDiagnostic("Finding publication", { ...this.#context(attempt), findingOrdinal: ordinal }, appError);
+      this.#logError({ ...this.#context(attempt), findingOrdinal: ordinal }, appError);
       throw appError;
     }
-    this.#info(this.#context(attempt), "Selected Finding publication batch completed.");
-    return this.snapshot();
   }
 
   async shutdown(): Promise<void> {

@@ -71,8 +71,42 @@ describe("atomic persistent state", () => {
       draft.activePublishBatch = { attemptId: "p", batchId: "batch", currentOrdinal: 1 };
     });
     const recovered = await new StateStore(paths).initialize("later");
-    expect(recovered.attemptsById.p.status).toBe("publish_failed");
+    expect(recovered.attemptsById.p.status).toBe("awaiting_confirmation");
     expect(recovered.attemptsById.p.findings.map((finding) => finding.status)).toEqual(["unknown", "not_attempted", "pending"]);
     expect(recovered.activePublishBatch).toBeNull();
+  });
+
+  test("loads legacy MR snapshots without webUrl and persists dismissed Findings", async () => {
+    const { paths, store } = await setup();
+    await store.mutate((draft) => {
+      draft.snapshotsByProjectId["1"] = {
+        refreshedAt: "2026-09-02T00:00:00.000Z",
+        mergeRequests: [{
+          projectId: "1",
+          iid: "10",
+          title: "Legacy MR",
+          state: "opened",
+          updatedAt: "v1",
+          sourceBranch: "feature",
+          targetBranch: "main",
+        }],
+      };
+      const completed = attempt("dismissed", "completed");
+      completed.findings = [{
+        ordinal: 1,
+        severity: "minor",
+        body: "No comment needed",
+        status: "dismissed",
+        dismissedAt: "2026-09-02T00:30:00.000Z",
+      }];
+      draft.attemptsById[completed.id] = completed;
+    });
+
+    const restored = await new StateStore(paths).initialize("2026-09-02T01:00:00.000Z");
+    expect(restored.snapshotsByProjectId["1"].mergeRequests[0].webUrl).toBeUndefined();
+    expect(restored.attemptsById.dismissed.findings[0]).toMatchObject({
+      status: "dismissed",
+      dismissedAt: "2026-09-02T00:30:00.000Z",
+    });
   });
 });

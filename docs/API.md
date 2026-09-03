@@ -21,8 +21,8 @@ ReviewX Web API 是本机单实例网页与 Node.js 服务之间的内部接口�
 | --- | --- | --- |
 | `revision` | 非负整数 | 当前页面视图版本；本地可见状态变化时递增 |
 | `refreshOperation` | 对象 | MR 刷新的 `idle / refreshing / failed` 状态、时间、当前 Project 和错误 |
-| `publicationBusy` | 布尔值 | 是否已有全局评论发布批次 |
-| `publicationProjectId` | 字符串，可选 | 当前发布批次所属 Project |
+| `publicationBusy` | 布尔值 | 是否已有一条评论正在全局发送 |
+| `publicationProjectId` | 字符串，可选 | 当前评论发送所属 Project |
 | `fatalError` | 错误对象或 `null` | 日志等致命运行错误 |
 | `projects` | 数组 | 按登记顺序返回的 Project、最近成功 MR 快照、状态、阶段和队列位置 |
 | `currentLogUrl` | 字符串 | 当前会话日志读取地址，固定为 `/api/logs/current` |
@@ -49,7 +49,8 @@ ReviewX Web API 是本机单实例网页与 Node.js 服务之间的内部接口�
 | `POST /api/mrs/refresh` | `{}` | `AppStateView` | 按登记顺序手动调用 CodeHub，逐 Project 更新完整 open MR 快照 |
 | `POST /api/reviews` | `{ "projectId": "101", "mrIid": "7" }` | `202` 与 `AppStateView` | 创建独立 attempt 并加入全局 FIFO |
 | `POST /api/attempts/{attemptId}/stop` | `{}` | `AppStateView` | 停止排队或执行中的检视 attempt |
-| `POST /api/attempts/{attemptId}/publish` | `{ "ordinals": [1, 3] }` | `AppStateView` | 按 Finding 原顺序发布本批选中项；序号必须为正整数且至少一个 |
+| `POST /api/attempts/{attemptId}/findings/{ordinal}/publish` | `{}` | `AppStateView` | 发送一条最新 attempt 的 pending Finding；内部兼容批次固定只记录该 ordinal |
+| `PATCH /api/attempts/{attemptId}/findings/{ordinal}` | `{ "decision": "dismissed" }` 或 `{ "decision": "pending" }` | `AppStateView` | 将 pending Finding 标为不发送，或撤销最新 attempt 中的 dismissed 决策 |
 | `GET /api/mrs/{projectId}/{mrIid}` | 无 | `MrDetailView` | 读取 Project 登记状态、MR 快照和按新到旧排列的 attempt 历史 |
 | `GET /api/reports/{attemptId}` | 无 | `text/markdown; charset=utf-8` | 读取该成功 attempt 引用的不可变报告 |
 | `GET /api/logs/current` | 无 | `text/plain; charset=utf-8` | 读取当前服务会话日志 |
@@ -59,7 +60,7 @@ ReviewX Web API 是本机单实例网页与 Node.js 服务之间的内部接口�
 `MrDetailView` 包含：
 
 - `project`：`id`、显示名称 `name` 和当前是否登记的 `registered`。
-- `mergeRequest`：Project ID、IID、标题、CodeHub 原始状态、`updatedAt`、源分支和目标分支。
+- `mergeRequest`：Project ID、IID、标题、CodeHub 原始状态、`updatedAt`、源分支、目标分支和可选 `webUrl`。旧 v1 状态可无该字段；下一次成功刷新后补齐。
 - `attempts`：完整 attempt 历史；报告路径只以受控 `reportUrl` 暴露，不返回磁盘路径。
 
 MR 列表项除 MR 快照外，还会包含页面状态 `status`、可选执行阶段 `phase`、可选队列位置 `queuePosition`、最近 attempt 引用、主操作 `primaryAction` 和已脱敏错误。
@@ -69,3 +70,5 @@ MR 列表项除 MR 快照外，还会包含页面状态 `status`、可选执行�
 ## CodeHub 状态约定
 
 ReviewX 调用 MR 列表时固定传递 `--state open`，这是 CodeHub CLI 的筛选参数。`codehub mr view` JSON 返回值使用独立的数据词汇：`state` 为 `open` 或 `opened` 时均视为开放状态，比较时忽略首尾空白和大小写。其他状态不会被推断或纠正，并在 Git、OpenCode 启动前终止当前刷新或 attempt。
+
+每次新的 `mr view` 响应还必须包含 `web_url`，且值必须是无用户名、密码的 HTTPS URL。缺失或非法值以 `CODEHUB_INVALID_RESPONSE` 终止本次刷新，并提示升级兼容的 CodeHub CLI；既有旧状态仍可启动和读取。

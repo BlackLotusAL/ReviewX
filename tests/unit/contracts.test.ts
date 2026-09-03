@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { isOpenMrState, normalizeCommentBody, projectNameFromCloneUrl } from "@/src/server/codehub";
 import { extractOpenCodeFinalBody, parseReviewerBody } from "@/src/server/opencode";
-import { reviewerResultSchema } from "@/src/server/schemas";
+import { codeHubMrSchema, reviewerResultSchema } from "@/src/server/schemas";
 import { safeMarkdownUrl } from "@/src/shared/markdown";
 import { assertSameOrigin, jsonBody } from "@/src/server/http";
 
@@ -21,6 +21,22 @@ describe("PRD boundary contracts", () => {
   test("CodeHub open-state aliases are accepted without accepting terminal states", () => {
     for (const state of ["open", "opened", "OPEN", " Opened "]) expect(isOpenMrState(state)).toBe(true);
     for (const state of ["closed", "merged", "locked", "reopened", ""]) expect(isOpenMrState(state)).toBe(false);
+  });
+
+  test("CodeHub MR web_url must be credential-free HTTPS", () => {
+    const mr = {
+      iid: "7",
+      state: "opened",
+      source_branch: "feature",
+      target_branch: "main",
+      updated_at: "2026-09-02T00:00:00Z",
+      web_url: "https://codehub.example/team/repo/merge_requests/7",
+    };
+    expect(codeHubMrSchema.parse(mr).web_url).toBe(mr.web_url);
+    expect(codeHubMrSchema.safeParse({ ...mr, web_url: undefined }).success).toBe(false);
+    expect(codeHubMrSchema.safeParse({ ...mr, web_url: "not a URL" }).success).toBe(false);
+    expect(codeHubMrSchema.safeParse({ ...mr, web_url: "http://codehub.example/mr/7" }).success).toBe(false);
+    expect(codeHubMrSchema.safeParse({ ...mr, web_url: "https://token@codehub.example/mr/7" }).success).toBe(false);
   });
 
   test("OpenCode accepts one final JSON body and rejects prose or any invalid finding", () => {
