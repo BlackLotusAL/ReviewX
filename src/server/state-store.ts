@@ -12,7 +12,9 @@ import {
 } from "@/src/shared/types";
 import { AppError } from "./errors";
 import { withFileLock } from "./file-lock";
+import { settleFindingDecisions } from "./finding-state";
 import type { DataPaths } from "./paths";
+import { credentialFreeHttpsUrlSchema } from "./schemas";
 
 const positiveId = z.string().regex(/^[1-9]\d*$/u);
 const errorSchema = z.strictObject({
@@ -43,6 +45,7 @@ const mrSchema = z.strictObject({
   updatedAt: z.string().min(1),
   sourceBranch: z.string().min(1),
   targetBranch: z.string().min(1),
+  webUrl: credentialFreeHttpsUrlSchema.optional(),
 });
 const snapshotSchema = z.strictObject({
   refreshedAt: z.string().min(1),
@@ -55,6 +58,7 @@ const findingSchema = z.strictObject({
   status: z.enum(findingStatusValues),
   batchId: z.string().min(1).optional(),
   publishedAt: z.string().min(1).optional(),
+  dismissedAt: z.string().min(1).optional(),
   commentId: z.string().min(1).optional(),
   error: errorSchema.optional(),
 });
@@ -187,10 +191,9 @@ function recoverInterrupted(state: PersistentState, now: string): boolean {
         batch.completedAt = now;
         batch.error = recoveryError("PUBLISH_INTERRUPTED", "发布批次在完成前中断。");
       }
-      attempt.status = "publish_failed";
       attempt.phase = undefined;
-      attempt.completedAt = now;
       attempt.error = recoveryError("PUBLISH_INTERRUPTED", "发布批次在完成前中断。");
+      settleFindingDecisions(attempt, now);
       changed = true;
     }
   }

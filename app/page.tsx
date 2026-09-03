@@ -12,6 +12,7 @@ import type {
   FindingStatus,
   MrDetailView,
   MrRowView,
+  MergeRequestSnapshot,
   ReviewPhase,
   SafeErrorView,
   Severity,
@@ -25,8 +26,8 @@ const statusLabels: Record<"unreviewed" | AttemptStatus, string> = {
   stopping: "停止中",
   stopped: "已停止",
   review_failed: "检视失败",
-  awaiting_confirmation: "待确认",
-  publishing: "发布中",
+  awaiting_confirmation: "待处理",
+  publishing: "发送中",
   completed: "已完成",
   publish_failed: "发布失败",
   archived: "已归档",
@@ -43,9 +44,10 @@ const phaseLabels: Record<ReviewPhase, string> = {
 };
 
 const findingLabels: Record<FindingStatus, string> = {
-  pending: "待发布",
-  published: "已发布",
-  failed: "发布失败",
+  pending: "待处理",
+  published: "已发送",
+  dismissed: "已跳过",
+  failed: "发送失败",
   unknown: "结果未知",
   not_attempted: "未执行",
   archived: "已归档",
@@ -130,18 +132,35 @@ function formatDate(value?: string): string {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function MrWebLink({ mr, className = "iid" }: { mr: MergeRequestSnapshot; className?: string }) {
+  if (!mr.webUrl) return <span className={className}>!{mr.iid}</span>;
+  return (
+    <a
+      className={`${className} mr-web-link`}
+      href={mr.webUrl}
+      target="_blank"
+      rel="noreferrer noopener"
+      aria-label={`在 CodeHub 打开 MR !${mr.iid}`}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >!{mr.iid} ↗</a>
+  );
+}
+
 export default function Home() {
   const [state, setState] = useState<AppStateView | null>(null);
   const [projectId, setProjectId] = useState("");
   const [selected, setSelected] = useState<{ projectId: string; mrIid: string } | null>(null);
   const [detail, setDetail] = useState<MrDetailView | null>(null);
   const [openAttemptId, setOpenAttemptId] = useState<string | null>(null);
-  const [selectionsByAttempt, setSelectionsByAttempt] = useState<Record<string, number[]>>({});
   const [reports, setReports] = useState<Record<string, string>>({});
+  const [reportErrors, setReportErrors] = useState<Record<string, SafeErrorView>>({});
+  const [reportLoading, setReportLoading] = useState<Record<string, boolean>>({});
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<SafeErrorView | null>(null);
   const stateRevision = useRef(-1);
   const detailRequest = useRef(0);
+  const reportRequests = useRef(new Set<string>());
 
   const loadDetail = useCallback(async (target: { projectId: string; mrIid: string }) => {
     const requestId = ++detailRequest.current;
@@ -176,7 +195,7 @@ export default function Home() {
     return () => { stopped = true; window.clearInterval(timer); };
   }, [refreshState]);
 
-  const mutate = useCallback(async (key: string, url: string, method: "POST" | "DELETE", body: unknown) => {
+  const mutate = useCallback(async (key: string, url: string, method: "POST" | "PATCH" | "DELETE", body: unknown) => {
     setPending(key);
     setError(null);
     try {
@@ -227,8 +246,14 @@ export default function Home() {
   };
 
   const loadReport = async (attempt: AttemptView) => {
-    if (!attempt.reportUrl || reports[attempt.id] !== undefined) return;
-    setPending(`report-${attempt.id}`);
+    if (!attempt.reportUrl || reports[attempt.id] !== undefined || reportRequests.current.has(attempt.id)) return;
+    reportRequests.current.add(attempt.id);
+    setReportLoading((current) => ({ ...current, [attempt.id]: true }));
+    setReportErrors((current) => {
+      const next = { ...current };
+      delete next[attempt.id];
+      return next;
+    });
     try {
       const response = await fetch(attempt.reportUrl, { cache: "no-store" });
       if (!response.ok) {
@@ -238,25 +263,15 @@ export default function Home() {
       const markdown = await response.text();
       setReports((current) => ({ ...current, [attempt.id]: markdown }));
     } catch (reason) {
-      setError(diagnosticText(reason));
+      setReportErrors((current) => ({ ...current, [attempt.id]: diagnosticText(reason) }));
     } finally {
-      setPending(null);
+      reportRequests.current.delete(attempt.id);
+      setReportLoading((current) => ({ ...current, [attempt.id]: false }));
     }
   };
 
   const latestAttempt = detail?.attempts[0];
   const activeAttempt = useMemo(() => detail?.attempts.find((attempt) => attempt.id === openAttemptId) ?? latestAttempt, [detail, latestAttempt, openAttemptId]);
-  const selectedOrdinals = latestAttempt
-    ? (selectionsByAttempt[latestAttempt.id] ?? []).filter((ordinal) => latestAttempt.findings.some((finding) => finding.ordinal === ordinal && finding.status === "pending"))
-    : [];
-  const setSelectedOrdinals = useCallback((update: (current: number[]) => number[]) => {
-    if (!latestAttempt) return;
-    setSelectionsByAttempt((current) => ({
-      ...current,
-      [latestAttempt.id]: update(current[latestAttempt.id] ?? []),
-    }));
-  }, [latestAttempt]);
-  const selectable = latestAttempt?.status === "awaiting_confirmation" && !state?.publicationBusy;
 
   return (
     <main className={`app-shell ${selected ? "drawer-open" : ""}`}>
@@ -317,7 +332,7 @@ export default function Home() {
                   onClick={() => void chooseMr(project.id, mr.iid)}
                   onKeyDown={(event) => { if (event.key === "Enter") void chooseMr(project.id, mr.iid); }}
                 >
-                  <div className="mr-main"><span className="iid">!{mr.iid}</span><div><h4>{mr.title}</h4><p>更新于 {formatDate(mr.updatedAt)}</p></div></div>
+                  <div className="mr-main"><MrWebLink mr={mr} /><div><h4>{mr.title}</h4><p>更新于 {formatDate(mr.updatedAt)}</p></div></div>
                   <div className="mr-state">
                     <span className={`status status-${mr.status}`}>{statusLabels[mr.status]}</span>
                     {mr.queuePosition && <span className="queue-position">队列第 {mr.queuePosition} 位</span>}
@@ -336,7 +351,7 @@ export default function Home() {
       {selected && (
         <aside className="detail-drawer" aria-label="MR 详情抽屉">
           <header className="drawer-header">
-            <div><p className="eyebrow">MR DETAIL</p><h2>{detail?.mergeRequest.title ?? "读取中…"}</h2>{detail && <p>{detail.project.name} · !{detail.mergeRequest.iid}</p>}</div>
+            <div><p className="eyebrow">MR DETAIL</p><h2>{detail?.mergeRequest.title ?? "读取中…"}</h2>{detail && <p className="drawer-mr-meta"><span>{detail.project.name} · </span><MrWebLink mr={detail.mergeRequest} className="drawer-mr-link" /></p>}</div>
             <button className="close" aria-label="关闭详情" onClick={() => { detailRequest.current += 1; setSelected(null); setDetail(null); }}>×</button>
           </header>
           {!detail && <div className="loading">正在读取 attempt 历史…</div>}
@@ -362,47 +377,63 @@ export default function Home() {
                   </div>
                   {activeAttempt.error && <Diagnostic error={activeAttempt.error} />}
                   {activeAttempt.reportUrl && (
-                    <section className="report-section">
-                      <div className="section-heading"><h3>完整报告</h3><button className="ghost" disabled={pending !== null} onClick={() => void loadReport(activeAttempt)}>{reports[activeAttempt.id] === undefined ? "加载报告" : "已加载"}</button></div>
+                    <details
+                      key={activeAttempt.id}
+                      className="report-section"
+                      onToggle={(event) => { if (event.currentTarget.open) void loadReport(activeAttempt); }}
+                    >
+                      <summary>
+                        <span>完整报告</span>
+                        {reportLoading[activeAttempt.id] && <small>加载中…</small>}
+                        {!reportLoading[activeAttempt.id] && reports[activeAttempt.id] !== undefined && <small>已加载</small>}
+                      </summary>
+                      {reportLoading[activeAttempt.id] && <p className="report-loading">正在加载完整报告…</p>}
+                      {reportErrors[activeAttempt.id] && <Diagnostic error={reportErrors[activeAttempt.id]} compact />}
                       {reports[activeAttempt.id] !== undefined && <Markdown className="markdown report-preview">{reports[activeAttempt.id]}</Markdown>}
-                    </section>
+                    </details>
                   )}
                   {activeAttempt.findings.length > 0 && (
                     <section className="findings-section">
-                      <div className="section-heading"><div><h3>Findings</h3><p>默认不选择，正文不可编辑。</p></div></div>
+                      <div className="section-heading"><div><h3>Findings</h3><p>逐条处理，正文不可编辑。</p></div></div>
                       {activeAttempt.findings.map((finding) => {
-                        const canSelect = selectable && activeAttempt.id === latestAttempt?.id && finding.status === "pending";
-                        const checked = selectedOrdinals.includes(finding.ordinal);
+                        const isLatest = activeAttempt.id === latestAttempt?.id;
+                        const isSending = pending === `publish-${activeAttempt.id}-${finding.ordinal}`;
+                        const decisionsEnabled = isLatest && pending === null && !state?.publicationBusy;
+                        const findingUrl = `/api/attempts/${encodeURIComponent(activeAttempt.id)}/findings/${finding.ordinal}`;
                         return (
-                          <article className="finding-card" key={finding.ordinal}>
+                          <article className={`finding-card ${finding.status === "dismissed" ? "finding-card-dismissed" : ""}`} key={finding.ordinal}>
                             <header>
-                              <label className={canSelect ? "selectable" : ""}>
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  disabled={!canSelect}
-                                  onChange={(event) => setSelectedOrdinals((current) => event.target.checked
-                                    ? [...current, finding.ordinal].sort((a, b) => a - b)
-                                    : current.filter((value) => value !== finding.ordinal))}
-                                />
-                                <span>{severityLabels[finding.severity]}</span>
-                              </label>
-                              <span className={`finding-status finding-${finding.status}`}>{findingLabels[finding.status]}</span>
+                              <span className="finding-severity">{severityLabels[finding.severity]}</span>
+                              <span className={`finding-status finding-${finding.status}`}>{isSending ? "发送中…" : findingLabels[finding.status]}</span>
                             </header>
                             <Markdown>{finding.body}</Markdown>
                             {finding.error && <Diagnostic error={finding.error} compact />}
+                            {isLatest && finding.status === "pending" && (
+                              <footer className="finding-actions">
+                                <button
+                                  className="ghost"
+                                  disabled={!decisionsEnabled}
+                                  onClick={() => void mutate(`dismiss-${activeAttempt.id}-${finding.ordinal}`, findingUrl, "PATCH", { decision: "dismissed" })}
+                                >不发送</button>
+                                <button
+                                  disabled={!decisionsEnabled}
+                                  onClick={() => void mutate(`publish-${activeAttempt.id}-${finding.ordinal}`, `${findingUrl}/publish`, "POST", {})}
+                                >{isSending ? "发送中…" : "发送到 CodeHub"}</button>
+                              </footer>
+                            )}
+                            {isLatest && finding.status === "dismissed" && (
+                              <footer className="finding-actions finding-actions-dismissed">
+                                <span>已跳过</span>
+                                <button
+                                  className="ghost"
+                                  disabled={!decisionsEnabled}
+                                  onClick={() => void mutate(`restore-${activeAttempt.id}-${finding.ordinal}`, findingUrl, "PATCH", { decision: "pending" })}
+                                >撤销</button>
+                              </footer>
+                            )}
                           </article>
                         );
                       })}
-                      {activeAttempt.id === latestAttempt?.id && (
-                        <div className="publish-bar">
-                          <span>已选择 {selectedOrdinals.length} 项</span>
-                          <button
-                            disabled={!selectable || selectedOrdinals.length === 0 || pending !== null}
-                            onClick={() => void mutate(`publish-${activeAttempt.id}`, `/api/attempts/${encodeURIComponent(activeAttempt.id)}/publish`, "POST", { ordinals: selectedOrdinals })}
-                          >发布选中意见</button>
-                        </div>
-                      )}
                     </section>
                   )}
                 </section>
