@@ -106,6 +106,16 @@ try {
   if (parsed.hostname !== "127.0.0.1" || parsed.port === "3210" || !parsed.port) throw new Error(`Unexpected service address ${first.url}.`);
   const page = await fetch(first.url);
   if (!page.ok || !(await page.text()).includes("ReviewX")) throw new Error("Installed ReviewX page did not load.");
+  if (!page.headers.get("content-security-policy")?.includes("font-src 'self'")) throw new Error("Local-only font policy was not preserved.");
+  for (const filename of ["inter-variable.woff2", "geist-mono-variable.woff2"]) {
+    const response = await fetch(`${first.url}/fonts/${filename}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!response.ok || bytes.subarray(0, 4).toString() !== "wOF2") throw new Error(`Packaged font ${filename} did not load as WOFF2.`);
+  }
+  for (const filename of ["Inter-LICENSE.txt", "Geist-OFL.txt"]) {
+    const license = await readFile(path.join(packageRoot, "public", "fonts", filename), "utf8");
+    if (!license.includes("SIL OPEN FONT LICENSE")) throw new Error(`Font license ${filename} was not packaged.`);
+  }
   const lock = JSON.parse(await readFile(path.join(localAppData, "ReviewX", "instance.lock"), "utf8")) as { url?: string };
   if (lock.url !== first.url) throw new Error("Instance lock did not store the advertised URL.");
 

@@ -1,98 +1,34 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeSanitize from "rehype-sanitize";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
-import type {
-  AppStateView,
-  AttemptStatus,
-  AttemptView,
-  FindingStatus,
-  MrDetailView,
-  MrRowView,
-  MergeRequestSnapshot,
-  ReviewPhase,
-  SafeErrorView,
-  Severity,
-} from "@/src/shared/types";
-import { safeMarkdownUrl } from "@/src/shared/markdown";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import type { AppStateView, AttemptStatus, AttemptView, FindingStatus, MrDetailView, MrRowView, MergeRequestSnapshot, ReviewPhase, SafeErrorView, Severity } from "@/src/shared/types";
+import { Button, DetailDialog, Diagnostic, Icon, Skeleton, StatusBadge } from "./components/ui";
+import { Markdown } from "./components/markdown";
 
 const statusLabels: Record<"unreviewed" | AttemptStatus, string> = {
-  unreviewed: "未检视",
-  queued: "排队中",
-  reviewing: "检视中",
-  stopping: "停止中",
-  stopped: "已停止",
-  review_failed: "检视未完成",
-  awaiting_confirmation: "待处理",
-  publishing: "发送中",
-  completed: "已完成",
-  publish_failed: "发布失败",
-  archived: "已归档",
+  unreviewed: "未检视", queued: "排队中", reviewing: "检视中", stopping: "停止中", stopped: "已停止",
+  review_failed: "检视未完成", awaiting_confirmation: "待处理", publishing: "发送中", completed: "已完成", publish_failed: "发布失败", archived: "已归档",
 };
-
 const phaseLabels: Record<ReviewPhase, string> = {
-  queued: "等待前序任务",
-  loading_mr: "读取 MR 详情",
-  preparing_git: "准备 Git 代码",
-  verifying_mr: "再次校验 MR",
-  running_opencode: "运行 OpenCode",
-  understanding_changes: "理解改动",
-  verifying_findings: "核实问题",
-  finalizing_review: "整理结果",
-  saving_report: "保存报告",
-  cleaning_up: "清理临时目录",
+  queued: "等待前序任务", loading_mr: "读取 MR 详情", preparing_git: "准备 Git 代码", verifying_mr: "再次校验 MR", running_opencode: "运行 OpenCode",
+  understanding_changes: "理解改动", verifying_findings: "核实问题", finalizing_review: "整理结果", saving_report: "保存报告", cleaning_up: "清理临时目录",
 };
-
 const findingLabels: Record<FindingStatus, string> = {
-  pending: "待处理",
-  published: "已发送",
-  dismissed: "已跳过",
-  failed: "发送失败",
-  unknown: "结果未知",
-  not_attempted: "未执行",
-  archived: "已归档",
+  pending: "待处理", published: "已发送", dismissed: "已跳过", failed: "发送失败", unknown: "结果未知", not_attempted: "未执行", archived: "已归档",
 };
+const severityLabels: Record<Severity, string> = { fatal: "Fatal", major: "Major", minor: "Minor", suggestion: "Suggestion" };
 
-const severityLabels: Record<Severity, string> = {
-  fatal: "🔴 Fatal",
-  major: "🟠 Major",
-  minor: "🟡 Minor",
-  suggestion: "🟢 Suggestion",
-};
-
-const markdownElements = [
-  "p", "br", "strong", "em", "del", "blockquote", "ul", "ol", "li", "pre", "code",
-  "h1", "h2", "h3", "h4", "h5", "h6", "a", "img", "hr", "table", "thead", "tbody", "tr", "th", "td",
-];
-
-function Markdown({ children, className = "markdown" }: { children: string; className?: string }) {
-  return (
-    <div className={className}>
-      <ReactMarkdown
-        skipHtml
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeSanitize]}
-        allowedElements={markdownElements}
-        urlTransform={(url) => safeMarkdownUrl(url)}
-        components={{
-          a: ({ href, children: contents }) => href
-            ? <a href={href} target="_blank" rel="noreferrer noopener">{contents}</a>
-            : <span className="blocked-resource">[链接已拦截] {contents}</span>,
-          img: ({ src, alt }) => typeof src === "string" && src
-            ? <a className="image-link" href={src} target="_blank" rel="noreferrer noopener">[图片链接] {alt || src}</a>
-            : <span className="blocked-resource">[图片已拦截] {alt}</span>,
-        }}
-      >
-        {children}
-      </ReactMarkdown>
-    </div>
-  );
+function statusTone(status: string): "neutral" | "active" | "success" | "error" {
+  if (["review_failed", "publish_failed", "failed", "unknown", "not_attempted"].includes(status)) return "error";
+  if (["completed", "published"].includes(status)) return "success";
+  if (["reviewing", "publishing", "awaiting_confirmation", "pending"].includes(status)) return "active";
+  return "neutral";
 }
+function isBusy(status: string) { return ["reviewing", "publishing", "stopping"].includes(status); }
 
 interface ApiFailure { error?: SafeErrorView }
+interface Selection { projectId: string; mrIid: string; title: string; trigger: HTMLElement }
+interface ActionError { key: string; scope: "project" | "page" | "finding"; error: SafeErrorView }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
@@ -100,173 +36,220 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   if (!response.ok) throw body.error ?? new Error(`HTTP ${response.status}`);
   return body;
 }
-
 function diagnosticText(error: unknown): SafeErrorView {
   if (error && typeof error === "object" && "code" in error && "message" in error) return error as SafeErrorView;
   return {
-    code: "CLIENT_ERROR",
-    message: error instanceof Error ? error.message : String(error),
-    cause: "网页请求未成功完成。",
-    impact: "当前操作未确认。",
-    nextStep: "查看当前会话日志并重试。",
-    technicalDetails: error instanceof Error ? error.message : String(error),
+    code: "CLIENT_ERROR", message: error instanceof Error ? error.message : String(error), cause: "网页请求未成功完成。",
+    impact: "当前操作未确认。", nextStep: "查看当前会话日志并核对操作结果。", technicalDetails: error instanceof Error ? error.message : String(error),
   };
 }
-
-function Diagnostic({ error, compact = false }: { error: SafeErrorView; compact?: boolean }) {
-  return (
-    <section className={`diagnostic ${compact ? "compact" : ""}`} aria-label="错误诊断">
-      <strong>{error.message}</strong>
-      <dl>
-        <div><dt>Cause</dt><dd>{error.cause}</dd></div>
-        <div><dt>Impact</dt><dd>{error.impact}</dd></div>
-        <div><dt>Next step</dt><dd>{error.nextStep}</dd></div>
-        {!compact && <div><dt>Technical details</dt><dd>{error.technicalDetails}</dd></div>}
-      </dl>
-      {!compact && error.stderr && <pre>{error.stderr}</pre>}
-      {!compact && error.stack && <details><summary>Stack</summary><pre>{error.stack}</pre></details>}
-    </section>
-  );
-}
-
 function formatDate(value?: string): string {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
-
 function MrWebLink({ mr, className = "iid" }: { mr: MergeRequestSnapshot; className?: string }) {
   if (!mr.webUrl) return <span className={className}>!{mr.iid}</span>;
-  return (
-    <a
-      className={`${className} mr-web-link`}
-      href={mr.webUrl}
-      target="_blank"
-      rel="noreferrer noopener"
-      aria-label={`在 CodeHub 打开 MR !${mr.iid}`}
-      onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
-    >!{mr.iid} ↗</a>
-  );
+  return <a className={`${className} mr-web-link`} href={mr.webUrl} target="_blank" rel="noreferrer noopener" aria-label={`在 CodeHub 打开 MR !${mr.iid}`}>!{mr.iid}<Icon name="external" /></a>;
 }
 
 export default function Home() {
   const [state, setState] = useState<AppStateView | null>(null);
   const [projectId, setProjectId] = useState("");
-  const [selected, setSelected] = useState<{ projectId: string; mrIid: string } | null>(null);
+  const [selected, setSelected] = useState<Selection | null>(null);
   const [detail, setDetail] = useState<MrDetailView | null>(null);
   const [openAttemptId, setOpenAttemptId] = useState<string | null>(null);
   const [reports, setReports] = useState<Record<string, string>>({});
   const [reportErrors, setReportErrors] = useState<Record<string, SafeErrorView>>({});
   const [reportLoading, setReportLoading] = useState<Record<string, boolean>>({});
   const [pending, setPending] = useState<string | null>(null);
-  const [error, setError] = useState<SafeErrorView | null>(null);
+  const [actionError, setActionError] = useState<ActionError | null>(null);
+  const [pollError, setPollError] = useState<SafeErrorView | null>(null);
+  const [detailError, setDetailError] = useState<SafeErrorView | null>(null);
+  const [announcement, setAnnouncement] = useState({ id: 0, text: "" });
+  const [projectFeedback, setProjectFeedback] = useState("");
+  const selectedRef = useRef<Selection | null>(null);
   const stateRevision = useRef(-1);
   const detailRequest = useRef(0);
+  const pendingRef = useRef<string | null>(null);
+  const mounted = useRef(false);
+  const pollInFlight = useRef<Promise<void> | null>(null);
   const reportRequests = useRef(new Set<string>());
+  const mrTransitions = useRef(new Map<string, string>());
+  const findingTransitions = useRef(new Map<string, FindingStatus>());
+  const lastPollError = useRef("");
+  const lastDetailError = useRef("");
 
-  const loadDetail = useCallback(async (target: { projectId: string; mrIid: string }) => {
-    const requestId = ++detailRequest.current;
-    const next = await requestJson<MrDetailView>(`/api/mrs/${encodeURIComponent(target.projectId)}/${encodeURIComponent(target.mrIid)}`);
-    if (requestId !== detailRequest.current) return;
-    setDetail(next);
-    setOpenAttemptId((current) => current && next.attempts.some((attempt) => attempt.id === current) ? current : next.attempts[0]?.id ?? null);
+  const announce = useCallback((text: string) => {
+    setAnnouncement((current) => ({ id: current.id + 1, text }));
   }, []);
 
-  const refreshState = useCallback(async () => {
-    const next = await requestJson<AppStateView>("/api/state");
-    const previousRevision = stateRevision.current;
-    if (next.revision < previousRevision) return;
+  const acceptState = useCallback((next: AppStateView) => {
+    if (!mounted.current || next.revision < stateRevision.current) return false;
+    const changed = next.revision !== stateRevision.current;
+    stateRevision.current = next.revision;
     setState(next);
-    if (next.revision !== previousRevision) {
-      stateRevision.current = next.revision;
-      if (selected) await loadDetail(selected).catch((reason) => setError(diagnosticText(reason)));
+    if (changed) {
+      const transitions = new Map<string, string>();
+      const messages: string[] = [];
+      for (const project of next.projects) for (const mr of project.mergeRequests) {
+        const key = `${project.id}/${mr.iid}`;
+        const value = `${mr.latestAttemptId}/${mr.status}/${mr.phase}/${mr.queuePosition}`;
+        transitions.set(key, value);
+        if (mrTransitions.current.has(key) && mrTransitions.current.get(key) !== value) {
+          messages.push(`MR !${mr.iid} ${statusLabels[mr.status]}${mr.phase && isBusy(mr.status) ? `，${phaseLabels[mr.phase]}` : ""}`);
+        }
+      }
+      mrTransitions.current = transitions;
+      if (messages.length) announce(messages.join("；"));
     }
-  }, [loadDetail, selected]);
+    return changed;
+  }, [announce]);
+
+  const loadDetail = useCallback(async (target: Selection) => {
+    if (selectedRef.current !== target) return;
+    const requestId = ++detailRequest.current;
+    try {
+      const next = await requestJson<MrDetailView>(`/api/mrs/${encodeURIComponent(target.projectId)}/${encodeURIComponent(target.mrIid)}`);
+      if (!mounted.current || requestId !== detailRequest.current || selectedRef.current !== target) return;
+      setDetail(next);
+      setDetailError(null);
+      lastDetailError.current = "";
+      setOpenAttemptId((current) => current && next.attempts.some((attempt) => attempt.id === current) ? current : next.attempts[0]?.id ?? null);
+      const messages: string[] = [];
+      for (const attempt of next.attempts) for (const finding of attempt.findings) {
+        const key = `${attempt.id}/${finding.ordinal}`;
+        const previous = findingTransitions.current.get(key);
+        if (previous !== undefined && previous !== finding.status) messages.push(`问题 ${finding.ordinal} ${findingLabels[finding.status]}`);
+        findingTransitions.current.set(key, finding.status);
+      }
+      if (messages.length) announce(messages.join("；"));
+    } catch (reason) {
+      if (!mounted.current || requestId !== detailRequest.current || selectedRef.current !== target) return;
+      const failure = diagnosticText(reason);
+      setDetailError(failure);
+      const identity = `${target.projectId}/${target.mrIid}/${failure.code}/${failure.message}`;
+      if (lastDetailError.current !== identity) announce(failure.message);
+      lastDetailError.current = identity;
+    }
+  }, [announce]);
+
+  const refreshState = useCallback((): Promise<void> => {
+    if (pollInFlight.current) return pollInFlight.current;
+    const operation = (async () => {
+      try {
+        const next = await requestJson<AppStateView>("/api/state");
+        if (!mounted.current) return;
+        const changed = acceptState(next);
+        setPollError(null);
+        lastPollError.current = "";
+        if (changed && selectedRef.current) await loadDetail(selectedRef.current);
+      } catch (reason) {
+        if (!mounted.current) return;
+        const failure = diagnosticText(reason);
+        setPollError(failure);
+        const identity = `${failure.code}/${failure.message}`;
+        if (lastPollError.current !== identity) announce(failure.message);
+        lastPollError.current = identity;
+      }
+    })();
+    pollInFlight.current = operation;
+    void operation.finally(() => { pollInFlight.current = null; });
+    return operation;
+  }, [acceptState, announce, loadDetail]);
 
   useEffect(() => {
-    let stopped = false;
-    let inFlight = false;
-    const poll = async () => {
-      if (stopped || inFlight) return;
-      inFlight = true;
-      try { await refreshState(); } catch (reason) { if (!stopped) setError(diagnosticText(reason)); }
-      finally { inFlight = false; }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 1000);
-    return () => { stopped = true; window.clearInterval(timer); };
+    mounted.current = true;
+    void refreshState();
+    const timer = window.setInterval(() => void refreshState(), 1000);
+    return () => { mounted.current = false; window.clearInterval(timer); };
   }, [refreshState]);
 
-  const mutate = useCallback(async (key: string, url: string, method: "POST" | "PATCH" | "DELETE", body: unknown) => {
+  const mutate = useCallback(async (key: string, url: string, method: "POST" | "PATCH" | "DELETE", body: unknown, scope: ActionError["scope"] = "page") => {
+    if (pendingRef.current) return false;
+    pendingRef.current = key;
     setPending(key);
-    setError(null);
+    setActionError(null);
     try {
-      const next = await requestJson<AppStateView>(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      setState((current) => current && current.revision > next.revision ? current : next);
-      stateRevision.current = Math.max(stateRevision.current, next.revision);
-      if (selected) await loadDetail(selected).catch(() => undefined);
+      const next = await requestJson<AppStateView>(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      acceptState(next);
+      if (selectedRef.current) await loadDetail(selectedRef.current);
+      return true;
     } catch (reason) {
-      setError(diagnosticText(reason));
-      await refreshState().catch(() => undefined);
-      if (selected) await loadDetail(selected).catch(() => undefined);
+      const failure = diagnosticText(reason);
+      setActionError({ key, scope, error: failure });
+      announce(failure.message);
+      await refreshState();
+      if (selectedRef.current) await loadDetail(selectedRef.current);
+      return false;
     } finally {
+      pendingRef.current = null;
       setPending(null);
     }
-  }, [loadDetail, refreshState, selected]);
+  }, [acceptState, announce, loadDetail, refreshState]);
 
   const addProject = async (event: FormEvent) => {
     event.preventDefault();
+    setProjectFeedback("");
     if (!/^[1-9]\d*$/u.test(projectId)) {
-      setError(diagnosticText(new Error("Project ID 必须是正整数。")));
+      const failure = diagnosticText(new Error("Project ID 必须是正整数。"));
+      setActionError({ key: "add-project", scope: "project", error: failure });
+      announce(failure.message);
       return;
     }
-    await mutate("add-project", "/api/projects", "POST", { projectId });
-    setProjectId("");
+    if (await mutate("add-project", "/api/projects", "POST", { projectId }, "project")) {
+      setProjectId("");
+      setProjectFeedback("项目已添加");
+      announce("项目已添加。");
+    }
   };
 
-  const chooseMr = async (project: string, iid: string) => {
-    const target = { projectId: project, mrIid: iid };
+  const chooseMr = (mr: MrRowView, trigger: HTMLElement) => {
+    const target = { projectId: mr.projectId, mrIid: mr.iid, title: mr.title, trigger };
+    selectedRef.current = target;
     setSelected(target);
     setDetail(null);
-    setError(null);
-    try { await loadDetail(target); } catch (reason) { setError(diagnosticText(reason)); }
+    setOpenAttemptId(null);
+    setDetailError(null);
+    if (actionError?.scope === "finding") setActionError(null);
+    void loadDetail(target);
   };
+  const beginClose = useCallback(() => { detailRequest.current += 1; selectedRef.current = null; }, []);
+  const dismissDrawer = useCallback(() => { setSelected(null); setDetail(null); setDetailError(null); }, []);
 
-  const primaryAction = async (event: MouseEvent, mr: MrRowView) => {
-    event.stopPropagation();
+  const primaryAction = async (mr: MrRowView) => {
     if (mr.primaryAction === "stop" && mr.latestAttemptId) {
       await mutate(`stop-${mr.latestAttemptId}`, `/api/attempts/${encodeURIComponent(mr.latestAttemptId)}/stop`, "POST", {});
-      return;
-    }
-    if (mr.primaryAction === "start" || mr.primaryAction === "rereview") {
+    } else if (mr.primaryAction === "start" || mr.primaryAction === "rereview") {
       await mutate(`review-${mr.projectId}-${mr.iid}`, "/api/reviews", "POST", { projectId: mr.projectId, mrIid: mr.iid });
     }
+  };
+
+  const decideFinding = async (trigger: HTMLButtonElement, key: string, url: string, method: "POST" | "PATCH", body: unknown) => {
+    const card = trigger.closest<HTMLElement>(".finding-card");
+    await mutate(key, url, method, body, "finding");
+    // A completed decision removes its button. Keep keyboard focus at that
+    // finding without changing the scroll position or overriding a new focus.
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (!trigger.isConnected && card?.isConnected && (active === document.body || active?.tagName === "DIALOG")) card.focus({ preventScroll: true });
+    });
   };
 
   const loadReport = async (attempt: AttemptView) => {
     if (!attempt.reportUrl || reports[attempt.id] !== undefined || reportRequests.current.has(attempt.id)) return;
     reportRequests.current.add(attempt.id);
     setReportLoading((current) => ({ ...current, [attempt.id]: true }));
-    setReportErrors((current) => {
-      const next = { ...current };
-      delete next[attempt.id];
-      return next;
-    });
+    setReportErrors((current) => { const next = { ...current }; delete next[attempt.id]; return next; });
     try {
       const response = await fetch(attempt.reportUrl, { cache: "no-store" });
-      if (!response.ok) {
-        const failure = await response.json() as ApiFailure;
-        throw failure.error ?? new Error(`HTTP ${response.status}`);
-      }
+      if (!response.ok) { const failure = await response.json() as ApiFailure; throw failure.error ?? new Error(`HTTP ${response.status}`); }
       const markdown = await response.text();
       setReports((current) => ({ ...current, [attempt.id]: markdown }));
     } catch (reason) {
-      setReportErrors((current) => ({ ...current, [attempt.id]: diagnosticText(reason) }));
+      const failure = diagnosticText(reason);
+      setReportErrors((current) => ({ ...current, [attempt.id]: failure }));
+      if (selectedRef.current?.projectId === attempt.projectId && selectedRef.current.mrIid === attempt.mrIid) announce(failure.message);
     } finally {
       reportRequests.current.delete(attempt.id);
       setReportLoading((current) => ({ ...current, [attempt.id]: false }));
@@ -275,181 +258,119 @@ export default function Home() {
 
   const latestAttempt = detail?.attempts[0];
   const activeAttempt = useMemo(() => detail?.attempts.find((attempt) => attempt.id === openAttemptId) ?? latestAttempt, [detail, latestAttempt, openAttemptId]);
+  const disabled = pending !== null || Boolean(state?.fatalError);
+  const refreshing = state?.refreshOperation.status === "refreshing" || pending === "refresh";
 
-  return (
-    <main className={`app-shell ${selected ? "drawer-open" : ""}`}>
-      <section className="project-panel" aria-labelledby="project-heading">
-        <div className="brand">
-          <span className="brand-mark">RX</span>
-          <div><h1 id="project-heading">ReviewX</h1><p>本机 CodeHub MR 检视</p></div>
-        </div>
+  return <main className="app-shell">
+    <div className="sr-only" aria-live="polite" aria-atomic="true"><span key={announcement.id}>{announcement.text}</span></div>
+    <section className="project-panel" aria-labelledby="project-heading">
+      <div className="brand"><span className="brand-mark" aria-hidden="true">rx<span /></span><h1 id="project-heading">ReviewX</h1></div>
+      <div className="sidebar-section">
         <form onSubmit={(event) => void addProject(event)} className="project-form">
-          <label htmlFor="project-id">Project ID</label>
-          <div className="input-row">
-            <input id="project-id" inputMode="numeric" pattern="[1-9][0-9]*" value={projectId} onChange={(event) => setProjectId(event.target.value)} placeholder="例如 123" disabled={pending !== null || Boolean(state?.fatalError)} />
-            <button type="submit" disabled={pending !== null || !projectId || Boolean(state?.fatalError)}>添加</button>
-          </div>
+          <label htmlFor="project-id">添加项目 <span className="label-meta">Project ID</span></label>
+          <div className="input-row"><input id="project-id" aria-label="Project ID" inputMode="numeric" pattern="[1-9][0-9]*" value={projectId} onChange={(event) => { setProjectId(event.target.value); setProjectFeedback(""); }} placeholder="例如 123" disabled={disabled} aria-invalid={actionError?.key === "add-project" || undefined} aria-describedby={actionError?.key === "add-project" ? "project-error" : undefined} /><Button type="submit" icon="plus" disabled={disabled || !projectId} busy={pending === "add-project"}>{pending === "add-project" ? "添加中" : "添加"}</Button></div>
         </form>
-        <div className="project-list" aria-label="已登记 Project">
-          {state?.projects.length === 0 && <p className="empty">尚未登记 Project。</p>}
-          {state?.projects.map((project) => (
-            <article className="project-item" key={project.id}>
-              <div><strong>{project.name}</strong><span>Project #{project.id}</span></div>
-              <button
-                className="ghost danger"
-                disabled={pending !== null || project.removing || state.publicationProjectId === project.id}
-                onClick={() => void mutate(`remove-${project.id}`, `/api/projects/${encodeURIComponent(project.id)}`, "DELETE", {})}
-              >{project.removing ? "停止并移除中" : "移除"}</button>
-            </article>
-          ))}
-        </div>
-        <a className="log-link" href="/api/logs/current" target="_blank" rel="noreferrer">查看当前会话日志 ↗</a>
-      </section>
+        {projectFeedback && <p className="inline-feedback">{projectFeedback}</p>}
+        {actionError?.scope === "project" && <div id="project-error"><Diagnostic error={actionError.error} compact /></div>}
+      </div>
+      {(state ? state.projects.length > 0 : !pollError) && <div className="project-list" aria-label="已登记 Project">
+        {!state && !pollError && <Skeleton label="正在读取项目…" compact />}
+        {state?.projects.map((project) => <article className="project-item" key={project.id}>
+          <Icon name="folder" /><div className="project-copy"><strong>{project.name}</strong><span className="mono">#{project.id}</span></div>
+          <Button variant="quiet" className="remove-button" disabled={disabled || project.removing || state.publicationProjectId === project.id} busy={project.removing || pending === `remove-${project.id}`} onClick={async () => {
+            if (await mutate(`remove-${project.id}`, `/api/projects/${encodeURIComponent(project.id)}`, "DELETE", {}, "project")) { setProjectFeedback(""); announce("项目已移除。"); }
+          }}>{project.removing ? "移除中" : "移除"}</Button>
+        </article>)}
+      </div>}
+      <div className="sidebar-footer"><a className="log-link" href={state?.currentLogUrl ?? "/api/logs/current"} target="_blank" rel="noreferrer"><Icon name="document" />查看当前会话日志<Icon name="external" /></a></div>
+    </section>
 
-      <section className="mr-panel" aria-labelledby="mr-heading">
-        <header className="panel-header">
-          <div><p className="eyebrow">OPEN MERGE REQUESTS</p><h2 id="mr-heading">MR 检视队列</h2></div>
-          <button
-            className="refresh-button"
-            disabled={pending !== null || state?.refreshOperation.status === "refreshing" || Boolean(state?.fatalError) || !state?.projects.length}
-            onClick={() => void mutate("refresh", "/api/mrs/refresh", "POST", {})}
-          >{state?.refreshOperation.status === "refreshing" ? "刷新中…" : "刷新 MR"}</button>
-        </header>
+    <section className="mr-panel" aria-labelledby="mr-heading">
+      <header className="panel-header"><h2 id="mr-heading" tabIndex={-1}>MR 检视队列<span className="heading-dot" aria-hidden="true" /></h2><Button variant="secondary" icon="refresh" className="refresh-button" busy={refreshing} disabled={disabled || refreshing || !state?.projects.length} onClick={async () => {
+        if (await mutate("refresh", "/api/mrs/refresh", "POST", {})) announce("MR 刷新请求已完成。");
+      }}>{refreshing ? "刷新中…" : "刷新 MR"}</Button></header>
+      {state?.fatalError && <Diagnostic error={state.fatalError} />}
+      {pollError && <div><Diagnostic error={pollError} /><Button variant="secondary" icon="refresh" onClick={() => void refreshState()}>重新读取状态</Button></div>}
+      {actionError?.scope === "page" && <Diagnostic error={actionError.error} />}
+      {state?.refreshOperation.error && <Diagnostic error={state.refreshOperation.error} compact />}
+      {!state && !pollError && <Skeleton label="正在读取本地状态…" />}
+      {state?.projects.length === 0 && <div className="welcome"><span className="empty-symbol"><Icon name="branch" /></span><h3>暂无项目</h3><Button variant="secondary" icon="arrow" onClick={() => document.getElementById("project-id")?.focus()}>添加项目</Button></div>}
+      {Boolean(state?.projects.length) && <div className="mr-groups">
+        {state?.projects.map((project) => <section className="mr-group" key={project.id}>
+          <div className="group-title"><div><Icon name="folder" /><h3>{project.name}</h3></div><span>最近刷新 <time className="mono">{formatDate(project.refreshedAt)}</time></span></div>
+          {!project.refreshedAt && <div className="empty inset"><Icon name="refresh" /><p>尚未刷新 MR</p></div>}
+          {project.refreshedAt && project.mergeRequests.length === 0 && <div className="empty inset"><Icon name="check" /><p>暂无开放的 MR</p></div>}
+          {project.mergeRequests.map((mr, index) => {
+            const active = selected?.projectId === project.id && selected.mrIid === mr.iid;
+            const actionPending = pending === `review-${mr.projectId}-${mr.iid}` || pending === `stop-${mr.latestAttemptId}`;
+            return <article key={mr.iid} className={`mr-card ${index < 6 ? "has-entry" : ""} ${active ? "selected" : ""}`} style={{ "--entry-delay": `${Math.min(index, 5) * 40}ms` } as CSSProperties}>
+              <div className="mr-main"><div className="mr-identity"><MrWebLink mr={mr} /><span className="mr-project-id mono">#{project.id}</span></div><h4><button className="mr-open" aria-label={`查看 MR !${mr.iid}：${mr.title}`} aria-haspopup="dialog" onClick={(event) => chooseMr(mr, event.currentTarget)}>{mr.title}</button></h4><p>更新于 <time className="mono">{formatDate(mr.updatedAt)}</time></p></div>
+              <div className="mr-state"><StatusBadge value={mr.status} tone={statusTone(mr.status)} busy={isBusy(mr.status)}>{statusLabels[mr.status]}</StatusBadge><div className="mr-progress">{mr.queuePosition ? <span className="queue-position">队列第 <span className="mono">{mr.queuePosition}</span> 位</span> : mr.phase && isBusy(mr.status) ? <span className="phase" key={mr.phase}>{phaseLabels[mr.phase]}</span> : null}</div></div>
+              <div className="mr-action">{mr.primaryAction && <Button variant={mr.primaryAction === "start" ? "primary" : "secondary"} icon={mr.primaryAction === "start" ? "play" : mr.primaryAction === "stop" ? "stop" : "refresh"} disabled={disabled} busy={actionPending} onClick={() => void primaryAction(mr)}>{actionPending ? (mr.primaryAction === "stop" ? "停止中…" : "提交中…") : mr.primaryAction === "start" ? "开始检视" : mr.primaryAction === "stop" ? "停止" : "重新检视"}</Button>}</div>
+            </article>;
+          })}
+        </section>)}
+      </div>}
+    </section>
+
+    {selected && <DetailDialog returnFocus={selected.trigger} onBeginClose={beginClose} onDismiss={dismissDrawer}>
+      <div className="drawer-live sr-only" aria-live="polite" aria-atomic="true"><span key={announcement.id}>{announcement.text}</span></div>
+      <header className="drawer-header"><div><h2>{detail?.mergeRequest.title ?? selected.title}</h2>{detail && <p className="drawer-mr-meta"><span>{detail.project.name}</span><MrWebLink mr={detail.mergeRequest} className="drawer-mr-link" /></p>}</div><Button variant="quiet" className="close" icon="close" aria-label="关闭详情" data-dialog-close /></header>
+      <div className="drawer-body">
         {state?.fatalError && <Diagnostic error={state.fatalError} />}
-        {error && <Diagnostic error={error} />}
-        {state?.refreshOperation.error && <Diagnostic error={state.refreshOperation.error} compact />}
-        {!state && <div className="loading">正在读取本地状态…</div>}
-        {state?.projects.length === 0 && <div className="welcome"><h3>从一个 Project 开始</h3><p>添加 Project ID 后，手动刷新 open MR。ReviewX 不会自动扫描或发布评论。</p></div>}
-        <div className="mr-groups">
-          {state?.projects.map((project) => (
-            <section className="mr-group" key={project.id}>
-              <div className="group-title"><h3>{project.name}</h3><span>#{project.id} · 最近刷新 {formatDate(project.refreshedAt)}</span></div>
-              {!project.refreshedAt && <p className="empty inset">点击“刷新 MR”取得当前 open MR。</p>}
-              {project.refreshedAt && project.mergeRequests.length === 0 && <p className="empty inset">本次刷新未返回 open MR。</p>}
-              {project.mergeRequests.map((mr) => (
-                <article
-                  key={mr.iid}
-                  className={`mr-card ${selected?.projectId === project.id && selected.mrIid === mr.iid ? "selected" : ""}`}
-                  tabIndex={0}
-                  role="button"
-                  onClick={() => void chooseMr(project.id, mr.iid)}
-                  onKeyDown={(event) => { if (event.key === "Enter") void chooseMr(project.id, mr.iid); }}
-                >
-                  <div className="mr-main"><MrWebLink mr={mr} /><div><h4>{mr.title}</h4><p>更新于 {formatDate(mr.updatedAt)}</p></div></div>
-                  <div className="mr-state">
-                    <span className={`status status-${mr.status}`}>{statusLabels[mr.status]}</span>
-                    {mr.queuePosition && <span className="queue-position">队列第 {mr.queuePosition} 位</span>}
-                    {mr.phase && <span className="phase">{phaseLabels[mr.phase]}</span>}
-                  </div>
-                  {mr.primaryAction && <button disabled={pending !== null} onClick={(event) => void primaryAction(event, mr)}>
-                    {mr.primaryAction === "start" ? "开始检视" : mr.primaryAction === "stop" ? "停止" : "重新检视"}
-                  </button>}
-                </article>
-              ))}
-            </section>
-          ))}
-        </div>
-      </section>
-
-      {selected && (
-        <aside className="detail-drawer" aria-label="MR 详情抽屉">
-          <header className="drawer-header">
-            <div><p className="eyebrow">MR DETAIL</p><h2>{detail?.mergeRequest.title ?? "读取中…"}</h2>{detail && <p className="drawer-mr-meta"><span>{detail.project.name} · </span><MrWebLink mr={detail.mergeRequest} className="drawer-mr-link" /></p>}</div>
-            <button className="close" aria-label="关闭详情" onClick={() => { detailRequest.current += 1; setSelected(null); setDetail(null); }}>×</button>
-          </header>
-          {!detail && <div className="loading">正在读取 attempt 历史…</div>}
-          {detail && detail.attempts.length === 0 && <div className="empty drawer-empty">该 MR 尚无检视 attempt。</div>}
-          {detail && detail.attempts.length > 0 && (
-            <>
-              <div className="attempt-tabs" role="tablist" aria-label="Attempt 历史">
-                {detail.attempts.map((attempt, index) => (
-                  <button key={attempt.id} className={attempt.id === activeAttempt?.id ? "active" : ""} onClick={() => setOpenAttemptId(attempt.id)}>
-                    <span>{index === 0 ? "最新" : `历史 ${detail.attempts.length - index}`}</span>
-                    <strong>{statusLabels[attempt.status]}</strong>
-                    <small>{formatDate(attempt.createdAt)}</small>
-                  </button>
-                ))}
-              </div>
-              {activeAttempt && (
-                <section className="attempt-detail">
-                  <div className="attempt-summary">
-                    <div><span>状态</span><strong>{statusLabels[activeAttempt.status]}</strong></div>
-                    <div><span>阶段</span><strong>{activeAttempt.phase ? phaseLabels[activeAttempt.phase] : "—"}</strong></div>
-                    <div><span>版本</span><strong>{activeAttempt.updatedAt ?? activeAttempt.requestedUpdatedAt}</strong></div>
-                    <div><span>Attempt</span><code>{activeAttempt.id}</code></div>
-                  </div>
-                  {activeAttempt.error && <Diagnostic error={activeAttempt.error} />}
-                  {activeAttempt.result === "pass" && <p className="review-pass">未发现证据充分的问题。</p>}
-                  {activeAttempt.reportUrl && (
-                    <details
-                      key={activeAttempt.id}
-                      className="report-section"
-                      onToggle={(event) => { if (event.currentTarget.open) void loadReport(activeAttempt); }}
-                    >
-                      <summary>
-                        <span>完整报告</span>
-                        {reportLoading[activeAttempt.id] && <small>加载中…</small>}
-                        {!reportLoading[activeAttempt.id] && reports[activeAttempt.id] !== undefined && <small>已加载</small>}
-                      </summary>
-                      {reportLoading[activeAttempt.id] && <p className="report-loading">正在加载完整报告…</p>}
-                      {reportErrors[activeAttempt.id] && <Diagnostic error={reportErrors[activeAttempt.id]} compact />}
-                      {reports[activeAttempt.id] !== undefined && <Markdown className="markdown report-preview">{reports[activeAttempt.id]}</Markdown>}
-                    </details>
-                  )}
-                  {activeAttempt.findings.length > 0 && (
-                    <section className="findings-section">
-                      <div className="section-heading"><div><h3>Findings</h3><p>逐条处理，正文不可编辑。置信度为模型自评分，不代表统计正确率。</p></div></div>
-                      {activeAttempt.findings.map((finding) => {
-                        const isLatest = activeAttempt.id === latestAttempt?.id;
-                        const isSending = pending === `publish-${activeAttempt.id}-${finding.ordinal}`;
-                        const decisionsEnabled = isLatest && pending === null && !state?.publicationBusy;
-                        const findingUrl = `/api/attempts/${encodeURIComponent(activeAttempt.id)}/findings/${finding.ordinal}`;
-                        return (
-                          <article className={`finding-card ${finding.status === "dismissed" ? "finding-card-dismissed" : ""}`} key={finding.ordinal}>
-                            <header>
-                              <span className="finding-severity">{severityLabels[finding.severity]}</span>
-                              <span className="finding-confidence" title="模型自评分，不代表统计正确率">
-                                置信度 {finding.confidence === undefined ? "未评估" : `${finding.confidence}/100`}
-                              </span>
-                              <span className={`finding-status finding-${finding.status}`}>{isSending ? "发送中…" : findingLabels[finding.status]}</span>
-                            </header>
-                            {finding.verificationSummary && <p className="finding-verification"><strong>核实依据：</strong>{finding.verificationSummary}</p>}
-                            <Markdown>{finding.body}</Markdown>
-                            {finding.error && <Diagnostic error={finding.error} compact />}
-                            {isLatest && finding.status === "pending" && (
-                              <footer className="finding-actions">
-                                <button
-                                  className="ghost"
-                                  disabled={!decisionsEnabled}
-                                  onClick={() => void mutate(`dismiss-${activeAttempt.id}-${finding.ordinal}`, findingUrl, "PATCH", { decision: "dismissed" })}
-                                >不发送</button>
-                                <button
-                                  disabled={!decisionsEnabled}
-                                  onClick={() => void mutate(`publish-${activeAttempt.id}-${finding.ordinal}`, `${findingUrl}/publish`, "POST", {})}
-                                >{isSending ? "发送中…" : "发送到 CodeHub"}</button>
-                              </footer>
-                            )}
-                            {isLatest && finding.status === "dismissed" && (
-                              <footer className="finding-actions finding-actions-dismissed">
-                                <span>已跳过</span>
-                                <button
-                                  className="ghost"
-                                  disabled={!decisionsEnabled}
-                                  onClick={() => void mutate(`restore-${activeAttempt.id}-${finding.ordinal}`, findingUrl, "PATCH", { decision: "pending" })}
-                                >撤销</button>
-                              </footer>
-                            )}
-                          </article>
-                        );
-                      })}
-                    </section>
-                  )}
-                </section>
-              )}
-            </>
-          )}
-        </aside>
-      )}
-    </main>
-  );
+        {pollError && <Diagnostic error={pollError} compact />}
+        {detailError && <div><Diagnostic error={detailError} /><Button variant="secondary" icon="refresh" onClick={() => void loadDetail(selected)}>重新读取详情</Button></div>}
+        {!detail && !detailError && <Skeleton label="正在读取检视历史…" />}
+        {detail && detail.attempts.length === 0 && <div className="drawer-empty"><span className="empty-symbol"><Icon name="document" /></span><h3>暂无检视记录</h3><Button variant="secondary" icon="arrow" data-dialog-close>返回队列</Button></div>}
+        {detail && detail.attempts.length > 0 && <>
+          <div className="attempt-tabs" role="tablist" aria-label="Attempt 历史">
+            {detail.attempts.map((attempt, index) => <button role="tab" id={`attempt-tab-${attempt.id}`} aria-controls="attempt-panel" aria-selected={attempt.id === activeAttempt?.id} tabIndex={attempt.id === activeAttempt?.id ? 0 : -1} key={attempt.id} className={attempt.id === activeAttempt?.id ? "active" : ""} onClick={() => setOpenAttemptId(attempt.id)} onKeyDown={(event) => {
+              const directions: Record<string, number> = { ArrowRight: (index + 1) % detail.attempts.length, ArrowLeft: (index - 1 + detail.attempts.length) % detail.attempts.length, Home: 0, End: detail.attempts.length - 1 };
+              const nextIndex = directions[event.key];
+              if (nextIndex === undefined) return;
+              event.preventDefault();
+              const next = detail.attempts[nextIndex];
+              setOpenAttemptId(next.id);
+              document.getElementById(`attempt-tab-${next.id}`)?.focus({ preventScroll: true });
+            }}><span>{index === 0 ? "最新检视" : `历史 ${detail.attempts.length - index}`}</span><strong>{statusLabels[attempt.status]}</strong><time className="mono">{formatDate(attempt.createdAt)}</time></button>)}
+          </div>
+          {activeAttempt && <section className="attempt-detail" id="attempt-panel" role="tabpanel" aria-labelledby={`attempt-tab-${activeAttempt.id}`}>
+            <div className="attempt-overview"><div><span className="field-label">当前状态</span><StatusBadge value={activeAttempt.status} tone={statusTone(activeAttempt.status)} busy={isBusy(activeAttempt.status)}>{statusLabels[activeAttempt.status]}</StatusBadge></div><div className="attempt-phase"><span className="field-label">{isBusy(activeAttempt.status) ? "执行阶段" : "最后阶段"}</span><strong key={activeAttempt.phase}>{activeAttempt.phase ? phaseLabels[activeAttempt.phase] : "—"}</strong></div></div>
+            <details className="attempt-metadata"><summary>版本与检视标识<Icon name="chevron" /></summary><dl><div><dt>MR 版本</dt><dd><time className="mono">{formatDate(activeAttempt.updatedAt ?? activeAttempt.requestedUpdatedAt)}</time></dd></div><div><dt>Attempt</dt><dd><code>{activeAttempt.id}</code></dd></div></dl></details>
+            {activeAttempt.id !== latestAttempt?.id && <p className="history-note"><Icon name="clock" />只读</p>}
+            {activeAttempt.error && <Diagnostic error={activeAttempt.error} />}
+            {activeAttempt.result === "pass" && <div className="review-pass"><Icon name="check" /><div><h3>检视完成</h3><p>未发现证据充分的问题。</p></div></div>}
+            {activeAttempt.findings.length > 0 && <section className="findings-section"><h3 className="section-heading">检视问题 <span className="count mono">{activeAttempt.findings.length.toString().padStart(2, "0")}</span></h3>
+              {activeAttempt.findings.map((finding) => {
+                const isLatest = activeAttempt.id === latestAttempt?.id;
+                const isSending = pending === `publish-${activeAttempt.id}-${finding.ordinal}`;
+                const isDismissing = pending === `dismiss-${activeAttempt.id}-${finding.ordinal}`;
+                const isRestoring = pending === `restore-${activeAttempt.id}-${finding.ordinal}`;
+                const decisionsEnabled = isLatest && !disabled && !state?.publicationBusy;
+                const findingUrl = `/api/attempts/${encodeURIComponent(activeAttempt.id)}/findings/${finding.ordinal}`;
+                const localError = actionError?.scope === "finding" && actionError.key.endsWith(`-${activeAttempt.id}-${finding.ordinal}`) ? actionError.error : null;
+                const processed = ["dismissed", "published", "archived"].includes(finding.status);
+                return <article tabIndex={-1} className={`finding-card ${processed ? "finding-card-processed" : ""}`} key={`${activeAttempt.id}-${finding.ordinal}`}>
+                  <header><span className={`finding-severity severity-${finding.severity}`}><Icon name={finding.severity === "fatal" || finding.severity === "major" ? "alert" : "document"} />{severityLabels[finding.severity]}</span><span className="finding-confidence" title="模型自评分，不代表统计正确率">置信度 <span className="mono">{finding.confidence === undefined ? "未评估" : `${finding.confidence}/100`}</span></span><StatusBadge value={isSending ? "sending" : finding.status} tone={statusTone(finding.status)} busy={isSending}>{isSending ? "发送中…" : findingLabels[finding.status]}</StatusBadge></header>
+                  {finding.verificationSummary && <div className="finding-verification"><Icon name="check" /><p><strong>核实依据</strong>{finding.verificationSummary}</p></div>}
+                  <Markdown>{finding.body}</Markdown>
+                  {(finding.error || localError) && <Diagnostic error={finding.error ?? localError!} compact />}
+                  <footer className="finding-actions">
+                    {isLatest && finding.status === "pending" ? <><Button variant="secondary" disabled={!decisionsEnabled} busy={isDismissing} onClick={(event) => void decideFinding(event.currentTarget, `dismiss-${activeAttempt.id}-${finding.ordinal}`, findingUrl, "PATCH", { decision: "dismissed" })}>不发送</Button><Button icon="send" disabled={!decisionsEnabled} busy={isSending} onClick={(event) => void decideFinding(event.currentTarget, `publish-${activeAttempt.id}-${finding.ordinal}`, `${findingUrl}/publish`, "POST", {})}>{isSending ? "发送中…" : "发送到 CodeHub"}</Button></>
+                    : isLatest && finding.status === "dismissed" ? <><span className="decision-result"><Icon name="check" />已跳过</span><Button variant="secondary" icon="undo" disabled={!decisionsEnabled} busy={isRestoring} onClick={(event) => void decideFinding(event.currentTarget, `restore-${activeAttempt.id}-${finding.ordinal}`, findingUrl, "PATCH", { decision: "pending" })}>撤销</Button></>
+                    : <span className="decision-result"><Icon name={finding.status === "published" ? "check" : isLatest ? "document" : "clock"} />{!isLatest ? "只读" : finding.status === "published" ? "已发送到 CodeHub" : findingLabels[finding.status]}</span>}
+                  </footer>
+                </article>;
+              })}
+            </section>}
+            {activeAttempt.reportUrl && <details key={activeAttempt.id} className="report-section" onToggle={(event) => { if (event.currentTarget.open) void loadReport(activeAttempt); }}><summary><Icon name="document" /><span>完整报告</span><Icon name="chevron" className="disclosure-icon" /></summary><div className="report-content" aria-busy={reportLoading[activeAttempt.id] || undefined}>
+              {reportLoading[activeAttempt.id] && <p className="report-loading"><span className="spinner" aria-hidden="true" />正在加载完整报告…</p>}
+              {reportErrors[activeAttempt.id] && <div className="report-error"><Diagnostic error={reportErrors[activeAttempt.id]} compact /><Button variant="secondary" onClick={() => void loadReport(activeAttempt)}>重新读取报告</Button></div>}
+              {reports[activeAttempt.id] !== undefined && <Markdown className="markdown report-preview">{reports[activeAttempt.id]}</Markdown>}
+            </div></details>}
+          </section>}
+        </>}
+      </div>
+    </DetailDialog>}
+  </main>;
 }

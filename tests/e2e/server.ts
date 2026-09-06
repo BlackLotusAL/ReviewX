@@ -47,7 +47,7 @@ harness.reviewer.failures.set("3", new AppError({ code: "REVIEW_INCOMPLETE", mes
   impact: "本次不生成可处理意见或 PASS。", nextStep: "补齐上下文后重新检视。", technical: "Verification round limit reached." }));
 installRuntimeForTests(harness.runtime);
 
-const application = next({ dev: true, dir: process.cwd(), hostname: host, port });
+const application = next({ dev: process.env.REVIEWX_E2E_PRODUCTION !== "1", dir: process.cwd(), hostname: host, port });
 await application.prepare();
 const handler = application.getRequestHandler();
 const server = createServer((request, response) => {

@@ -10,11 +10,15 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   await expect(page.getByRole("heading", { name: "ReviewX" })).toBeVisible();
   await expect(page.locator(".project-panel")).toBeVisible();
   await expect(page.locator(".mr-panel")).toBeVisible();
-  await expect(page.getByText("ReviewX 不会自动扫描或发布评论。")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "暂无项目" })).toBeVisible();
+  await page.getByRole("button", { name: "添加项目", exact: true }).click();
+  await expect(page.getByLabel("Project ID")).toBeFocused();
 
   await page.getByLabel("Project ID").fill("101");
-  await page.getByRole("button", { name: "添加" }).click();
+  await page.getByRole("button", { name: "添加", exact: true }).click();
   await expect(page.getByLabel("已登记 Project").getByText("team/project-101", { exact: true })).toBeVisible();
+  await expect(page.locator(".inline-feedback")).toHaveText("项目已添加");
+  await expect(page.getByText("尚未刷新 MR", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "刷新 MR" }).click();
 
   const firstCard = page.locator(".mr-card").filter({ hasText: "Security-sensitive parser update" });
@@ -29,7 +33,7 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
     link.addEventListener("click", (event) => event.preventDefault(), { once: true });
     (link as HTMLElement).click();
   });
-  await expect(page.getByRole("complementary", { name: "MR 详情抽屉" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "MR 详情抽屉" })).toHaveCount(0);
 
   await firstCard.getByRole("button", { name: "开始检视" }).click();
   await secondCard.getByRole("button", { name: "开始检视" }).click();
@@ -37,8 +41,8 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   await expect(firstCard.getByText("检视中")).toBeVisible();
   await expect(firstCard.locator(".phase")).toHaveText(/理解改动|核实问题|整理结果/u);
 
-  await firstCard.click();
-  const drawer = page.getByRole("complementary", { name: "MR 详情抽屉" });
+  await firstCard.locator(".mr-open").click();
+  const drawer = page.getByRole("dialog", { name: "MR 详情抽屉" });
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText("待处理", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
   await expect(secondCard.getByText("已完成")).toBeVisible({ timeout: 15_000 });
@@ -95,10 +99,10 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   await drawer.getByRole("button", { name: "关闭详情" }).click();
   await firstCard.getByRole("button", { name: "重新检视" }).click();
   await expect(firstCard.getByText("待处理")).toBeVisible({ timeout: 15_000 });
-  await firstCard.click();
+  await firstCard.locator(".mr-open").click();
   const historyTabs = drawer.getByRole("tablist", { name: "Attempt 历史" });
-  await expect(historyTabs.getByRole("button")).toHaveCount(2);
-  await expect(historyTabs.getByRole("button", { name: /历史 .*已归档/u })).toBeVisible();
+  await expect(historyTabs.getByRole("tab")).toHaveCount(2);
+  await expect(historyTabs.getByRole("tab", { name: /历史 .*已归档/u })).toBeVisible();
 
   await page.route("**/api/mrs/101/1", async route => {
     const response = await route.fetch();
@@ -109,11 +113,11 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
     await route.fulfill({ response, json });
   });
   await drawer.getByRole("button", { name: "关闭详情" }).click();
-  await firstCard.click();
-  await historyTabs.getByRole("button", { name: /历史 .*已归档/u }).click();
+  await firstCard.locator(".mr-open").click();
+  await historyTabs.getByRole("tab", { name: /历史 .*已归档/u }).click();
   await expect(drawer.getByText("置信度 未评估")).toHaveCount(2);
   await drawer.getByRole("button", { name: "关闭详情" }).click();
-  await secondCard.click();
+  await secondCard.locator(".mr-open").click();
   await expect(drawer.getByText("未发现证据充分的问题。")).toBeVisible();
   await drawer.getByRole("button", { name: "关闭详情" }).click();
   await firstCard.getByRole("button", { name: "重新检视" }).click();
@@ -122,6 +126,6 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   const incompleteCard = page.locator(".mr-card").filter({ hasText: "Required context unavailable" });
   await incompleteCard.getByRole("button", { name: "开始检视" }).click();
   await expect(incompleteCard.getByText("检视未完成", { exact: true })).toBeVisible();
-  await incompleteCard.click();
+  await incompleteCard.locator(".mr-open").click();
   await expect(drawer.locator(".finding-card, .review-pass, details.report-section")).toHaveCount(0);
 });

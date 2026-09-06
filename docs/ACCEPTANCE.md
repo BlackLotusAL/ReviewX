@@ -4,6 +4,25 @@
 
 环境：Windows、Node.js 24.14.1（产品最低要求 22）、pnpm 11.19、Next.js 16.2.9、React 19.2.8、OpenCode 1.18.25。
 
+## Kimi 品牌 UI/UX 升级验收
+
+本轮保留项目侧栏、MR 列表和详情抽屉，更新本地字体、视觉令牌、动效和键盘交互。后端接口、持久化数据与评论发送规则保持兼容。
+
+| 场景 | 结果 | 证据 |
+| --- | --- | --- |
+| 代码质量 | PASS | `pnpm lint`、`pnpm typecheck`。 |
+| 核心操作 | PASS | `pnpm test:e2e` 共 7 项通过；覆盖检视、停止、逐条发送、跳过、撤销、历史只读及 Markdown 安全。 |
+| 焦点与键盘 | PASS | Enter 打开、Escape／遮罩关闭、模态焦点限制、历史方向键、关闭后回到原入口；原入口被移除时回到 MR 标题。 |
+| 阅读稳定性 | PASS | 发送后保留全文、卡片高度和滚动位置；焦点留在已处理问题；轮询不重挂载正文、不重放入场动画、不重复播报相同结果。 |
+| 请求与失败 | PASS | 添加失败保留输入；关闭加载中的抽屉后忽略过期响应；报告仍按需读取并缓存。 |
+| 视觉与响应式 | PASS | 1440×900、1024×768、390×844 下检查空状态、队列、Findings、运行、完成与失败；长代码和宽表格在各自容器滚动，抽屉不越出左边界。 |
+| 字体与动效 | PASS | 阻断外部网络后 Inter／Geist Mono 从本机加载；浏览器实际标题字体为 Inter Variable 与 Microsoft YaHei；减少动态效果时取消动画。 |
+| 生产与分发 | PASS | `pnpm test:package` 的 prepack 完成生产构建；临时目录隔离安装后验证 CLI 生命周期、本机字体 WOFF2 响应、两份 OFL 许可证与 `font-src 'self'`。 |
+
+本轮 UI 验收使用测试数据和模拟 CodeHub，没有创建真实评论。截图保存在 `test-results/e2e/frontend-layout-and-local-fonts-at-<宽>x<高>/`。
+
+另以 `NODE_ENV=production`、`REVIEWX_E2E_PRODUCTION=1` 运行三项尺寸／字体检查，全部通过。生产模式预览位于 `test-results/production-ui/frontend-layout-and-local-fonts-at-<宽>x<高>/`，不含开发工具覆盖层。
+
 ## 多轮检视新增验收
 
 | 场景 | 结果 | 证据 |
