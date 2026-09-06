@@ -65,17 +65,23 @@ export class ReportStore {
       `- Updated at: ${inlineCode(details.updatedAt)}`,
       `- Source: ${inlineCode(details.sourceBranch)} (${inlineCode(prepared.sourceSha)})`,
       `- Target: ${inlineCode(details.targetBranch)} (${inlineCode(prepared.targetSha)})`,
+      `- Merge-base: ${inlineCode(prepared.baseSha)}`,
       `- Result: **${result.findings.length === 0 ? "PASS" : "FINDINGS"}**`,
       "",
     ];
     if (result.findings.length === 0) {
-      lines.push("No findings.", "");
+      lines.push("未发现证据充分的问题。", "");
     } else {
       lines.push("## Findings", "");
       result.findings.forEach((finding, index) => {
-        lines.push(`## ${index + 1}. ${finding.severity}`, "", finding.body, "");
+        lines.push(`## ${index + 1}. ${finding.severity}`, "",
+          `置信度：${finding.confidence}/100（模型自评分，不代表统计正确率）`, "",
+          `核实依据：${finding.verificationSummary}`, "",
+          ...finding.evidence.map(item => `- ${inlineCode(`${item.side}/${item.path}:${item.startLine}-${item.endLine}`)}`),
+          "", finding.body, "");
       });
     }
+    if (result.limitations?.length) lines.push("## 检视局限", "", ...result.limitations.map(item => `- ${item}`), "");
     try {
       await mkdir(directory, { recursive: false });
       await writeFile(target, `${lines.join("\n").trimEnd()}\n`, { encoding: "utf8", flag: "wx" });

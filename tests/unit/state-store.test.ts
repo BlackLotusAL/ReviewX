@@ -108,5 +108,8 @@ describe("atomic persistent state", () => {
       status: "dismissed",
       dismissedAt: "2026-09-02T00:30:00.000Z",
     });
+    expect(restored.attemptsById.dismissed.findings[0].confidence).toBeUndefined();
+    expect(restored.attemptsById.dismissed.findings[0].verificationSummary).toBeUndefined();
+    expect(restored.attemptsById.dismissed.limitations).toBeUndefined();
   });
 });

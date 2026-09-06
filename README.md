@@ -2,7 +2,7 @@
 
 ReviewX 是仅面向 Windows 10/11 的本地 CodeHub Merge Request 代码检视工具。它把 open MR 放入一个全局 FIFO 队列，每次只运行一个只读 OpenCode 检视；每条 Finding 只有在用户明确点击“发送到 CodeHub”后，才会写入 CodeHub。
 
-ReviewX 不会定时刷新、自动检视、自动评论，也不提供远程访问、数据库或发布重试。
+点击一次“开始检视”，后台自动理解改动、核实问题、整理结果；默认只呈现置信度 ≥90 且有变更证据的已复核意见。ReviewX 不会定时发现 MR 或自动发表评论。
 
 ## 环境要求
 
@@ -11,7 +11,7 @@ ReviewX 不会定时刷新、自动检视、自动评论，也不提供远程访
 - pnpm 11.19（源码开发）
 - Git，可在 `PATH` 中找到 `git.exe`
 - CodeHub CLI，可在 `PATH` 中找到 `codehub.exe` 或安全的 `codehub.ps1` npm shim
-- OpenCode CLI，可在 `PATH` 中找到 `opencode.exe` 或安全的 `opencode.ps1` npm shim，并已配置默认模型及其认证
+- OpenCode CLI（已验证 1.18.25，需支持 `info.structured`），可在 `PATH` 中找到 `opencode.exe` 或安全的 `opencode.ps1` npm shim，并已配置默认模型及其认证
 
 CodeHub 必须返回不含用户信息、查询参数或片段的 HTTPS clone URL，并在 `mr view` JSON 中返回不含凭据的 HTTPS `web_url`。缺少该字段表示 CLI 版本不兼容，刷新会失败并提示升级。ReviewX 不接收或保存 CodeHub、Git、SSH、GitHub 或模型供应商凭据。
 
@@ -37,10 +37,16 @@ reviewx
 1. 输入正整数 Project ID；ReviewX 会先调用 CodeHub 验证 Project。
 2. 点击“刷新 MR”手动获取各 Project 当前 open MR。
 3. 点击“开始检视”或“重新检视”；任务按点击顺序进入全局 FIFO。
-4. 按需展开“完整报告”；报告首次展开时加载，收起后保留缓存。PASS 直接完成；有 Findings 时进入待处理。
+4. 运行中显示“理解改动 → 核实问题 → 整理结果”，可随时停止。完成后查看 Finding 的置信度和核实依据；置信度为模型自评分，不代表统计正确率。
 5. 在每张 Finding 卡片上直接选择“发送到 CodeHub”或“不发送”；已跳过项可在新 attempt 创建前撤销。
 
 停止活动检视会终止 Windows 子进程树并清理临时工作区；单次检视失败会停止其余排队项。评论发送与检视队列彼此独立，但任一时刻只允许发送一条评论。MR 卡片和详情标题中的 `!IID ↗` 可直接在新标签页打开 CodeHub MR。
+
+未发现合格意见时显示“未发现证据充分的问题”；必要查证未完成时显示“检视未完成”，不生成 PASS。完整报告默认收起，记录固定提交、证据与检视局限。旧意见显示“未评估”，原报告保持不变。
+
+每次 attempt 使用独立的本机 OpenCode 服务、随机端口、临时认证和同一模型会话。一次初检后至少做一次反证复核，最多三轮查证；每轮最多 20 个模型步骤，全程共用 60 分钟。模型可搜索和读取经过凭据检查的 source / merge-base 副本；不允许执行命令、改文件或访问副本外目录。Git 元数据、符号链接、代理指令及插件配置不进入可读取快照，缺失上下文记录为局限。
+
+结果整理单独使用 `StructuredOutput`；DeepSeek V4 仅在此阶段关闭 thinking。只读取原生结构化字段并进行本地 Schema / 证据范围校验，不从对话猜测 JSON。ReviewX 最多纠正一次格式，认证、网络、取消和查证超限直接失败。轮数、工具与模型用量保存在诊断日志。
 
 ## 本地数据
 
@@ -70,14 +76,18 @@ pnpm test:e2e
 pnpm build
 pnpm test:package
 pnpm test:ai
+pnpm test:ai:protocol
+pnpm test:ai:quality
 ```
 
-`pnpm test:package` 会创建 npm tarball、安装到独立临时目录并实际验收随机端口、浏览器失败降级和单实例行为。`pnpm test:ai` 会创建临时真实 Git 仓库，并调用一次当前 OpenCode 默认模型；它会消耗真实模型额度，可能产生费用，但不会调用真实 CodeHub 或创建评论。
+`pnpm test:package` 创建 npm tarball、隔离安装并验收 CLI 生命周期。`test:ai` 使用真实 Git 和默认 OpenCode 模型做多轮检视；`test:ai:protocol` 验证五轮会话与正文原样输出；`test:ai:quality` 对六类样例分别执行旧、新方案各三次（共 36 次），默认固定 `deepseek/deepseek-v4-flash`，可用 `REVIEWX_AI_MODEL=provider/model` 指定同一对照模型。真实测试会产生模型费用，不调用 CodeHub 或创建评论。
+
+测试结果保存在 `test-results/ai/`，包含输入、提交、模型版本、输出、耗时、Token 和可取得的费用。OpenCode 报告的费用不是账单；零值可能表示供应商未提供定价。质量门为新方案反例零误报、正例至少 8/9 命中且不低于旧方案、新方案 18/18 结果通过本地校验。
 
 ## 故障排查
 
 - 找不到 CodeHub/Git/OpenCode：确认对应 `.exe` 或 npm `.ps1` shim 已加入当前用户 `PATH`；不支持仅有 `.cmd` 的不安全启动器。
-- OpenCode 结果被拒绝：默认模型最终正文必须是一个 JSON 对象，包含 `findings` 数组，不能带代码围栏或说明文字。
+- OpenCode 结果被拒绝：查看诊断中的结构化输出、请求关联或证据范围错误。服务必须支持原生 `StructuredOutput`；DeepSeek V4 的整理阶段需关闭 thinking。原生正文不能替代结构化结果。
 - Git 输入被拦截：完整 diff 或源文件快照命中了凭据模式；先移除并轮换仓库内凭据，再重新检视。
 - 无法自动打开浏览器：从终端复制 `http://127.0.0.1:<port>` 地址；服务通常仍在运行。
 - 页面操作被拒绝或服务进入致命状态：打开左栏“查看当前会话日志”，按 Cause、Impact、Next step 和 Technical details 排查。

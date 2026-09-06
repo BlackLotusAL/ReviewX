@@ -48,8 +48,13 @@ describe("permanent logs and immutable reports", () => {
     const store = new ReportStore(data);
     const attempt: ReviewAttempt = { id: "attempt-1", projectId: "1", mrIid: "2", mrTitle: "MR", requestedUpdatedAt: "v", status: "reviewing", createdAt: "now", findings: [], publishBatches: [] };
     const mr: MergeRequestSnapshot = { projectId: "1", iid: "2", title: "MR", state: "open", updatedAt: "v", sourceBranch: "feature", targetBranch: "main" };
-    const prepared = { rootDirectory: "x", sourceDirectory: "x", patchPath: "x", bundlePath: "x", sourceSha: "1".repeat(40), targetSha: "2".repeat(40), cleanup: async () => undefined };
-    const pathValue = await store.save(attempt, mr, prepared, { findings: [{ severity: "minor", body: "### 🟡 Minor: Issue\n\nBody" }] });
+    const prepared = { rootDirectory: "x", sourceDirectory: "x", baseDirectory: "x", runtimeDirectory: "x", manifestPath: "x", files: [], limitations: [], baseSha: "2".repeat(40), patchPath: "x", bundlePath: "x", sourceSha: "1".repeat(40), targetSha: "2".repeat(40), cleanup: async () => undefined };
+    const pathValue = await store.save(attempt, mr, prepared, { findings: [{ severity: "minor", body: "### 🟡 Minor: Issue\n\nBody",
+      confidence: 95, verificationSummary: "Verified caller", evidence: [{ side: "source", path: "src/a.ts", startLine: 1, endLine: 2 }] }], limitations: ["Binary asset omitted"] });
+    const report = await store.read(pathValue);
+    expect(report).toContain("95/100");
+    expect(report).toContain("Verified caller");
+    expect(report).toContain("Binary asset omitted");
     expect(await store.read(pathValue)).toContain("Attempt ID");
     await expect(store.save(attempt, mr, prepared, { findings: [] })).rejects.toMatchObject({ code: "REPORT_WRITE_ERROR" });
     await expect(store.read("../outside.txt")).rejects.toMatchObject({ code: "UNSAFE_FILE_PATH" });

@@ -2,7 +2,7 @@
 
 ## 1. 产品定义
 
-ReviewX 是一个面向 CodeHub Merge Request 的本机单用户代码检视网页。用户登记 Project ID 并手动刷新 open MR，按需将 MR 加入检视队列。ReviewX 通过 HTTPS 准备代码、调用一次 OpenCode 检视、保存本地 Markdown 报告，并在网页中等待用户逐条处理。只有用户在某条 Finding 上主动点击“发送到 CodeHub”后，ReviewX 才调用 CodeHub CLI 创建该条 MR 评论。
+ReviewX 是一个面向 CodeHub Merge Request 的本机单用户代码检视网页。用户登记 Project ID 并手动刷新 open MR，按需将 MR 加入检视队列。点击一次后，ReviewX 通过 HTTPS 准备固定提交副本，在后台与 OpenCode 多轮查证，保存证据充分的检视结果并等待用户逐条处理。只有用户在某条 Finding 上主动点击“发送到 CodeHub”后，ReviewX 才调用 CodeHub CLI 创建该条 MR 评论。
 
 ReviewX 不定时扫描、不自动开始检视、不自动发布评论。网页只提供完成核心流程所需的项目管理、MR 发现、任务控制、意见处理和错误查看能力。
 
@@ -13,7 +13,7 @@ ReviewX 不定时扫描、不自动开始检视、不自动发布评论。网页
 - **检视串行**：MR 检视任务进入全局 FIFO 队列，同一时间只执行一个。
 - **发送有门禁**：检视结果先保存并展示，每条评论只能由用户在对应卡片上明确发送。
 - **结果可追溯**：每次成功检视形成独立 attempt 和不可变报告，历史不因重新检视或移除 Project 而删除。
-- **失败不自动恢复**：任何操作只尝试一次，不自动重试、补发或恢复。
+- **失败不自动恢复**：外部操作失败不自动重试、补发或恢复。检视内的查证轮次和最多一次结构化格式纠正属于同一个 attempt。
 
 ### 1.2 核心功能
 
@@ -33,7 +33,7 @@ ReviewX 不提供：
 - 定时或后台自动发现 MR、自动开始检视、自动发布评论。
 - Finding 正文编辑、自动修复、Judge、多 Agent 或语义去重。
 - 发布前 MR 版本校验、过时意见拦截或强制警告。
-- 自动重试、评论补发、失败恢复或网页内发布重试。
+- 失败 attempt 自动重试、评论补发、失败恢复或网页内发布重试。
 - 多个 MR 检视任务并行执行。
 - “结束处理”、批量舍弃或自动清理长期待处理意见。
 - 数据库、统计看板、通知中心或与核心流程无关的设置页。
@@ -88,10 +88,10 @@ MR 列表每项至少展示：
 | --- | --- | --- |
 | 未检视 | 当前发现的 MR 尚无活动 attempt | 开始检视 |
 | 排队中 | attempt 已进入 FIFO 队列 | 停止 |
-| 检视中 | 正在准备代码、调用 OpenCode 或保存结果 | 停止 |
+| 检视中 | 正在准备代码；OpenCode 阶段显示“理解改动 → 核实问题 → 整理结果” | 停止 |
 | 停止中 | 已收到停止请求，正在终止子进程并清理 | 无 |
 | 已停止 | attempt 未完成且不会自动恢复 | 重新检视 |
-| 检视失败 | attempt 因错误终止 | 重新检视 |
+| 检视未完成 | attempt 因错误、查证未完成或超限终止，不生成 PASS | 重新检视 |
 | 待处理 | 最新 attempt 仍有一个或多个 `pending` Finding | 逐条发送或不发送、重新检视 |
 | 发送中 | 正在创建一条用户指定的评论 | 无 |
 | 已完成 | PASS，或全部 Findings 均为已发送/已跳过 | 重新检视；最新 attempt 的已跳过项可撤销 |
@@ -134,7 +134,9 @@ codehub mr comment create <mr-iid> --project-id <project-id> --body <markdown> -
 - 代码只通过经验证、不含凭据的 HTTPS clone URL 准备。
 - 源分支和目标分支各 fetch 一次并固定到 commit SHA，使用 `target...source` 三点差异。
 - Git 准备完成后必须再次读取 MR 详情。若 `updated_at`、源分支或目标分支变化，本次 attempt 失败且不调用 OpenCode。
-- OpenCode 在独立的只读审查副本中运行一次；输入包含完整三点 diff 和有界的变更文件快照。
+- ReviewX 为每个 attempt 管理独立的本机 OpenCode 服务及会话，随机 loopback 端口和临时认证接入现有停止、Windows 进程树终止与清理流程。
+- 首轮以完整三点 diff 为入口，可按需使用 `read`、`glob`、`grep` 读取源提交及 merge-base 快照中的未改动调用方、类型、配置和测试，禁止命令执行、编辑、代理委托、网络工具及副本外目录访问。
+- 快照仅包含经过凭据检查的 Git 普通 UTF-8 文件，排除 Git 元数据、符号链接、子模块、自动加载的代理指令与插件配置。快照单文件上限 8 MiB，双侧合计 128 MiB；缺失、二进制、超限或被排除内容进入报告局限。完整 diff 命中凭据时直接终止。原 64 KiB / 256 KiB 变更文件 bundle 仅保留作基线对照。
 - CodeHub、Git、GitHub 和 SSH 凭据不得进入 OpenCode 输入或环境。OpenCode 的模型供应商认证继续由 OpenCode 自身配置提供。
 - 当前 CodeHub 契约没有源 Project 信息，因此只支持源分支和目标分支位于同一 Project 的 MR。
 - 不初始化 submodule；Git LFS 保持 Git 默认 checkout 行为。
@@ -226,7 +228,7 @@ Finding 的持久化发布状态至少包括：
 
 失败规则：
 
-- 当前 attempt 转为“检视失败”。
+- 当前 attempt 转为 `review_failed`，界面显示“检视未完成”。
 - 全部尚未开始的排队 attempt 转为“已停止”并清空队列。
 - 与检视队列独立运行的评论发布不受影响。
 - 用户可以逐个点击“重新检视”，重新建立队列。
@@ -238,14 +240,14 @@ Finding 的持久化发布状态至少包括：
 1. 调用 `codehub mr view` 取得本次 attempt 的当前 `updated_at` 和分支。
 2. 通过 HTTPS clone/fetch 准备源分支和目标分支代码。
 3. 再次调用 `mr view` 验证 `updated_at`、源分支和目标分支没有变化。
-4. 调用一次 OpenCode 检视最终整体变化。
-5. 解析第 6.1 节定义的 Reviewer 输出。
+4. OpenCode 初检理解改动，然后至少做一次反证复核，核对触发条件、上游保护及问题是否由本次改动引入。
+5. 每次复核后在同一会话、同一模型内单独整理结构化结果。`needs_context` 携带待查证事项进入下一轮；只有 `complete` 可进入保存。最多三轮查证，每轮最多 20 个模型步骤，包含代码准备在内的整个 attempt 共用 60 分钟，达到上限仍未完成则失败。
 6. 保存本次 attempt 的独立 Markdown 报告。
 7. 持久化 attempt、报告引用和全部 Findings。
 8. 清理临时工作区。
 9. 根据结果进入“已完成”或“待处理”。
 
-第 7 步成功前不得把本次 attempt 展示为可处理。任何 Finding 存在时，结果进入“待处理”；`findings` 为空表示 PASS，直接进入“已完成”。两种结果都必须保存报告。
+第 7 步成功前不得把本次 attempt 展示为可处理。完成查证后，仅保留置信度 ≥90、证据范围合法且至少一处关联 diff 的 Finding。存在合格意见时进入“待处理”；没有合格意见则完成并显示“未发现证据充分的问题”。必要查证未完成时显示“检视未完成”，不生成 PASS 或可处理 Finding。轮数、工具调用、模型、耗时、Token 和可取得的费用保留在诊断日志。
 
 检视流程不得调用 `mr comment create`。
 
@@ -253,7 +255,7 @@ Finding 的持久化发布状态至少包括：
 
 ### 5.5 意见处理与发送
 
-待处理 attempt 在详情抽屉中按 Reviewer 返回顺序展示全部 Findings。每项显示 severity、完整 Markdown、处理状态和卡片级动作；Finding 正文不可编辑，不显示复选框、全选或底部批量发布栏。
+待处理 attempt 在详情抽屉中按 Reviewer 返回顺序展示合格 Findings。每项显示 severity、“置信度 95/100”、一句核实依据、完整 Markdown、处理状态和卡片级动作。页面明确说明置信度为模型自评分，不代表统计正确率；历史 Finding 缺少分数时显示“未评估”，不补造分数。Finding 正文不可编辑，不显示复选框、全选或底部批量发布栏。
 
 最新 attempt 的每条 `pending` Finding 直接提供：
 
@@ -297,41 +299,50 @@ Finding 的持久化发布状态至少包括：
 
 ## 6. 输出契约
 
-### 6.1 Reviewer 最小输出
+### 6.1 Reviewer 结构化整理协议
 
-OpenCode 最终正文必须是一个 JSON 对象：
+查证阶段允许正常思考与只读工具；整理阶段只放行 `StructuredOutput`，不得新增意见、改变置信度或加强未经核实的结论。DeepSeek V4 的整理 agent 显式设置 `thinking: { "type": "disabled" }`。整理结果从原生 `info.structured` 读取：
 
 ```json
 {
+  "status": "complete",
+  "nextChecks": [],
   "findings": [
     {
       "severity": "major",
-      "body": "Markdown review comment"
+      "body": "Markdown review comment",
+      "confidence": 95,
+      "verificationSummary": "已核对实际调用方及 merge-base，触发路径没有上游保护。",
+      "evidence": [{ "side": "source", "path": "src/policy.ts", "startLine": 12, "endLine": 15 }]
     }
-  ]
+  ],
+  "limitations": []
 }
 ```
 
 规则：
 
-- `findings` 必须是数组。
-- 空数组表示 PASS。
-- 每个 Finding 必须包含 `severity` 和非空 Markdown `body`。
+- `status` 只能为 `complete` 或 `needs_context`；后者必须有非空 `nextChecks` 和空 `findings`，不得保存为正式报告。`complete` 的 `nextChecks` 必须为空。
+- `findings`、`nextChecks`、`limitations` 必须是数组；每条局限为非空文字。
+- 每个 Finding 必须包含 `severity`、非空 Markdown `body`、0–100 整数 `confidence`、非空 `verificationSummary` 和至少一条 `evidence`。
 - `severity` 只允许 `fatal`、`major`、`minor` 或 `suggestion`。
-- 任一 Finding 非法时拒绝整个结果。
-- ReviewX 不纠正输出，也不再次调用 OpenCode。
+- 证据 side 为 `source` 或 `base`；路径相对仓库，不能包含盘符、反斜杠、控制字符或 traversal。起止行号必须是存在于相应快照的正整数范围；至少一处与新增或删除行相交，不能仅引用 hunk 中未改动的上下文。
+- 本地严格校验额外字段、Schema 和证据范围。只有 `complete` 结果通过校验并按置信度门槛筛选后可以保存。
+- 每次 HTTP 请求预分配唯一 `messageID`，验证返回 `sessionID`、`parentID`、assistant 身份、唯一消息、模型、完成标记与错误。有效结构化响应允许 `finish: "tool-calls"`。OpenCode 1.18.25 回读含格式约束的 user 消息存在编码错误，因此诊断通过原生事件流采集，不依赖完整历史 GET。
+- 原生 `format.retryCount` 固定为 0；ReviewX 在整个 attempt 内最多一次格式纠正，沿用同会话与模型，仍失败则拒绝。认证、网络、取消或超限不触发格式纠正。不从文本对话中猜测、截取或修补 JSON。
 
 ### 6.2 Markdown 报告
 
 每个成功 attempt 保存一份独立、不可变的 Markdown 报告。报告至少包含：
 
 - attempt ID、Project ID、MR IID 和 `updated_at`。
-- 源分支、目标分支及固定的 source/target commit SHA。
+- 源分支、目标分支及固定的 source/target/merge-base commit SHA。
 - PASS 或 FINDINGS 结果。
 - 按原顺序排列的全部 Findings。
-- 每个 Finding 的 severity 和完整 Markdown body。
+- 每个 Finding 的 severity、完整 Markdown body、置信度、核实依据与提交侧/路径/行号证据。
+- 检视局限，包括安全过滤排除、缺失或超限的上下文。
 
-报告记录 OpenCode 的原始成功结果，不因用户发送、跳过、失败或重新检视而修改。Finding 处理状态单独保存在本地状态中并由网页展示。
+报告记录完成查证后通过本地校验和置信度门槛的结果，不因用户发送、跳过、失败或重新检视而修改。Finding 处理状态单独保存在本地状态中并由网页展示。v1 状态允许缺少新增字段，不重写历史报告。
 
 报告路径必须位于 ReviewX 数据目录内；网页只能读取状态中已登记且解析后仍位于该目录内的文件。
 
@@ -429,8 +440,8 @@ Severity 展示：
 
 ### 7.3 统一错误原则
 
-- 当前操作只尝试一次。
-- 不自动重试、修正、补发或恢复。
+- 当前失败操作不会被重新执行。
+- 不自动重试 attempt、补发评论或恢复任务；检视内仅允许第 6.1 节定义的一次格式纠正。
 - Project 添加失败只影响本次添加。
 - MR 刷新失败停止本次刷新，不改变未完整刷新的 Project 数据。
 - 检视失败停止整个检视队列，并把剩余项转为“已停止”。

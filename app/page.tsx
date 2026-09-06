@@ -25,7 +25,7 @@ const statusLabels: Record<"unreviewed" | AttemptStatus, string> = {
   reviewing: "检视中",
   stopping: "停止中",
   stopped: "已停止",
-  review_failed: "检视失败",
+  review_failed: "检视未完成",
   awaiting_confirmation: "待处理",
   publishing: "发送中",
   completed: "已完成",
@@ -39,6 +39,9 @@ const phaseLabels: Record<ReviewPhase, string> = {
   preparing_git: "准备 Git 代码",
   verifying_mr: "再次校验 MR",
   running_opencode: "运行 OpenCode",
+  understanding_changes: "理解改动",
+  verifying_findings: "核实问题",
+  finalizing_review: "整理结果",
   saving_report: "保存报告",
   cleaning_up: "清理临时目录",
 };
@@ -376,6 +379,7 @@ export default function Home() {
                     <div><span>Attempt</span><code>{activeAttempt.id}</code></div>
                   </div>
                   {activeAttempt.error && <Diagnostic error={activeAttempt.error} />}
+                  {activeAttempt.result === "pass" && <p className="review-pass">未发现证据充分的问题。</p>}
                   {activeAttempt.reportUrl && (
                     <details
                       key={activeAttempt.id}
@@ -394,7 +398,7 @@ export default function Home() {
                   )}
                   {activeAttempt.findings.length > 0 && (
                     <section className="findings-section">
-                      <div className="section-heading"><div><h3>Findings</h3><p>逐条处理，正文不可编辑。</p></div></div>
+                      <div className="section-heading"><div><h3>Findings</h3><p>逐条处理，正文不可编辑。置信度为模型自评分，不代表统计正确率。</p></div></div>
                       {activeAttempt.findings.map((finding) => {
                         const isLatest = activeAttempt.id === latestAttempt?.id;
                         const isSending = pending === `publish-${activeAttempt.id}-${finding.ordinal}`;
@@ -404,8 +408,12 @@ export default function Home() {
                           <article className={`finding-card ${finding.status === "dismissed" ? "finding-card-dismissed" : ""}`} key={finding.ordinal}>
                             <header>
                               <span className="finding-severity">{severityLabels[finding.severity]}</span>
+                              <span className="finding-confidence" title="模型自评分，不代表统计正确率">
+                                置信度 {finding.confidence === undefined ? "未评估" : `${finding.confidence}/100`}
+                              </span>
                               <span className={`finding-status finding-${finding.status}`}>{isSending ? "发送中…" : findingLabels[finding.status]}</span>
                             </header>
+                            {finding.verificationSummary && <p className="finding-verification"><strong>核实依据：</strong>{finding.verificationSummary}</p>}
                             <Markdown>{finding.body}</Markdown>
                             {finding.error && <Diagnostic error={finding.error} compact />}
                             {isLatest && finding.status === "pending" && (

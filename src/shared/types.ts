@@ -32,6 +32,9 @@ export const reviewPhaseValues = [
   "preparing_git",
   "verifying_mr",
   "running_opencode",
+  "understanding_changes",
+  "verifying_findings",
+  "finalizing_review",
   "saving_report",
   "cleaning_up",
 ] as const;
@@ -89,6 +92,9 @@ export interface StoredFinding {
   ordinal: number;
   severity: Severity;
   body: string;
+  confidence?: number;
+  verificationSummary?: string;
+  evidence?: ReviewEvidence[];
   status: FindingStatus;
   batchId?: string;
   publishedAt?: string;
@@ -118,6 +124,8 @@ export interface ReviewAttempt {
   targetBranch?: string;
   sourceSha?: string;
   targetSha?: string;
+  baseSha?: string;
+  limitations?: string[];
   status: AttemptStatus;
   phase?: ReviewPhase;
   createdAt: string;
@@ -206,8 +214,25 @@ export interface MrDetailView {
 export interface ReviewerFinding {
   severity: Severity;
   body: string;
+  confidence: number;
+  verificationSummary: string;
+  evidence: ReviewEvidence[];
 }
 
 export interface ReviewerResult {
   findings: ReviewerFinding[];
+  limitations?: string[];
+}
+
+export interface ReviewEvidence {
+  side: "source" | "base";
+  path: string;
+  startLine: number;
+  endLine: number;
+}
+
+export interface ReviewCheckpoint extends ReviewerResult {
+  status: "complete" | "needs_context";
+  nextChecks: string[];
+  limitations: string[];
 }

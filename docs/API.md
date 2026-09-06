@@ -65,6 +65,32 @@ ReviewX Web API 是本机单实例网页与 Node.js 服务之间的内部接口�
 
 MR 列表项除 MR 快照外，还会包含页面状态 `status`、可选执行阶段 `phase`、可选队列位置 `queuePosition`、最近 attempt 引用、主操作 `primaryAction` 和已脱敏错误。
 
+检视阶段沿用状态轮询，无新增前端会话或聊天接口：
+
+| `phase` | 界面文字 |
+| --- | --- |
+| `understanding_changes` | 理解改动 |
+| `verifying_findings` | 核实问题 |
+| `finalizing_review` | 整理结果 |
+
+准备、校验、保存和清理阶段继续使用已有字段；`running_opencode` 仅保留历史兼容。运行中的主操作为停止。`review_failed` 的界面状态为“检视未完成”，失败 attempt 无可处理 Finding 或 PASS 结果。
+
+新 attempt 保存可选的 `baseSha` 和 `limitations: string[]`。新 Finding 的 `confidence`（0–100 整数）、`verificationSummary`（非空文字）、`evidence` 为必填输出字段；持久化 schema 中这些字段可缺省，以兼容旧 v1 状态。历史缺省分数显示“未评估”，不得补写历史字段或报告。
+
+`evidence` 为非空数组，每项是 `{ side: "source" | "base", path: string, startLine: number, endLine: number }`。路径相对仓库且位于过滤后的固定提交快照中，行号从 1 开始、包含起止行，至少一项关联本次新增/删除行。正式结果只包含置信度 ≥90 且通过复核及本地证据校验的意见。分数为模型自评分，不代表统计正确率。
+
+## 内部 OpenCode 协议
+
+`ReviewerPort.review(projectId, details, prepared, signal, observer?)` 增加 `observer.phase(phase)` 异步回调及诊断回调。运行时先持久化 phase，再由已有轮询更新页面；查证轮数与工具调用只进入日志。
+
+每个 attempt 拥有随机端口、临时 Basic 认证的 `127.0.0.1` OpenCode 服务及独立 session。`POST /session/{id}/message` 用预分配的唯一 `messageID` 关联请求；返回 assistant 的 `sessionID`、`parentID`、完成标记、模型和错误必须通过校验。正式结构化数据只读取 `info.structured`，允许成功 `finish: "tool-calls"`，拒绝正文猜测与历史结果复用。
+
+查证 agent 只允许 `read/glob/grep`，每轮 20 个模型步骤。整理 agent 只允许 `StructuredOutput`，DeepSeek V4 关闭 thinking；原生 `format.retryCount: 0`，最多一次由 ReviewX 发起的格式纠正。固定源提交与 merge-base 快照作为上下文；服务数据库位于副本之外，停止或完成后清理整个工作区。原生 SSE 事件提供轮数、工具和用量诊断，并阻断步骤超限及供应商重试。已验证 OpenCode 1.18.25；该版本对带 `OutputFormatJsonSchema` 的 user 历史消息编码有缺陷，不能依赖完整历史 GET 进行关联校验。
+
+内部整理返回严格对象 `{ status, nextChecks, findings, limitations }`。`needs_context` 必须有待查证事项并且 `findings: []`，继续下一轮；`complete` 必须有 `nextChecks: []`。一次初检后至少一次反证复核，最多三次查证，每次后单独整理；包含代码准备的整个 attempt 共用 60 分钟。耗尽查证轮次、格式纠正或时限时失败，不保存正式报告。认证、网络和取消错误直接沿用失败/停止流程。
+
+典型错误码：`REVIEW_INCOMPLETE`（必要上下文未解决）、`REVIEW_TIMEOUT`（整个 attempt 超时）、`OPENCODE_STEP_LIMIT`、`INVALID_REVIEWER_OUTPUT`、`INVALID_REVIEW_EVIDENCE`、`INVALID_OPENCODE_RESPONSE`、`OPENCODE_HTTP_ERROR`、`OPENCODE_CONNECTION_FAILED`、`OPENCODE_INCOMPATIBLE`。它们不会触发自动重试或评论发送。
+
 报告和日志接口会同时校验状态引用、规范路径和真实路径均位于 `%LOCALAPPDATA%\ReviewX` 数据目录；不能通过 URL 参数读取任意本地文件。
 
 ## CodeHub 状态约定

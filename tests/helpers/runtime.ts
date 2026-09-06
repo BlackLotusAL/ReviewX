@@ -11,7 +11,7 @@ import type { CodeHubMrListEntry } from "@/src/server/schemas";
 import type { CodeHubPort, CommentCreateResult } from "@/src/server/codehub";
 import type { GitPreparerPort, PreparedReview } from "@/src/server/git";
 import { createLogFile, Logger } from "@/src/server/logger";
-import type { ReviewerPort } from "@/src/server/opencode";
+import type { ReviewerPort, ReviewObserver } from "@/src/server/opencode";
 import { ensureDataPaths, resolveDataPaths } from "@/src/server/paths";
 import { ReportStore } from "@/src/server/report-store";
 import { ReviewXRuntime } from "@/src/server/runtime";
@@ -108,10 +108,15 @@ export class FakeGit implements GitPreparerPort {
     return {
       rootDirectory: "C:\\reviewx-test\\review",
       sourceDirectory: "C:\\reviewx-test\\review\\source",
+      baseDirectory: "C:\\reviewx-test\\review\\base",
+      runtimeDirectory: "C:\\reviewx-test\\runtime",
+      manifestPath: "C:\\reviewx-test\\review\\manifest.json",
       patchPath: "C:\\reviewx-test\\review\\changes.patch",
       bundlePath: "C:\\reviewx-test\\review\\review-bundle.txt",
       sourceSha: "1".repeat(40),
       targetSha: "2".repeat(40),
+      baseSha: "2".repeat(40),
+      files: [], limitations: [],
       cleanup: async () => { this.cleanupCount += 1; },
     };
   }
@@ -125,12 +130,15 @@ export class FakeReviewer implements ReviewerPort {
   active = 0;
   maximumActive = 0;
 
-  async review(_projectId: string, details: MergeRequestSnapshot, _prepared: PreparedReview, signal: AbortSignal): Promise<ReviewerResult> {
+  async review(_projectId: string, details: MergeRequestSnapshot, _prepared: PreparedReview, signal: AbortSignal, observer?: ReviewObserver): Promise<ReviewerResult> {
     this.order.push(details.iid);
     this.active += 1;
     this.maximumActive = Math.max(this.maximumActive, this.active);
     try {
-      await abortableDelay(this.delayMs, signal);
+      for (const phase of ["understanding_changes", "verifying_findings", "finalizing_review"] as const) {
+        await observer?.phase?.(phase);
+        await abortableDelay(this.delayMs / 3, signal);
+      }
       const failure = this.failures.get(details.iid);
       if (failure) throw failure;
       return clone(this.results.get(details.iid) ?? { findings: [] });
@@ -151,7 +159,7 @@ export interface RuntimeHarness {
   cleanup(): Promise<void>;
 }
 
-export async function createRuntimeHarness(): Promise<RuntimeHarness> {
+export async function createRuntimeHarness(options: { reviewTimeoutMs?: number } = {}): Promise<RuntimeHarness> {
   const root = await mkdtemp(path.join(os.tmpdir(), "reviewx-runtime-test-"));
   const paths = resolveDataPaths({ LOCALAPPDATA: root });
   ensureDataPaths(paths);
@@ -172,6 +180,7 @@ export async function createRuntimeHarness(): Promise<RuntimeHarness> {
     reports: new ReportStore(paths),
     now: () => new Date(clock++),
     id: () => `test-id-${++ids}`,
+    reviewTimeoutMs: options.reviewTimeoutMs,
   }).initialize();
   return {
     root,

@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import next from "next";
 import { installRuntimeForTests } from "@/src/server/runtime";
+import { AppError } from "@/src/server/errors";
 import { configureMr, createRuntimeHarness } from "../helpers/runtime";
 
 const host = "127.0.0.1";
@@ -11,11 +12,15 @@ process.env.REVIEWX_ORIGIN = origin;
 const harness = await createRuntimeHarness();
 configureMr(harness, "101", "1", "Security-sensitive parser update");
 configureMr(harness, "101", "2", "Queue worker tests");
-harness.reviewer.delayMs = 650;
+configureMr(harness, "101", "3", "Required context unavailable");
+harness.reviewer.delayMs = 1800;
 harness.reviewer.results.set("1", {
   findings: [
     {
       severity: "major",
+      confidence: 95,
+      verificationSummary: "已核对调用方与变更代码。",
+      evidence: [{ side: "source", path: "src/parser.ts", startLine: 1, endLine: 1 }],
       body: [
         "### 🟠 Major: Unsafe Markdown probe",
         "",
@@ -33,10 +38,13 @@ harness.reviewer.results.set("1", {
         "[Public documentation](https://example.com/docs)",
       ].join("\n"),
     },
-    { severity: "suggestion", body: "### 🟢 Suggestion: Add a regression test\n\nKeep the parser behavior covered." },
+    { severity: "suggestion", body: "### 🟢 Suggestion: Add a regression test\n\nKeep the parser behavior covered.",
+      confidence: 92, verificationSummary: "已核对相关测试。", evidence: [{ side: "source", path: "src/parser.ts", startLine: 1, endLine: 1 }] },
   ],
 });
 harness.reviewer.results.set("2", { findings: [] });
+harness.reviewer.failures.set("3", new AppError({ code: "REVIEW_INCOMPLETE", message: "检视未完成。", reason: "必要调用方未取得。",
+  impact: "本次不生成可处理意见或 PASS。", nextStep: "补齐上下文后重新检视。", technical: "Verification round limit reached." }));
 installRuntimeForTests(harness.runtime);
 
 const application = next({ dev: true, dir: process.cwd(), hostname: host, port });

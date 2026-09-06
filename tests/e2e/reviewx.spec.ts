@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("card-level decisions, cached report folding, MR links, history, and Markdown safety", async ({ page }) => {
+test("card-level decisions, cached report folding, MR links, history, and Markdown safety", async ({ page }, testInfo) => {
   let reportRequests = 0;
   page.on("request", (request) => {
     if (new URL(request.url()).pathname.startsWith("/api/reports/")) reportRequests += 1;
@@ -35,6 +35,7 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   await secondCard.getByRole("button", { name: "开始检视" }).click();
   await expect(secondCard.getByText("队列第 1 位")).toBeVisible();
   await expect(firstCard.getByText("检视中")).toBeVisible();
+  await expect(firstCard.locator(".phase")).toHaveText(/理解改动|核实问题|整理结果/u);
 
   await firstCard.click();
   const drawer = page.getByRole("complementary", { name: "MR 详情抽屉" });
@@ -49,6 +50,9 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   await expect(drawer.getByRole("button", { name: "发布选中意见" })).toHaveCount(0);
   const findings = drawer.locator(".finding-card");
   await expect(findings).toHaveCount(2);
+  await expect(findings.nth(0).getByText("置信度 95/100")).toBeVisible();
+  await expect(findings.nth(0).getByText("已核对调用方与变更代码。")).toBeVisible();
+  await expect(findings.nth(0).getByText("置信度 95/100")).toHaveAttribute("title", /模型自评.*统计/u);
 
   await expect(drawer.locator("script, form, iframe, object, embed, img")).toHaveCount(0);
   await expect(drawer.locator('a[href^="file:"]')).toHaveCount(0);
@@ -57,6 +61,7 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   const publicImage = drawer.getByRole("link", { name: "[图片链接] Public image" });
   await expect(publicImage).toHaveAttribute("href", "https://example.com/public.png");
   await expect(drawer.getByRole("link", { name: "Public documentation" })).toHaveAttribute("href", "https://example.com/docs");
+  await page.screenshot({ path: testInfo.outputPath("review-finding.png"), fullPage: true });
 
   await findings.nth(0).getByRole("button", { name: "发送到 CodeHub" }).click();
   await expect(findings.nth(0).getByText("已发送", { exact: true })).toBeVisible();
@@ -94,4 +99,29 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   const historyTabs = drawer.getByRole("tablist", { name: "Attempt 历史" });
   await expect(historyTabs.getByRole("button")).toHaveCount(2);
   await expect(historyTabs.getByRole("button", { name: /历史 .*已归档/u })).toBeVisible();
+
+  await page.route("**/api/mrs/101/1", async route => {
+    const response = await route.fetch();
+    const json = await response.json();
+    for (const finding of json.attempts[1].findings) {
+      delete finding.confidence; delete finding.verificationSummary; delete finding.evidence;
+    }
+    await route.fulfill({ response, json });
+  });
+  await drawer.getByRole("button", { name: "关闭详情" }).click();
+  await firstCard.click();
+  await historyTabs.getByRole("button", { name: /历史 .*已归档/u }).click();
+  await expect(drawer.getByText("置信度 未评估")).toHaveCount(2);
+  await drawer.getByRole("button", { name: "关闭详情" }).click();
+  await secondCard.click();
+  await expect(drawer.getByText("未发现证据充分的问题。")).toBeVisible();
+  await drawer.getByRole("button", { name: "关闭详情" }).click();
+  await firstCard.getByRole("button", { name: "重新检视" }).click();
+  await firstCard.getByRole("button", { name: "停止", exact: true }).click();
+  await expect(firstCard.getByText("已停止", { exact: true })).toBeVisible();
+  const incompleteCard = page.locator(".mr-card").filter({ hasText: "Required context unavailable" });
+  await incompleteCard.getByRole("button", { name: "开始检视" }).click();
+  await expect(incompleteCard.getByText("检视未完成", { exact: true })).toBeVisible();
+  await incompleteCard.click();
+  await expect(drawer.locator(".finding-card, .review-pass, details.report-section")).toHaveCount(0);
 });

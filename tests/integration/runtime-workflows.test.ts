@@ -12,7 +12,10 @@ import {
 
 function reviewerResult(...bodies: string[]): ReviewerResult {
   const severities = ["fatal", "major", "minor", "suggestion"] as const;
-  return { findings: bodies.map((body, index) => ({ severity: severities[index % severities.length], body })) };
+  return { findings: bodies.map((body, index) => ({ severity: severities[index % severities.length], body,
+    confidence: 95, verificationSummary: "Verified caller and changed code.",
+    evidence: [{ side: "source", path: "src/example.ts", startLine: 1, endLine: 1 }],
+  })) };
 }
 
 function failure(code: string, message = code): AppError {
@@ -37,6 +40,39 @@ async function latest(harness: RuntimeHarness, projectId: string, mrIid: string)
 }
 
 describe("ReviewX runtime workflows", () => {
+  it("shares one deadline across preparation and review and never publishes an incomplete PASS", async () => {
+    const harness = await createRuntimeHarness({ reviewTimeoutMs: 120 });
+    try {
+      configureMr(harness, "101", "1"); configureMr(harness, "101", "2");
+      await registerAndRefresh(harness, ["101"]);
+      harness.git.delayMs = 80; harness.reviewer.delayMs = 200;
+      await harness.runtime.createReview("101", "1"); await harness.runtime.createReview("101", "2");
+      await harness.runtime.waitForIdle();
+      const incomplete = await latest(harness, "101", "1");
+      expect(incomplete).toMatchObject({ status: "review_failed", findings: [], error: { code: "REVIEW_TIMEOUT" } });
+      expect(incomplete.result).toBeUndefined(); expect(incomplete.reportUrl).toBeUndefined();
+      expect((await latest(harness, "101", "2")).status).toBe("stopped");
+      expect(harness.git.cleanupCount).toBe(1); expect(harness.codeHub.comments).toEqual([]);
+    } finally { await harness.cleanup(); }
+  });
+
+  it("polls verification phases and persists confidence, evidence and limitations before manual sending", async () => {
+    const harness = await createRuntimeHarness();
+    try {
+      configureMr(harness, "101", "1"); await registerAndRefresh(harness, ["101"]);
+      harness.reviewer.delayMs = 360;
+      harness.reviewer.results.set("1", { ...reviewerResult("verified body"), limitations: ["Excluded private configuration"] });
+      await harness.runtime.createReview("101", "1");
+      for (const phase of ["understanding_changes", "verifying_findings", "finalizing_review"])
+        await waitUntil(() => harness.runtime.snapshot().projects[0].mergeRequests[0].phase === phase);
+      await harness.runtime.waitForIdle();
+      const result = await latest(harness, "101", "1");
+      expect(result.findings[0]).toMatchObject({ confidence: 95, verificationSummary: "Verified caller and changed code.", evidence: [{ side: "source", path: "src/example.ts", startLine: 1, endLine: 1 }] });
+      expect(result.limitations).toEqual(["Excluded private configuration"]);
+      expect(harness.codeHub.comments).toEqual([]);
+    } finally { await harness.cleanup(); }
+  });
+
   it("manages Project history and performs ordered, partial manual refreshes without automation", async () => {
     const harness = await createRuntimeHarness();
     try {

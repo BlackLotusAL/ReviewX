@@ -1,5 +1,5 @@
-import { cp, lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { TextDecoder } from "node:util";
 import type { MergeRequestSnapshot, ProjectRecord } from "@/src/shared/types";
 import { resolveCommand } from "@/src/cli/resolve-command";
@@ -7,6 +7,7 @@ import { AppError } from "./errors";
 import type { DataPaths } from "./paths";
 import { runProcess, type ProcessResult, type ResolvedCommand } from "./process";
 import { Redactor } from "./redaction";
+import { changedLineIndex, copyReviewSnapshot, type ReviewFile } from "./review-context";
 
 const GIT_TIMEOUT_MS = 10 * 60_000;
 const SHA_PATTERN = /^[0-9a-f]{40,64}$/u;
@@ -17,10 +18,16 @@ const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 export interface PreparedReview {
   rootDirectory: string;
   sourceDirectory: string;
+  baseDirectory: string;
+  runtimeDirectory: string;
+  manifestPath: string;
   patchPath: string;
   bundlePath: string;
   sourceSha: string;
   targetSha: string;
+  baseSha: string;
+  files: ReviewFile[];
+  limitations: string[];
   cleanup(): Promise<void>;
 }
 
@@ -197,6 +204,9 @@ export class GitPreparer implements GitPreparerPort {
     const repositoryDirectory = join(temporaryRoot, "repository");
     const reviewDirectory = join(temporaryRoot, "review");
     const sourceDirectory = join(reviewDirectory, "source");
+    const baseDirectory = join(reviewDirectory, "base");
+    const runtimeDirectory = join(temporaryRoot, "opencode-runtime");
+    const manifestPath = join(reviewDirectory, "manifest.json");
     const patchPath = join(reviewDirectory, "changes.patch");
     const bundlePath = join(reviewDirectory, "review-bundle.txt");
     let complete = false;
@@ -218,45 +228,39 @@ export class GitPreparer implements GitPreparerPort {
       ], "源分支获取", signal);
       const targetSha = await this.#revision(repositoryDirectory, "refs/remotes/origin/reviewx-target", signal);
       const sourceSha = await this.#revision(repositoryDirectory, "refs/remotes/origin/reviewx-source", signal);
-      await this.#git(["-C", repositoryDirectory, "merge-base", targetSha, sourceSha], "三点差异基线计算", signal);
+      const base = await this.#git(["-C", repositoryDirectory, "merge-base", targetSha, sourceSha], "三点差异基线计算", signal);
+      const baseSha = await this.#revision(repositoryDirectory, base.stdout.trim(), signal);
       await this.#git(["-C", repositoryDirectory, "checkout", "--quiet", "--detach", sourceSha], "源提交检出", signal);
       await this.#gitToFile([
-        "-C", repositoryDirectory, "diff", "--binary", "--find-renames", `${targetSha}...${sourceSha}`, "--",
+        "-C", repositoryDirectory, "diff", "--no-ext-diff", "--no-textconv", "--binary", "--find-renames", `${targetSha}...${sourceSha}`, "--",
       ], patchPath, "完整三点 diff 生成", signal);
       const changed = await this.#git([
         "-C", repositoryDirectory, "diff", "--name-only", "-z", "--find-renames", "--diff-filter=ACMRTUXB", `${targetSha}...${sourceSha}`, "--",
       ], "变更文件读取", signal);
       const changedFiles = changed.stdout.split("\0").filter(Boolean);
 
-      const links: Array<{ source: string; destination: string }> = [];
-      const nonRegularPaths = new Set<string>();
-      await cp(/* turbopackIgnore: true */ repositoryDirectory, sourceDirectory, {
-        recursive: true,
-        force: false,
-        errorOnExist: true,
-        filter: async (source, destination) => {
-          const fromRepository = relative(repositoryDirectory, source);
-          if (fromRepository === ".git" || fromRepository.startsWith(`.git${sep}`)) return false;
-          const metadata = await lstat(/* turbopackIgnore: true */ source);
-          if (metadata.isSymbolicLink()) {
-            links.push({ source, destination });
-            nonRegularPaths.add(fromRepository.split(sep).join("/"));
-            return false;
-          }
-          return true;
-        },
-      });
-      for (const link of links) {
-        await mkdir(dirname(link.destination), { recursive: true });
-        await writeFile(link.destination, await readlink(/* turbopackIgnore: true */ link.source, "utf8"), { encoding: "utf8", flag: "wx" });
-      }
+      const patch = await readFile(patchPath, "utf8");
+      if (this.#redactor.containsCredential(patch)) throw sensitiveInputError();
+      const changedLines = changedLineIndex(patch);
+      const budget = { remaining: 128 * 1024 * 1024 };
+      const sourceTree = await this.#git(["-C", repositoryDirectory, "ls-tree", "-r", "-z", sourceSha], "源文件索引", signal);
+      const sourceSnapshot = await copyReviewSnapshot({ repository: repositoryDirectory, destination: sourceDirectory,
+        side: "source", tree: sourceTree.stdout, changed: changedLines, redactor: this.#redactor, budget, signal });
+      await this.#git(["-C", repositoryDirectory, "checkout", "--quiet", "--detach", baseSha], "基线提交检出", signal);
+      const baseTree = await this.#git(["-C", repositoryDirectory, "ls-tree", "-r", "-z", baseSha], "基线文件索引", signal);
+      const baseSnapshot = await copyReviewSnapshot({ repository: repositoryDirectory, destination: baseDirectory,
+        side: "base", tree: baseTree.stdout, changed: changedLines, redactor: this.#redactor, budget, signal });
+      const files = [...sourceSnapshot.files, ...baseSnapshot.files];
+      const limitations = [...sourceSnapshot.limitations, ...baseSnapshot.limitations];
+      await writeFile(manifestPath, JSON.stringify({ sourceSha, targetSha, baseSha, files, limitations }, null, 2), { encoding: "utf8", flag: "wx" });
+      await mkdir(runtimeDirectory, { recursive: true });
       await writeReviewBundle({
         bundlePath,
         patchPath,
         sourceDirectory,
         changedFiles,
         redactor: this.#redactor,
-        nonRegularPaths,
+        nonRegularPaths: sourceSnapshot.omitted,
         context: {
           project_id: project.id,
           mr_iid: details.iid,
@@ -272,10 +276,16 @@ export class GitPreparer implements GitPreparerPort {
       return {
         rootDirectory: reviewDirectory,
         sourceDirectory,
+        baseDirectory,
+        runtimeDirectory,
+        manifestPath,
         patchPath,
         bundlePath,
         sourceSha,
         targetSha,
+        baseSha,
+        files,
+        limitations,
         cleanup: async () => {
           if (cleaned) return;
           cleaned = true;

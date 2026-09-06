@@ -19,7 +19,8 @@ import { AppError, conflictError, isAppError, notFoundError, unexpectedError, va
 import { settleFindingDecisions } from "./finding-state";
 import { GitPreparer, type GitPreparerPort, type PreparedReview } from "./git";
 import { Logger, createLogFile } from "./logger";
-import { OpenCodeReviewer, type ReviewerPort } from "./opencode";
+import { OpenCodeReviewer, REVIEW_TIMEOUT_MS, type ReviewerPort } from "./opencode";
+import { openCodeError } from "./opencode-client";
 import { ensureDataPaths, resolveDataPaths, type DataPaths } from "./paths";
 import { readContainedFile, ReportStore } from "./report-store";
 import { StateStore } from "./state-store";
@@ -61,6 +62,7 @@ export interface RuntimeDependencies {
   reports: ReportStore;
   now?: () => Date;
   id?: () => string;
+  reviewTimeoutMs?: number;
 }
 
 export class ReviewXRuntime {
@@ -525,10 +527,14 @@ export class ReviewXRuntime {
       }
       const attempt = this.#state.attemptsById[attemptId];
       if (!attempt) throw new Error(`Missing active attempt ${attemptId}.`);
+      const deadline = new AbortController();
+      const timeout = setTimeout(() => deadline.abort(), this.dependencies.reviewTimeoutMs ?? REVIEW_TIMEOUT_MS);
+      timeout.unref();
       try {
-        await this.#runReview(attemptId, controller.signal);
+        await this.#runReview(attemptId, AbortSignal.any([controller.signal, deadline.signal]));
       } catch (error) {
-        const appError = this.#error(error, "MR 检视");
+        const appError = deadline.signal.aborted && !controller.signal.aborted
+          ? openCodeError("REVIEW_TIMEOUT", "检视超过 60 分钟总时限，必要查证未完成。") : this.#error(error, "MR 检视");
         if (controller.signal.aborted || ["GIT_CANCELLED", "OPENCODE_CANCELLED"].includes(appError.code)) {
           await this.#mutate((draft) => {
             const target = draft.attemptsById[attemptId!];
@@ -550,7 +556,9 @@ export class ReviewXRuntime {
               target.phase = undefined;
               target.completedAt = this.#now().toISOString();
               target.error = this.dependencies.logger.safeError(appError);
-              for (const finding of target.findings) if (finding.status === "pending") finding.status = "archived";
+              target.findings = [];
+              target.reportPath = undefined;
+              target.result = undefined;
             }
             for (const queuedId of draft.reviewQueue) {
               const queued = draft.attemptsById[queuedId];
@@ -566,6 +574,7 @@ export class ReviewXRuntime {
           this.#logError(this.#context(attempt), appError);
         }
       } finally {
+        clearTimeout(timeout);
         await this.#mutate((draft) => {
           if (draft.activeReviewAttemptId === attemptId) draft.activeReviewAttemptId = null;
         }).catch(() => undefined);
@@ -601,6 +610,7 @@ export class ReviewXRuntime {
       await this.#phase(attemptId, "verifying_mr", (attempt) => {
         attempt.sourceSha = prepared!.sourceSha;
         attempt.targetSha = prepared!.targetSha;
+        attempt.baseSha = prepared!.baseSha;
       });
       const verified = await this.dependencies.codeHub.viewMr(initialAttempt.projectId, initialAttempt.mrIid, first.title, signal);
       assertOpen(verified);
@@ -618,10 +628,12 @@ export class ReviewXRuntime {
           technical: "MR identity fields changed between the two required mr view calls.",
         });
       }
-      await this.#phase(attemptId, "running_opencode");
-      this.#info(this.#context(initialAttempt), "Running one read-only OpenCode review invocation.");
+      this.#info(this.#context(initialAttempt), "Starting a read-only OpenCode investigation and verification session.");
       this.#assertOperational();
-      const result = await this.dependencies.reviewer.review(initialAttempt.projectId, first, prepared, signal);
+      const result = await this.dependencies.reviewer.review(initialAttempt.projectId, first, prepared, signal, {
+        phase: async phase => { this.#assertOperational(); await this.#phase(attemptId, phase); },
+        diagnostic: event => { this.#assertOperational(); this.#info(this.#context(initialAttempt), `OpenCode ${JSON.stringify(event)}`); },
+      });
       if (signal.aborted) throw new AppError({
         code: "OPENCODE_CANCELLED",
         message: "OpenCode 检视已停止。",
@@ -637,10 +649,14 @@ export class ReviewXRuntime {
         if (!attempt) throw new Error(`Missing attempt ${attemptId}.`);
         attempt.reportPath = reportPath;
         attempt.result = result.findings.length === 0 ? "pass" : "findings";
+        attempt.limitations = result.limitations;
         attempt.findings = result.findings.map((finding, index) => ({
           ordinal: index + 1,
           severity: finding.severity,
           body: finding.body,
+          confidence: finding.confidence,
+          verificationSummary: finding.verificationSummary,
+          evidence: finding.evidence,
           status: "pending",
         }));
         attempt.phase = "cleaning_up";

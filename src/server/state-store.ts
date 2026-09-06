@@ -14,7 +14,7 @@ import { AppError } from "./errors";
 import { withFileLock } from "./file-lock";
 import { settleFindingDecisions } from "./finding-state";
 import type { DataPaths } from "./paths";
-import { credentialFreeHttpsUrlSchema } from "./schemas";
+import { credentialFreeHttpsUrlSchema, reviewEvidenceSchema } from "./schemas";
 
 const positiveId = z.string().regex(/^[1-9]\d*$/u);
 const errorSchema = z.strictObject({
@@ -55,6 +55,9 @@ const findingSchema = z.strictObject({
   ordinal: z.number().int().positive(),
   severity: z.enum(severityValues),
   body: z.string().min(1),
+  confidence: z.number().int().min(0).max(100).optional(),
+  verificationSummary: z.string().min(1).optional(),
+  evidence: z.array(reviewEvidenceSchema).optional(),
   status: z.enum(findingStatusValues),
   batchId: z.string().min(1).optional(),
   publishedAt: z.string().min(1).optional(),
@@ -82,6 +85,8 @@ const attemptSchema = z.strictObject({
   targetBranch: z.string().min(1).optional(),
   sourceSha: z.string().min(1).optional(),
   targetSha: z.string().min(1).optional(),
+  baseSha: z.string().min(1).optional(),
+  limitations: z.array(z.string()).optional(),
   status: z.enum(attemptStatusValues),
   phase: z.enum(reviewPhaseValues).optional(),
   createdAt: z.string().min(1),

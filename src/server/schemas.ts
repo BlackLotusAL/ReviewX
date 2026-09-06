@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { severityValues } from "@/src/shared/types";
+import { isReviewPath } from "./review-context";
 
 export const positiveIdSchema = z.string().regex(/^[1-9]\d*$/u);
 
@@ -55,12 +56,34 @@ export const codeHubErrorSchema = z.object({
   http_status: z.number().int().optional(),
 }).passthrough();
 
-export const reviewerResultSchema = z.object({
-  findings: z.array(z.object({
-    severity: z.enum(severityValues),
-    body: z.string().refine((value) => value.trim().length > 0 && !value.includes("\0"), "body must be non-empty safe text"),
-  }).passthrough()),
-}).passthrough();
+const reviewText = z.string().min(1).refine(value => value.trim().length > 0 && !value.includes("\0"), "non-empty safe text required");
+export const reviewEvidenceSchema = z.strictObject({
+  side: z.enum(["source", "base"]),
+  path: z.string().min(1).refine(isReviewPath, "relative repository path required"),
+  startLine: z.number().int().positive(),
+  endLine: z.number().int().positive(),
+}).refine(value => value.endLine >= value.startLine, "invalid line range");
+export const reviewerFindingSchema = z.strictObject({
+  severity: z.enum(severityValues), body: reviewText,
+  confidence: z.number().int().min(0).max(100),
+  verificationSummary: reviewText,
+  evidence: z.array(reviewEvidenceSchema).min(1),
+});
+export const reviewerResultSchema = z.strictObject({
+  findings: z.array(reviewerFindingSchema),
+  limitations: z.array(reviewText).optional(),
+});
+export const reviewCheckpointSchema = z.strictObject({
+  status: z.enum(["complete", "needs_context"]),
+  nextChecks: z.array(reviewText),
+  findings: z.array(reviewerFindingSchema),
+  limitations: z.array(reviewText),
+}).superRefine((value, context) => {
+  if (value.status === "complete" && value.nextChecks.length !== 0) context.addIssue({ code: "custom", path: ["nextChecks"], message: "complete requires no outstanding checks" });
+  if (value.status === "needs_context" && (value.nextChecks.length === 0 || value.findings.length !== 0)) context.addIssue({ code: "custom", message: "needs_context requires outstanding checks and no publishable findings" });
+});
+
+export const reviewCheckpointJsonSchema = z.toJSONSchema(reviewCheckpointSchema, { target: "draft-7" });
 
 export type CodeHubRepo = z.infer<typeof codeHubRepoSchema>;
 export type CodeHubMrListEntry = z.infer<typeof codeHubMrListEntrySchema>;
