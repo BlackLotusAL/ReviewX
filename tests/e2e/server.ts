@@ -39,7 +39,7 @@ harness.reviewer.results.set("1", {
 harness.reviewer.results.set("2", { findings: [] });
 installRuntimeForTests(harness.runtime);
 
-const application = next({ dev: true, dir: process.cwd(), hostname: host, port });
+const application = next({ dev: process.env.REVIEWX_E2E_PRODUCTION !== "1", dir: process.cwd(), hostname: host, port });
 await application.prepare();
 const handler = application.getRequestHandler();
 const server = createServer((request, response) => {

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("card-level decisions, cached report folding, MR links, history, and Markdown safety", async ({ page }) => {
+test("card-level decisions, cached report folding, MR links, history, and Markdown safety", async ({ page }, testInfo) => {
   let reportRequests = 0;
   page.on("request", (request) => {
     if (new URL(request.url()).pathname.startsWith("/api/reports/")) reportRequests += 1;
@@ -10,11 +10,15 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   await expect(page.getByRole("heading", { name: "ReviewX" })).toBeVisible();
   await expect(page.locator(".project-panel")).toBeVisible();
   await expect(page.locator(".mr-panel")).toBeVisible();
-  await expect(page.getByText("ReviewX 不会自动扫描或发布评论。")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "暂无项目" })).toBeVisible();
+  await page.getByRole("button", { name: "添加项目", exact: true }).click();
+  await expect(page.getByLabel("Project ID")).toBeFocused();
 
   await page.getByLabel("Project ID").fill("101");
-  await page.getByRole("button", { name: "添加" }).click();
+  await page.getByRole("button", { name: "添加", exact: true }).click();
   await expect(page.getByLabel("已登记 Project").getByText("team/project-101", { exact: true })).toBeVisible();
+  await expect(page.locator(".inline-feedback")).toHaveText("项目已添加");
+  await expect(page.getByText("尚未刷新 MR", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "刷新 MR" }).click();
 
   const firstCard = page.locator(".mr-card").filter({ hasText: "Security-sensitive parser update" });
@@ -29,15 +33,16 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
     link.addEventListener("click", (event) => event.preventDefault(), { once: true });
     (link as HTMLElement).click();
   });
-  await expect(page.getByRole("complementary", { name: "MR 详情抽屉" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "MR 详情抽屉" })).toHaveCount(0);
 
   await firstCard.getByRole("button", { name: "开始检视" }).click();
   await secondCard.getByRole("button", { name: "开始检视" }).click();
   await expect(secondCard.getByText("队列第 1 位")).toBeVisible();
   await expect(firstCard.getByText("检视中")).toBeVisible();
+  await expect(firstCard.locator(".phase")).toHaveText(/运行 OpenCode/u);
 
-  await firstCard.click();
-  const drawer = page.getByRole("complementary", { name: "MR 详情抽屉" });
+  await firstCard.locator(".mr-open").click();
+  const drawer = page.getByRole("dialog", { name: "MR 详情抽屉" });
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText("待处理", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
   await expect(secondCard.getByText("已完成")).toBeVisible({ timeout: 15_000 });
@@ -57,6 +62,7 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   const publicImage = drawer.getByRole("link", { name: "[图片链接] Public image" });
   await expect(publicImage).toHaveAttribute("href", "https://example.com/public.png");
   await expect(drawer.getByRole("link", { name: "Public documentation" })).toHaveAttribute("href", "https://example.com/docs");
+  await page.screenshot({ path: testInfo.outputPath("review-finding.png"), fullPage: true });
 
   await findings.nth(0).getByRole("button", { name: "发送到 CodeHub" }).click();
   await expect(findings.nth(0).getByText("已发送", { exact: true })).toBeVisible();
@@ -90,8 +96,21 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   await drawer.getByRole("button", { name: "关闭详情" }).click();
   await firstCard.getByRole("button", { name: "重新检视" }).click();
   await expect(firstCard.getByText("待处理")).toBeVisible({ timeout: 15_000 });
-  await firstCard.click();
+  await firstCard.locator(".mr-open").click();
   const historyTabs = drawer.getByRole("tablist", { name: "Attempt 历史" });
-  await expect(historyTabs.getByRole("button")).toHaveCount(2);
-  await expect(historyTabs.getByRole("button", { name: /历史 .*已归档/u })).toBeVisible();
+  await expect(historyTabs.getByRole("tab")).toHaveCount(2);
+  await expect(historyTabs.getByRole("tab", { name: /历史 .*已归档/u })).toBeVisible();
+
+  await drawer.getByRole("button", { name: "关闭详情" }).click();
+  await firstCard.locator(".mr-open").click();
+  await historyTabs.getByRole("tab", { name: /历史 .*已归档/u }).click();
+  await expect(drawer.getByRole("button", { name: "发送到 CodeHub" })).toHaveCount(0);
+  await drawer.getByRole("button", { name: "关闭详情" }).click();
+  await secondCard.locator(".mr-open").click();
+  await expect(drawer.getByText("未发现问题。")).toBeVisible();
+  await drawer.getByRole("button", { name: "关闭详情" }).click();
+  await firstCard.getByRole("button", { name: "重新检视" }).click();
+  await firstCard.getByRole("button", { name: "停止", exact: true }).click();
+  await expect(firstCard.getByText("已停止", { exact: true })).toBeVisible();
+
 });
