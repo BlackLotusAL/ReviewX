@@ -93,7 +93,12 @@ pnpm test:ai:quality
 - Git 输入被拦截：完整 diff 或源文件快照命中了凭据模式；先移除并轮换仓库内凭据，再重新检视。
 - 无法自动打开浏览器：从终端复制 `http://127.0.0.1:<port>` 地址；服务通常仍在运行。
 - 页面操作被拒绝或服务进入致命状态：查看页面中的“原因、影响、下一步”和折叠的“技术详情”，或打开左栏“查看当前会话日志”排查。
+- OpenCode 本机接口连接失败：在会话日志中按 `Attempt` 查找对应检视，再查看 `http_failed` / `sse_failed`。日志包含接口、HTTP 状态（已收到时）、耗时、失败阶段及原始异常链，例如 `ECONNREFUSED`、`ECONNRESET`、`UND_ERR_HEADERS_TIMEOUT` 或 `UND_ERR_BODY_TIMEOUT`；网页仍显示原有错误摘要。`service_*` 记录服务启动、版本与退出原因，`session_cleanup` 记录清理失败。
 - MR 被误判为非开放状态：ReviewX 同时接受 `mr view` 返回的 `open` 和 `opened`；如果仍报错，请在日志中确认 CodeHub 实际返回的 `state` 值。
 - 意外退出后：排队中、检视中和停止中的 attempt 会恢复为已停止；中断评论的当前 Finding 会标为 unknown，其他 pending Finding 仍可继续处理，ReviewX 不会自动补发。旧版多条批次中的后续项仍兼容恢复为 not_attempted。
+
+会话日志位于 `%LOCALAPPDATA%\ReviewX\logs\reviewx-*.log`，启动终端也会显示本次文件路径。“查看当前会话日志”读取当前服务的文件；每次重启都会创建新文件，排查之前的失败时，请按发生时间查找该目录中的旧日志。新增诊断只对更新后发生的检视有效，历史日志中已经丢弃的底层异常无法补回。
+
+连接失败或服务异常退出时，日志会附带已捕获 stdout、stderr 的尾部，各最多 16 KiB；异常诊断最多 16 KiB、`cause` 链最多 5 层，截断处有标记。文本在截断前脱敏，包括环境凭据、临时 OpenCode 密码及其 Basic 认证编码。HTTP/SSE 诊断只记录元数据和错误信息，不记录请求头、提示词、仓库正文或模型回复正文。
 
 报告与 Finding Markdown 均按不可信输入处理：原始 HTML、危险 scheme、表单和嵌入内容会被丢弃，图片只展示为经过公共 HTTP(S) allowlist 校验的链接，不会自动加载。

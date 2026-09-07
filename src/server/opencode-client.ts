@@ -5,6 +5,7 @@ import { AppError } from "./errors";
 import type { PreparedReview } from "./git";
 import { runProcess, type ResolvedCommand } from "./process";
 import { OpenCodeEvents } from "./opencode-events";
+import { OpenCodeDiagnostics } from "./opencode-diagnostics";
 
 export type ReviewTelemetry = Record<string, string | number | boolean | undefined>;
 export interface OpenCodeMessage {
@@ -54,9 +55,16 @@ export function decodeOpenCodeMessage(value: unknown, sessionID: string): OpenCo
   return value as unknown as OpenCodeMessage;
 }
 
-async function responseJson(response: Response): Promise<unknown> {
+interface ResponseProgress {
+  stage: "waiting_headers" | "response_headers" | "reading_body" | "parsing_json";
+  responseBytes: number;
+  status?: number;
+}
+
+async function responseJson(response: Response, progress: ResponseProgress): Promise<unknown> {
   if (!response.ok) throw openCodeError("OPENCODE_HTTP_ERROR", `OpenCode 本机接口返回 HTTP ${response.status}。`);
   if (!response.body) throw openCodeError("INVALID_OPENCODE_RESPONSE", "OpenCode 返回了空响应。");
+  progress.stage = "reading_body";
   const reader = response.body.getReader();
   const buffers: Uint8Array[] = [];
   let bytes = 0;
@@ -65,9 +73,11 @@ async function responseJson(response: Response): Promise<unknown> {
       const next = await reader.read();
       if (next.done) break;
       bytes += next.value.length;
+      progress.responseBytes = bytes;
       if (bytes > 64 * 1024 * 1024) throw openCodeError("OPENCODE_OUTPUT_LIMIT", "OpenCode 响应超过 64 MiB 上限。");
       buffers.push(next.value);
     }
+    progress.stage = "parsing_json";
     try { return JSON.parse(Buffer.concat(buffers).toString("utf8")) as unknown; }
     catch { throw openCodeError("INVALID_OPENCODE_RESPONSE", "OpenCode 本机接口未返回有效 JSON。"); }
   } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
@@ -80,8 +90,18 @@ export async function connectOpenCode(
   command?: ResolvedCommand,
 ): Promise<OpenCodeConnection> {
   signal.throwIfAborted();
+  const serviceStarted = Date.now();
   const resolved = command ?? await resolveCommand("opencode", environment);
   const password = randomBytes(32).toString("hex");
+  const diagnostics = new OpenCodeDiagnostics(environment, password);
+  let address = "", sessionID = "", version = "";
+  let activeRequestID: string | undefined;
+  let activeRound: number | undefined;
+  let failureOutput = false;
+  const emit = (event: ReviewTelemetry) => diagnostic(diagnostics.event({
+    sessionID: sessionID || undefined, version: version || undefined,
+    requestID: activeRequestID, round: activeRound, ...event,
+  }));
   const controller = new AbortController();
   const died = new AbortController();
   const processSignal = AbortSignal.any([signal, controller.signal]);
@@ -91,6 +111,8 @@ export async function connectOpenCode(
   let resolveAddress!: (address: string) => void;
   let rejectAddress!: (error: Error) => void;
   const ready = new Promise<string>((resolve, reject) => { resolveAddress = resolve; rejectAddress = reject; });
+  emit({ event: "service_starting", nodeVersion: process.version, undiciVersion: process.versions.undici,
+    executable: resolved.executable, launcher: resolved.powerShellScript });
   const completion = runProcess(resolved, ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
     cwd: prepared.rootDirectory,
     env: { ...environment, OPENCODE_SERVER_USERNAME: "reviewx", OPENCODE_SERVER_PASSWORD: password,
@@ -102,26 +124,58 @@ export async function connectOpenCode(
       if (match && Number(match[2]) > 0 && Number(match[2]) <= 65535) resolveAddress(match[1]);
     },
   }).then(result => {
+    const unexpectedExit = !closing && !signal.aborted;
     if (!closing) {
       const error = openCodeError(result.aborted ? "OPENCODE_CANCELLED" : "OPENCODE_SERVER_EXIT",
         result.aborted ? "检视已按停止请求终止。" : "OpenCode 服务在检视完成前退出。",
         `exit=${result.exitCode}; timeout=${result.timedOut}; outputLimit=${result.outputLimitExceeded}`);
       rejectAddress(error); died.abort(error);
     }
-  }, error => { rejectAddress(error); died.abort(error); });
+    emit({ event: "service_exited", elapsedMs: Date.now() - serviceStarted,
+      exitCode: result.exitCode ?? "unavailable", processSignal: result.signal ?? undefined,
+      started: result.started, timedOut: result.timedOut, aborted: result.aborted, outputLimitExceeded: result.outputLimitExceeded,
+      cleanupRequested: closing, reviewAborted: signal.aborted,
+      stopReason: result.timedOut ? "process_timeout" : result.outputLimitExceeded ? "output_limit" :
+        !result.aborted ? "unexpected_exit" : signal.aborted ? "review_cancelled" : closing ? "cleanup" : "process_cancelled" });
+    if (failureOutput || unexpectedExit || result.timedOut || result.outputLimitExceeded) {
+      for (const stream of ["stdout", "stderr"] as const) {
+        if (result[stream]) emit({ event: "service_output", stream, text: diagnostics.text(result[stream], true) });
+      }
+    }
+  }, error => {
+    rejectAddress(error); died.abort(error);
+    emit({ event: "service_start_failed", elapsedMs: Date.now() - serviceStarted, error: diagnostics.error(error) });
+  });
+  // The promise is still awaited during cleanup; observe diagnostic write failures immediately.
+  void completion.catch(() => undefined);
   const startupSignal = AbortSignal.any([requestSignal, AbortSignal.timeout(30_000)]);
   const abortStartup = () => rejectAddress(openCodeError("OPENCODE_STARTUP_FAILED", "OpenCode 服务启动超时或被停止。"));
   startupSignal.addEventListener("abort", abortStartup, { once: true });
-  let address = "", sessionID = "";
   const eventController = new AbortController();
   let eventCompletion: Promise<void> | undefined;
   const headers = { Authorization: `Basic ${Buffer.from(`reviewx:${password}`).toString("base64")}`,
     "Content-Type": "application/json", "x-opencode-directory": encodeURIComponent(prepared.rootDirectory) };
   const rpc = async (path: string, method = "GET", body?: unknown, overrideSignal?: AbortSignal): Promise<unknown> => {
+    const started = Date.now();
+    const progress: ResponseProgress = { stage: "waiting_headers", responseBytes: 0 };
+    const requestID = record(body) && typeof body.messageID === "string" ? body.messageID : activeRequestID;
+    const context = { method, path, requestID };
+    const requestAbort = overrideSignal ?? requestSignal;
+    emit({ event: "http_started", ...context });
     try {
-      return await responseJson(await fetch(`${address}${path}`, { method, headers, redirect: "error", cache: "no-store",
-        body: body === undefined ? undefined : JSON.stringify(body), signal: overrideSignal ?? requestSignal }));
+      const response = await fetch(`${address}${path}`, { method, headers, redirect: "error", cache: "no-store",
+        body: body === undefined ? undefined : JSON.stringify(body), signal: requestAbort });
+      progress.status = response.status;
+      progress.stage = "response_headers";
+      emit({ event: "http_headers", ...context, status: response.status, elapsedMs: Date.now() - started });
+      const value = await responseJson(response, progress);
+      emit({ event: "http_completed", ...context, status: response.status, responseBytes: progress.responseBytes, elapsedMs: Date.now() - started });
+      return value;
     } catch (error) {
+      if (!signal.aborted) failureOutput = true;
+      emit({ event: "http_failed", ...context, ...progress, elapsedMs: Date.now() - started,
+        aborted: requestAbort.aborted, reviewAborted: signal.aborted, serviceAborted: died.signal.aborted,
+        error: diagnostics.error(error) });
       if (died.signal.aborted) throw died.signal.reason;
       if (signal.aborted) throw openCodeError("OPENCODE_CANCELLED", "检视已停止或达到总时限。");
       if (error instanceof AppError) throw error;
@@ -131,21 +185,30 @@ export async function connectOpenCode(
   const close = async () => {
     if (closing) return;
     closing = true;
+    const started = Date.now();
+    let cleanupStep = "abort_session";
     try {
       if (sessionID && !signal.aborted && !died.signal.aborted) {
         const cleanupSignal = AbortSignal.timeout(5_000);
         await rpc(`/session/${encodeURIComponent(sessionID)}/abort`, "POST", undefined, cleanupSignal);
+        cleanupStep = "delete_session";
         await rpc(`/session/${encodeURIComponent(sessionID)}`, "DELETE", undefined, cleanupSignal);
       }
-    } catch { diagnostic({ event: "session_cleanup", outcome: "process_cleanup_required" }); }
+    } catch (error) {
+      emit({ event: "session_cleanup", outcome: "process_cleanup_required", step: cleanupStep,
+        elapsedMs: Date.now() - started, error: diagnostics.error(error) });
+    }
     finally { eventController.abort(); controller.abort(); await Promise.all([completion, eventCompletion]); }
   };
   try {
     if (startupSignal.aborted) abortStartup();
     address = await ready;
     startupSignal.removeEventListener("abort", abortStartup);
+    emit({ event: "service_listening", address, elapsedMs: Date.now() - serviceStarted });
     const health = await rpc("/global/health");
     if (!record(health) || health.healthy !== true || typeof health.version !== "string") throw openCodeError("OPENCODE_INCOMPATIBLE", "OpenCode 健康检查不符合接口契约。");
+    version = health.version;
+    emit({ event: "service_healthy", elapsedMs: Date.now() - serviceStarted });
     const schema = await rpc("/doc");
     const properties = record(schema) && record(schema.components) && record(schema.components.schemas) &&
       record(schema.components.schemas.AssistantMessage) && schema.components.schemas.AssistantMessage.properties;
@@ -153,14 +216,39 @@ export async function connectOpenCode(
     const session = await rpc("/session", "POST", { title: `ReviewX ${prepared.sourceSha.slice(0, 12)}` });
     if (!record(session) || typeof session.id !== "string" || !/^ses/u.test(session.id)) throw openCodeError("INVALID_OPENCODE_RESPONSE", "OpenCode 未返回有效会话。");
     sessionID = session.id;
-    diagnostic({ event: "session_started", version: health.version, sessionID });
-    const events = new OpenCodeEvents(sessionID, diagnostic);
+    emit({ event: "session_started", version: health.version, sessionID });
+    const events = new OpenCodeEvents(sessionID, event => diagnostic(diagnostics.event(event)));
     const eventSignal = AbortSignal.any([requestSignal, eventController.signal]);
-    const stream = await fetch(`${address}/event`, { headers, signal: eventSignal, redirect: "error", cache: "no-store" });
-    if (!stream.ok || !stream.body) throw openCodeError("OPENCODE_CONNECTION_FAILED", "无法订阅 OpenCode 诊断事件。");
-    eventCompletion = events.consume(stream.body, eventSignal).catch(error => {
-      if (!closing && !eventSignal.aborted) died.abort(error instanceof AppError ? error : openCodeError("OPENCODE_CONNECTION_FAILED", "OpenCode 诊断事件连接中断。"));
-    });
+    const eventStarted = Date.now();
+    let eventStatus: number | undefined;
+    emit({ event: "sse_started", method: "GET", path: "/event" });
+    try {
+      const stream = await fetch(`${address}/event`, { headers, signal: eventSignal, redirect: "error", cache: "no-store" });
+      eventStatus = stream.status;
+      emit({ event: "sse_headers", method: "GET", path: "/event", status: eventStatus, elapsedMs: Date.now() - eventStarted });
+      if (!stream.ok || !stream.body) throw openCodeError("OPENCODE_CONNECTION_FAILED", "无法订阅 OpenCode 诊断事件。");
+      eventCompletion = events.consume(stream.body, eventSignal).then(() => {
+        emit({ event: "sse_closed", path: "/event", aborted: eventSignal.aborted, elapsedMs: Date.now() - eventStarted });
+      }, error => {
+        if (!closing && !eventSignal.aborted) {
+          failureOutput = true;
+          try {
+            emit({ event: "sse_failed", method: "GET", path: "/event", stage: "reading_body",
+              status: eventStatus, elapsedMs: Date.now() - eventStarted, error: diagnostics.error(error) });
+          } finally {
+            died.abort(error instanceof AppError ? error : openCodeError("OPENCODE_CONNECTION_FAILED", "OpenCode 诊断事件连接中断。"));
+          }
+        } else {
+          emit({ event: "sse_closed", path: "/event", aborted: eventSignal.aborted, elapsedMs: Date.now() - eventStarted });
+        }
+      });
+      void eventCompletion.catch(() => undefined);
+    } catch (error) {
+      if (!signal.aborted) failureOutput = true;
+      emit({ event: "sse_failed", method: "GET", path: "/event", stage: eventStatus === undefined ? "waiting_headers" : "response_headers",
+        status: eventStatus, aborted: eventSignal.aborted, elapsedMs: Date.now() - eventStarted, error: diagnostics.error(error) });
+      throw error;
+    }
     const seen = new Set<string>();
     let round = 0;
     return {
@@ -169,8 +257,10 @@ export async function connectOpenCode(
         const started = Date.now();
         round++;
         const requestID = `msg_${Date.now().toString(16)}${randomBytes(12).toString("hex")}`;
+        activeRequestID = requestID;
+        activeRound = round;
         events.register(requestID, round, outputSchema ? 3 : 20);
-        diagnostic({ event: "round_started", round, agent, sessionID, requestID });
+        emit({ event: "round_started", round, agent, sessionID, requestID });
         const value = await rpc(`/session/${encodeURIComponent(sessionID)}/message`, "POST", {
           messageID: requestID, agent, ...(model ? { model } : {}), parts: [{ type: "text", text }],
           ...(outputSchema ? { format: { type: "json_schema", schema: outputSchema, retryCount: 0 } } : {}),
@@ -183,11 +273,17 @@ export async function connectOpenCode(
         if (model && (message.info.modelID !== model.modelID || message.info.providerID !== model.providerID)) throw openCodeError("INVALID_OPENCODE_RESPONSE", "OpenCode 未沿用指定模型。");
         seen.add(message.info.id);
         events.message(message);
-        diagnostic({ event: "round_completed", round, elapsedMs: Date.now() - started, error: message.info.error?.name });
+        emit({ event: "round_completed", round, elapsedMs: Date.now() - started, error: message.info.error?.name });
         return message;
       },
       close,
     };
-  } catch (error) { await close(); throw error; }
+  } catch (error) {
+    try {
+      emit({ event: "connection_failed", elapsedMs: Date.now() - serviceStarted, listening: Boolean(address),
+        aborted: signal.aborted, startupAborted: startupSignal.aborted, error: diagnostics.error(error) });
+    } finally { await close(); }
+    throw error;
+  }
   finally { startupSignal.removeEventListener("abort", abortStartup); }
 }
