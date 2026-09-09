@@ -37,6 +37,39 @@ async function latest(harness: RuntimeHarness, projectId: string, mrIid: string)
 }
 
 describe("ReviewX runtime workflows", () => {
+  it("preserves review timing through decisions, publication, persistence and a fresh attempt", async () => {
+    const harness = await createRuntimeHarness();
+    try {
+      configureMr(harness, "101", "1");
+      await registerAndRefresh(harness, ["101"]);
+      harness.reviewer.results.set("1", reviewerResult("first", "second"));
+      await harness.runtime.createReview("101", "1");
+      await harness.runtime.waitForIdle();
+      const first = await latest(harness, "101", "1");
+      expect(first.reviewFinishedAt).toBe(first.completedAt);
+      expect(Date.parse(first.reviewFinishedAt!)).toBeGreaterThan(Date.parse(first.startedAt!));
+      await harness.runtime.decideFinding(first.id, 1, "dismissed");
+      await harness.runtime.publishFinding(first.id, 2);
+      const processed = await latest(harness, "101", "1");
+      expect(processed.completedAt).not.toBe(first.completedAt);
+      expect(processed.reviewFinishedAt).toBe(first.reviewFinishedAt);
+      expect(harness.runtime.snapshot().projects[0].mergeRequests[0]).toMatchObject({ reviewStartedAt: first.startedAt, reviewFinishedAt: first.reviewFinishedAt });
+      expect((await harness.store.read()).attemptsById[first.id].reviewFinishedAt).toBe(first.reviewFinishedAt);
+      harness.reviewer.delayMs = 500;
+      await harness.runtime.createReview("101", "1");
+      await waitUntil(() => harness.runtime.snapshot().projects[0].mergeRequests[0].status === "reviewing");
+      const next = await latest(harness, "101", "1");
+      expect(next.id).not.toBe(first.id);
+      expect(next.reviewFinishedAt).toBeUndefined();
+      expect(next.startedAt).not.toBe(first.startedAt);
+      await harness.runtime.stopAttempt(next.id);
+      await harness.runtime.waitForIdle();
+      const stopped = await latest(harness, "101", "1");
+      expect(stopped.reviewFinishedAt).toBe(stopped.stoppedAt);
+      expect(stopped.reviewFinishedAt).toBeDefined();
+      expect((await attempts(harness, "101", "1"))[1].reviewFinishedAt).toBe(first.reviewFinishedAt);
+    } finally { await harness.cleanup(); }
+  });
   it("manages Project history and performs ordered, partial manual refreshes without automation", async () => {
     const harness = await createRuntimeHarness();
     try {
@@ -187,6 +220,9 @@ describe("ReviewX runtime workflows", () => {
       const attempt = await latest(harness, "101", "1");
       expect(attempt.status).toBe("review_failed");
       expect(attempt.error?.code).toBe("MR_CHANGED_DURING_PREPARATION");
+      expect(attempt.reviewFinishedAt).toBeDefined();
+      expect(attempt.reviewFinishedAt).toBe(attempt.completedAt);
+      expect(harness.runtime.snapshot().projects[0].mergeRequests[0].reviewFinishedAt).toBe(attempt.reviewFinishedAt);
       expect(attempt.reportUrl).toBeUndefined();
       expect(harness.reviewer.order).toEqual([]);
       expect(harness.git.cleanupCount).toBe(1);
