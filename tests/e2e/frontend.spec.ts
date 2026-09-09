@@ -28,6 +28,28 @@ async function noOverflow(page: Page) {
   }
 }
 
+test("state polling recovers automatically without a manual retry button", async ({ page }) => {
+  const data = fixtures();
+  let healthy = false;
+  let active = 0;
+  let maxActive = 0;
+  await page.route("**/api/state", async route => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    active--;
+    if (healthy) await route.fulfill({ json: data.state });
+    else await route.abort("failed");
+  });
+  await page.goto("/");
+  await expect(page.locator(".mr-panel > .diagnostic")).toBeVisible();
+  await expect(page.getByRole("button", { name: "重新读取状态" })).toHaveCount(0);
+  healthy = true;
+  await expect(page.locator(".mr-card")).toHaveCount(2);
+  await expect(page.locator(".mr-panel > .diagnostic")).toHaveCount(0);
+  expect(maxActive).toBe(1);
+});
+
 test("project failures preserve input; modal keyboard, history navigation, backdrop and focus restoration", async ({ page }) => {
   const data = fixtures();
   const projects = data.state.projects;
@@ -93,6 +115,7 @@ test("polling and decisions preserve content, scroll position and one-shot trans
   await page.locator(".mr-open").first().click();
   const dialog = page.getByRole("dialog");
   const card = dialog.locator(".finding-card").first();
+  await expect(dialog.locator(".attempt-overview code")).toHaveText("latest");
   const secondCard = dialog.locator(".finding-card").nth(1);
   const button = card.getByRole("button", { name: "发送到 CodeHub" });
   await button.scrollIntoViewIfNeeded();
@@ -103,6 +126,7 @@ test("polling and decisions preserve content, scroll position and one-shot trans
   await expect(card.getByText("已发送", { exact: true })).toBeVisible();
   expect(publishRequests).toBe(1);
   await expect(card).toBeFocused();
+  await expect(card.locator(".finding-severity")).toHaveCSS("background-color", "rgb(255, 243, 232)");
   expect(await card.evaluate(el => el.getBoundingClientRect().height)).toBe(cardHeight);
   expect(await dialog.evaluate(el => el.scrollTop)).toBe(scroll);
   expect(await secondCard.evaluate(el => el.getBoundingClientRect().top)).toBe(secondY);
@@ -118,6 +142,58 @@ test("polling and decisions preserve content, scroll position and one-shot trans
   expect(await dialog.locator(".drawer-live").textContent()).toBe(announcement);
   expect(await page.locator(".mr-card").first().evaluate(el => el.getAnimations().length)).toBe(0);
   expect(await dialog.locator(".findings-section").evaluate(el => Boolean(el.compareDocumentPosition(document.querySelector(".report-section")!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+});
+
+test("dismiss and undo preserve finding height, scroll and focus", async ({ page }) => {
+  const data = fixtures();
+  await intercept(page, data);
+  await page.route("**/api/attempts/latest/findings/1", async route => {
+    data.detail.attempts[0].findings[0].status = route.request().postDataJSON().decision;
+    data.state.revision++;
+    await route.fulfill({ json: data.state });
+  });
+  await page.goto("/");
+  await page.locator(".mr-open").first().click();
+  const dialog = page.getByRole("dialog");
+  const card = dialog.locator(".finding-card").first();
+  for (const action of ["不发送", "撤销"]) {
+    const button = card.getByRole("button", { name: action, exact: true });
+    await button.scrollIntoViewIfNeeded();
+    const height = await card.evaluate(el => el.getBoundingClientRect().height);
+    await button.click();
+    const scroll = await dialog.evaluate(el => el.scrollTop);
+    await expect(card.locator(".finding-header .status")).toHaveText(action === "不发送" ? "已跳过" : "待处理");
+    await expect(card).toBeFocused();
+    expect(await card.evaluate(el => el.getBoundingClientRect().height)).toBe(height);
+    expect(await dialog.evaluate(el => el.scrollTop)).toBe(scroll);
+  }
+});
+
+test("mobile header actions preserve focus and scrolling", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const data = fixtures();
+  await intercept(page, data);
+  await page.route("**/api/attempts/latest/findings/1**", async route => {
+    await new Promise(resolve => setTimeout(resolve, 150));
+    data.detail.attempts[0].findings[0].status = route.request().method() === "POST" ? "published" : route.request().postDataJSON().decision;
+    data.state.revision++;
+    await route.fulfill({ json: data.state });
+  });
+  await page.goto("/");
+  await page.locator(".mr-open").first().click();
+  const dialog = page.getByRole("dialog");
+  const card = dialog.locator(".finding-card").first();
+  for (const [action, status] of [["不发送", "已跳过"], ["撤销", "待处理"], ["发送到 CodeHub", "已发送"]]) {
+    const button = card.getByRole("button", { name: action, exact: true });
+    await button.scrollIntoViewIfNeeded();
+    await button.click();
+    const scroll = await dialog.evaluate(el => el.scrollTop);
+    await expect(card.locator(".status")).toHaveText(status);
+    await expect(card).toBeFocused();
+    expect(await dialog.evaluate(el => el.scrollTop)).toBe(scroll);
+    await noOverflow(page);
+  }
+  await expect(card.locator(".finding-actions, footer")).toHaveCount(0);
 });
 
 test("closing a loading drawer ignores late responses and reduced motion stays static", async ({ page }) => {
@@ -142,7 +218,7 @@ test("closing a loading drawer ignores late responses and reduced motion stays s
   expect(await page.locator(".spinner").first().evaluate(el => getComputedStyle(el).animationName)).toBe("none");
 });
 
-for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }, { width: 390, height: 844 }]) {
+for (const viewport of [{ width: 1440, height: 900 }, { width: 1230, height: 1216 }, { width: 1024, height: 768 }, { width: 390, height: 844 }]) {
   test(`layout and local fonts at ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
     const data = fixtures();
@@ -159,8 +235,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768
     await page.goto("/");
     await expect(page.locator(".welcome")).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
-    expect(await page.evaluate(() => [...document.fonts].filter(f => f.status === "loaded").map(f => f.family))).toEqual(expect.arrayContaining(["Inter", "Geist Mono"]));
-    expect(fontResponses).toEqual([200, 200]);
+    expect(await page.evaluate(() => [...document.fonts].filter(f => f.status === "loaded").map(f => f.family))).toContain("Inter");
     if (viewport.width === 1440) {
       const session = await page.context().newCDPSession(page);
       await session.send("DOM.enable"); await session.send("CSS.enable");
@@ -175,10 +250,17 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768
     data.state.projects = populated.projects;
     data.state.revision++;
     await expect(page.locator(".mr-open").first()).toBeVisible();
+    // MR numbers and timestamps load the mono font after the empty-state form label was removed.
+    await page.evaluate(() => document.fonts.ready);
+    expect(await page.evaluate(() => [...document.fonts].filter(f => f.status === "loaded").map(f => f.family))).toEqual(expect.arrayContaining(["Inter", "Geist Mono"]));
+    expect(fontResponses).toEqual([200, 200]);
     await noOverflow(page);
     await page.screenshot({ animations: "disabled", path: testInfo.outputPath("queue.png"), fullPage: true });
     await page.locator(".mr-open").first().click();
     await expect(page.locator(".finding-card")).toHaveCount(2);
+    data.detail.attempts[0].id = `attempt-${"long-identifier-".repeat(16)}`;
+    data.state.revision++;
+    await expect(page.locator(".attempt-overview code")).toHaveText(data.detail.attempts[0].id);
     await noOverflow(page);
     await page.screenshot({ animations: "disabled", path: testInfo.outputPath("findings.png") });
     // Exercise unbroken code and wide tables inside their own scroll containers.

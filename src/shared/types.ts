@@ -132,6 +132,7 @@ export interface ReviewAttempt {
   startedAt?: string;
   completedAt?: string;
   stoppedAt?: string;
+  reviewFinishedAt?: string;
   archivedAt?: string;
   archivedFromStatus?: AttemptStatus;
   reportPath?: string;
@@ -179,6 +180,8 @@ export interface MrRowView extends MergeRequestSnapshot {
   queuePosition?: number;
   latestAttemptId?: string;
   latestAttemptUpdatedAt?: string;
+  reviewStartedAt?: string;
+  reviewFinishedAt?: string;
   primaryAction: MrPrimaryAction;
   error?: SafeErrorView;
 }

@@ -93,6 +93,7 @@ const attemptSchema = z.strictObject({
   startedAt: z.string().min(1).optional(),
   completedAt: z.string().min(1).optional(),
   stoppedAt: z.string().min(1).optional(),
+  reviewFinishedAt: z.string().min(1).optional(),
   archivedAt: z.string().min(1).optional(),
   archivedFromStatus: z.enum(attemptStatusValues).optional(),
   reportPath: z.string().min(1).optional(),

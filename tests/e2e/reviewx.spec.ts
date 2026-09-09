@@ -55,7 +55,7 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   const findings = drawer.locator(".finding-card");
   await expect(findings).toHaveCount(2);
   await expect(findings.nth(0).getByText("置信度 95/100")).toBeVisible();
-  await expect(findings.nth(0).getByText("已核对调用方与变更代码。")).toBeVisible();
+  await expect(findings.nth(0).getByText("已核对调用方与变更代码。")).toHaveCount(0);
   await expect(findings.nth(0).getByText("置信度 95/100")).toHaveAttribute("title", /模型自评.*统计/u);
 
   await expect(drawer.locator("script, form, iframe, object, embed, img")).toHaveCount(0);

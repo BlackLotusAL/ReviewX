@@ -59,6 +59,7 @@ describe("atomic persistent state", () => {
     expect(Object.values(recovered.attemptsById).map((item) => item.status)).toEqual(["stopped", "stopped", "stopped"]);
     expect(recovered.reviewQueue).toEqual([]);
     expect(recovered.activeReviewAttemptId).toBeNull();
+    expect(Object.values(recovered.attemptsById).every(item => item.reviewFinishedAt === undefined)).toBe(true);
   });
 
   test("startup classifies interrupted publication as unknown and not_attempted", async () => {
@@ -111,5 +112,14 @@ describe("atomic persistent state", () => {
     expect(restored.attemptsById.dismissed.findings[0].confidence).toBeUndefined();
     expect(restored.attemptsById.dismissed.findings[0].verificationSummary).toBeUndefined();
     expect(restored.attemptsById.dismissed.limitations).toBeUndefined();
+    expect(restored.attemptsById.dismissed.reviewFinishedAt).toBeUndefined();
+  });
+  test("persists the optional review finish without changing the state version", async () => {
+    const { paths, store } = await setup();
+    const finished = "2026-09-02T00:03:08Z";
+    await store.mutate(draft => { draft.attemptsById.done = { ...attempt("done", "completed"), startedAt: "2026-09-02T00:00:00Z", reviewFinishedAt: finished }; });
+    const restored = await new StateStore(paths).initialize("2026-09-03T00:00:00Z");
+    expect(restored.version).toBe(1);
+    expect(restored.attemptsById.done.reviewFinishedAt).toBe(finished);
   });
 });

@@ -65,6 +65,8 @@ ReviewX Web API 是本机单实例网页与 Node.js 服务之间的内部接口�
 
 MR 列表项除 MR 快照外，还会包含页面状态 `status`、可选执行阶段 `phase`、可选队列位置 `queuePosition`、最近 attempt 引用、主操作 `primaryAction` 和已脱敏错误。
 
+列表项还提供可选的 `reviewStartedAt` 和 `reviewFinishedAt`（ISO 时间字符串），对应最近 attempt 的实际执行开始和检视结束时间。执行中由客户端每秒更新耗时，不增加接口请求。结束时间包含准备与清理，不包含排队、人工处理或评论发送；停止、失败同样记录结束时间。详情 attempt 的开始时间沿用 `startedAt`，新增可选 `reviewFinishedAt`；它不会随问题决策或发布更新，不能用可能被更新的 `completedAt` 替代。旧记录和异常退出后缺少可靠结束时间的记录不回填，页面显示“—”；未开始的任务不显示耗时。
+
 检视阶段沿用状态轮询，无新增前端会话或聊天接口：
 
 | `phase` | 界面文字 |

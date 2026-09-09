@@ -141,6 +141,8 @@ export class ReviewXRuntime {
       queuePosition: queueIndex >= 0 ? queueIndex + 1 : undefined,
       latestAttemptId: latest.id,
       latestAttemptUpdatedAt: latest.updatedAt,
+      reviewStartedAt: latest.startedAt,
+      reviewFinishedAt: latest.reviewFinishedAt,
       primaryAction: action,
       error: latest.error,
     };
@@ -542,6 +544,7 @@ export class ReviewXRuntime {
             target.status = "stopped";
             target.phase = undefined;
             target.stoppedAt = this.#now().toISOString();
+            target.reviewFinishedAt = target.stoppedAt;
             target.error = undefined;
             target.reportPath = undefined;
             target.result = undefined;
@@ -555,6 +558,7 @@ export class ReviewXRuntime {
               target.status = "review_failed";
               target.phase = undefined;
               target.completedAt = this.#now().toISOString();
+              target.reviewFinishedAt = target.completedAt;
               target.error = this.dependencies.logger.safeError(appError);
               target.findings = [];
               target.reportPath = undefined;
@@ -680,6 +684,7 @@ export class ReviewXRuntime {
       attempt.status = attempt.findings.length === 0 ? "completed" : "awaiting_confirmation";
       attempt.phase = undefined;
       attempt.completedAt = this.#now().toISOString();
+      attempt.reviewFinishedAt = attempt.completedAt;
     });
     const completed = this.#state.attemptsById[attemptId];
     this.#info(this.#context(completed), completed.findings.length === 0
