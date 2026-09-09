@@ -86,11 +86,18 @@ pnpm test:package
 pnpm test:ai
 pnpm test:ai:protocol
 pnpm test:ai:quality
+pnpm test:ai:commit --repo . --commit main
 ```
 
 `pnpm test:package` 创建 npm tarball、隔离安装并验收 CLI 生命周期。`test:ai` 使用真实 Git 和默认 OpenCode 模型做多轮检视；`test:ai:protocol` 验证五轮会话与正文原样输出；`test:ai:quality` 对六类样例分别执行旧、新方案各三次（共 36 次），默认固定 `deepseek/deepseek-v4-flash`，可用 `REVIEWX_AI_MODEL=provider/model` 指定同一对照模型。真实测试会产生模型费用，不调用 CodeHub 或创建评论。
 
 测试结果保存在 `test-results/ai/`，包含输入、提交、模型版本、输出、耗时、Token 和可取得的费用。OpenCode 报告的费用不是账单；零值可能表示供应商未提供定价。质量门为新方案反例零误报、正例至少 8/9 命中且不低于旧方案、新方案 18/18 结果通过本地校验。
+
+`test:ai:commit` 用真实 OpenCode 检视指定仓库的一次提交，与其第一父提交比较（根提交无父提交，会明确失败）。提交引用在开始时固定为 SHA；在临时副本建立分支并复用生产 Git 准备、调查、查证和结构化校验链路，不包含工作区未提交内容。沿用本机默认模型、权限和 60 分钟总时限，不调用 CodeHub。源码会发送给本机配置的模型服务并产生模型费用。
+
+该入口的每次运行独立保存到 `test-results/ai-commit/run-*/`：`metadata.json` 记录版本和固定提交，`changes.patch` / `manifest.json` 记录检视输入，`events.jsonl` 持续追加脱敏传输、模型、工具、阶段和清理诊断，成功保存 `result.json`，失败保存 `error.json` 并以非零状态退出。实际模型以 `model_usage.model` 为准；`elapsedMs` 是对应操作耗时，`totalElapsedMs` 是整个测试的累计耗时。临时仓库和 OpenCode 数据库在结束时清理，诊断在失败后仍保留。
+
+默认 `pnpm test` 仅执行单元和集成测试，其中 OpenCode 服务为模拟服务；通过只能证明所覆盖的契约和错误处理，不能证明本机真实模型或长时间检视可用。`test:ai:commit` 以完整返回且通过结构/证据校验为链路成功，不要求发现问题，也不把无意见结果当作准确率。质量评估仍使用有已知答案的正反例。
 
 ## 故障排查
 
@@ -104,6 +111,8 @@ pnpm test:ai:quality
 - 意外退出后：排队中、检视中和停止中的 attempt 会恢复为已停止；中断评论的当前 Finding 会标为 unknown，其他 pending Finding 仍可继续处理，ReviewX 不会自动补发。旧版多条批次中的后续项仍兼容恢复为 not_attempted。
 
 会话日志位于 `%LOCALAPPDATA%\ReviewX\logs\reviewx-*.log`，启动终端也会显示本次文件路径。“查看当前会话日志”读取当前服务的文件；每次重启都会创建新文件，排查之前的失败时，请按发生时间查找该目录中的旧日志。新增诊断只对更新后发生的检视有效，历史日志中已经丢弃的底层异常无法补回。
+
+真实提交验证曾复现：OpenCode 仍在调查时，Node 默认 300 秒响应头超时先于 60 分钟总时限触发。现在每次检视使用独立 HTTP Agent，取消隐式 headers/body 超时，以已有总时限和停止信号结束请求；清理仍有 5 秒时限。`transport_configured` 会记录该策略，不影响应用其他 HTTP 请求。完整证据和测试边界见 [真实提交检视验证](docs/opencode-real-commit-validation.md)。
 
 连接失败或服务异常退出时，日志会附带已捕获 stdout、stderr 的尾部，各最多 16 KiB；异常诊断最多 16 KiB、`cause` 链最多 5 层，截断处有标记。文本在截断前脱敏，包括环境凭据、临时 OpenCode 密码及其 Basic 认证编码。HTTP/SSE 诊断只记录元数据和错误信息，不记录请求头、提示词、仓库正文或模型回复正文。
 

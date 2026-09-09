@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
+import { Agent } from "undici";
 import { resolveCommand } from "@/src/cli/resolve-command";
 import { AppError } from "./errors";
 import type { PreparedReview } from "./git";
@@ -153,6 +154,10 @@ export async function connectOpenCode(
   startupSignal.addEventListener("abort", abortStartup, { once: true });
   const eventController = new AbortController();
   let eventCompletion: Promise<void> | undefined;
+  // A synchronous model turn can exceed fetch's default 300s header/body limits.
+  // Only this attempt uses the override; the review AbortSignal owns its deadline.
+  const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+  const transport = { dispatcher };
   const headers = { Authorization: `Basic ${Buffer.from(`reviewx:${password}`).toString("base64")}`,
     "Content-Type": "application/json", "x-opencode-directory": encodeURIComponent(prepared.rootDirectory) };
   const rpc = async (path: string, method = "GET", body?: unknown, overrideSignal?: AbortSignal): Promise<unknown> => {
@@ -163,7 +168,7 @@ export async function connectOpenCode(
     const requestAbort = overrideSignal ?? requestSignal;
     emit({ event: "http_started", ...context });
     try {
-      const response = await fetch(`${address}${path}`, { method, headers, redirect: "error", cache: "no-store",
+      const response = await fetch(`${address}${path}`, { ...transport, method, headers, redirect: "error", cache: "no-store",
         body: body === undefined ? undefined : JSON.stringify(body), signal: requestAbort });
       progress.status = response.status;
       progress.stage = "response_headers";
@@ -198,11 +203,12 @@ export async function connectOpenCode(
       emit({ event: "session_cleanup", outcome: "process_cleanup_required", step: cleanupStep,
         elapsedMs: Date.now() - started, error: diagnostics.error(error) });
     }
-    finally { eventController.abort(); controller.abort(); await Promise.all([completion, eventCompletion]); }
+    finally { eventController.abort(); controller.abort(); await Promise.all([completion, eventCompletion, dispatcher.destroy()]); }
   };
   try {
     if (startupSignal.aborted) abortStartup();
     address = await ready;
+    emit({ event: "transport_configured", headersTimeoutMs: 0, bodyTimeoutMs: 0, deadline: "review_abort_signal" });
     startupSignal.removeEventListener("abort", abortStartup);
     emit({ event: "service_listening", address, elapsedMs: Date.now() - serviceStarted });
     const health = await rpc("/global/health");
@@ -223,7 +229,7 @@ export async function connectOpenCode(
     let eventStatus: number | undefined;
     emit({ event: "sse_started", method: "GET", path: "/event" });
     try {
-      const stream = await fetch(`${address}/event`, { headers, signal: eventSignal, redirect: "error", cache: "no-store" });
+      const stream = await fetch(`${address}/event`, { ...transport, headers, signal: eventSignal, redirect: "error", cache: "no-store" });
       eventStatus = stream.status;
       emit({ event: "sse_headers", method: "GET", path: "/event", status: eventStatus, elapsedMs: Date.now() - eventStarted });
       if (!stream.ok || !stream.body) throw openCodeError("OPENCODE_CONNECTION_FAILED", "无法订阅 OpenCode 诊断事件。");

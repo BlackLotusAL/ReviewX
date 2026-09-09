@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { connectOpenCode, type ReviewTelemetry } from "@/src/server/opencode-client";
-import { reviewEnvironment } from "@/src/server/opencode";
+import { OpenCodeReviewer, reviewEnvironment } from "@/src/server/opencode";
 import { reviewCheckpointJsonSchema } from "@/src/server/schemas";
 import { preparedFixture } from "../helpers/reviewer";
 import { Logger } from "@/src/server/logger";
@@ -26,6 +27,44 @@ async function harness(mode = "normal", signal = new AbortController().signal, e
   return { ...fixture, connection, events, calls, log: () => readFile(logPath, "utf8") };
 }
 describe("managed OpenCode HTTP service", () => {
+  test.each([
+    ["slow_headers", 50, 0], ["slow_body", 0, 50], ["slow_headers", 0, 50],
+  ] as const)("lets the review deadline govern %s (headers=%i, body=%i) instead of ambient HTTP timeouts", async (mode, headersTimeout, bodyTimeout) => {
+    // Accelerate the real transport's default timeout, not fetch or its rejection.
+    // The server really waits 2.6s; Undici's timeout clock ticks at coarse intervals.
+    const previous = getGlobalDispatcher();
+    const short = new Agent({ headersTimeout, bodyTimeout });
+    setGlobalDispatcher(short);
+    cleanups.push(async () => { setGlobalDispatcher(previous); await short.destroy(); });
+    const h = await harness(mode);
+    const started = Date.now();
+    await expect(h.connection.prompt("delayed but valid response", "reviewx")).resolves.toMatchObject({ info: { role: "assistant" } });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(2500);
+    expect(h.events.some(event => event.event === "http_failed" || event.event === "sse_failed")).toBe(false);
+    await h.connection.close();
+    expect(getGlobalDispatcher()).toBe(short);
+    expect((await h.calls()).filter(call => call.path?.endsWith("/message"))).toHaveLength(1);
+  }, 15_000);
+
+  test.each(["hang", "slow_body"])("still enforces the overall review deadline on a real %s socket", async mode => {
+    const fixture = await preparedFixture(); cleanups.push(fixture.prepared.cleanup);
+    const capture = path.join(fixture.root, "capture.jsonl");
+    const events: ReviewTelemetry[] = [];
+    const reviewer = new OpenCodeReviewer({ ...process.env, FAKE_MODE: mode, FAKE_CAPTURE: capture }, {
+      timeoutMs: 1500,
+      connect: (prepared, environment, signal, diagnostic) => connectOpenCode(prepared, environment, signal, diagnostic,
+        { name: "opencode", executable: process.execPath, prefixArgs: [path.resolve("tests/helpers/opencode-service.mjs")] }),
+    });
+    await expect(reviewer.review("101", fixture.details, fixture.prepared, new AbortController().signal,
+      { diagnostic: event => { events.push(event); } })).rejects.toMatchObject({ code: "OPENCODE_TIMEOUT" });
+    expect(events).toContainEqual(expect.objectContaining({ event: "http_failed", reviewAborted: true,
+      stage: mode === "hang" ? "waiting_headers" : "reading_body" }));
+    expect(events).toContainEqual(expect.objectContaining({ event: "service_exited", reviewAborted: true, aborted: true }));
+    expect(events.some(event => event.event === "review_completed")).toBe(false);
+    const [startup, ...calls] = (await readFile(capture, "utf8")).trim().split(/\r?\n/u).map(line => JSON.parse(line));
+    expect(() => process.kill(startup.pid, 0)).toThrow();
+    expect(calls.filter(call => call.path?.endsWith("/message"))).toHaveLength(1);
+  }, 10_000);
   test("uses private loopback auth, independent requests, native structured output, and deduplicated diagnostics", async () => {
     const h = await harness();
     const model = { providerID: "deepseek", modelID: "deepseek-v4-flash" };

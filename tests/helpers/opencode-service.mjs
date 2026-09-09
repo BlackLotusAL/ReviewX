@@ -13,11 +13,22 @@ const server = createServer(async (request, response) => {
   const body = []; for await (const chunk of request) body.push(chunk);
   const input = body.length ? JSON.parse(Buffer.concat(body).toString("utf8")) : undefined;
   capture({ path: url.pathname, method: request.method, input, directory: request.headers["x-opencode-directory"] });
-  const json = value => { response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(value)); };
+  const json = value => {
+    response.setHeader("Content-Type", "application/json");
+    const text = JSON.stringify(value);
+    if (mode === "slow_body" && url.pathname.endsWith("/message")) {
+      response.write(text.slice(0, 20));
+      setTimeout(() => response.end(text.slice(20)), 2600);
+    } else response.end(text);
+  };
   if (url.pathname === "/event") {
     if (mode === "sse_http_error") { response.writeHead(503); response.end("PRIVATE_RESPONSE_BODY"); return; }
     if (mode === "sse_connect_reset") { response.destroy(); return; }
     response.writeHead(200, { "Content-Type": "text/event-stream" }); response.write(": connected\n\n"); streams.add(response);
+    if (mode === "slow_body") {
+      const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 10);
+      response.on("close", () => clearInterval(heartbeat));
+    }
     request.on("close", () => streams.delete(response)); return;
   }
   if (url.pathname === "/global/health") return json({ healthy: true, version: "1.18.25" });
@@ -29,6 +40,7 @@ const server = createServer(async (request, response) => {
   }
   if (url.pathname === `/session/${sessionID}/message` && request.method === "POST") {
     sequence++;
+    if (mode === "slow_headers") await new Promise(resolve => setTimeout(resolve, 2600));
     if (mode === "exit") { process.exit(7); }
     if (mode === "hang") return;
     if (mode === "header_reset") {
