@@ -32,6 +32,7 @@
     "test:e2e": "playwright test",
     "test:ai": "tsx tests/ai/real-opencode-smoke.ts",
     "test:ai:commit": "tsx tests/ai/real-commit.ts",
+    "test:ai:compaction": "tsx tests/ai/local-compaction-probe.ts",
     "test:ai:protocol": "tsx tests/ai/real-protocol.ts",
     "test:ai:quality": "tsx tests/ai/quality-evaluation.ts",
     "test:package": "tsx tests/package/verify-package.ts",

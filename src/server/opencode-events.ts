@@ -3,16 +3,58 @@ import { openCodeError, type OpenCodeMessage, type ReviewTelemetry } from "./ope
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const numeric = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 
+interface RequestTrace {
+  requestID: string; round: number; limit: number; messages: Set<string>; parents: Set<string>;
+  compacted: boolean; text?: string; user?: Record<string, unknown>;
+}
+
+function sameUserConfiguration(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  // Compare only the replayed user configuration; never use repository/model prose as provenance.
+  return ["agent", "model", "format", "tools", "system"].every(key => JSON.stringify(left[key]) === JSON.stringify(right[key]));
+}
+
 /** Event metadata avoids the 1.18.25 history encoder bug for persisted OutputFormatJsonSchema users. */
 export class OpenCodeEvents {
-  private readonly requests = new Map<string, { round: number; limit: number; messages: Set<string> }>();
+  private readonly requests = new Map<string, RequestTrace>();
   private readonly messageRounds = new Map<string, number>();
   private readonly usage = new Set<string>();
   private readonly tools = new Set<string>();
+  private readonly compactionParts = new Set<string>();
+  private activeRequest?: { requestID: string; round: number };
+  private observedRequest?: RequestTrace;
+  private readonly users = new Map<string, { request: RequestTrace; info: Record<string, unknown> }>();
+  private readonly parentWaiters = new Set<() => void>();
   constructor(private readonly sessionID: string, private readonly diagnostic: (event: ReviewTelemetry) => void) {}
 
-  register(requestID: string, round: number, limit: number): void {
-    this.requests.set(requestID, { round, limit, messages: new Set() });
+  register(requestID: string, round: number, limit: number, text?: string): void {
+    this.requests.set(requestID, { requestID, round, limit, messages: new Set(), parents: new Set([requestID]), compacted: false, text });
+    this.activeRequest = { requestID, round };
+  }
+
+  hasResponseParent(requestID: string, parentID: string | undefined): boolean {
+    return parentID !== undefined && this.requests.get(requestID)?.parents.has(parentID) === true;
+  }
+
+  async waitForResponseParent(requestID: string, parentID: string | undefined, signal: AbortSignal, timeoutMs = 1000): Promise<boolean> {
+    if (this.hasResponseParent(requestID, parentID)) return true;
+    if (!parentID || signal.aborted) return false;
+    // HTTP and SSE are separate sockets: the response may arrive before its provenance events.
+    // This waits for evidence only; it neither resubmits a prompt nor reads historical messages.
+    return new Promise(resolve => {
+      const finish = (linked: boolean) => {
+        clearTimeout(timer);
+        this.parentWaiters.delete(check);
+        signal.removeEventListener("abort", abort);
+        resolve(linked);
+      };
+      const check = () => { if (this.hasResponseParent(requestID, parentID)) finish(true); };
+      const abort = () => finish(false);
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      this.parentWaiters.add(check);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      else check();
+    });
   }
 
   message(message: OpenCodeMessage): void {
@@ -21,6 +63,17 @@ export class OpenCodeEvents {
   }
 
   private info(info: Record<string, unknown>): void {
+    if (info.sessionID === this.sessionID && info.role === "user" && typeof info.id === "string") {
+      const request = this.requests.get(info.id);
+      if (request?.requestID === info.id) {
+        this.observedRequest = request;
+        request.user = info;
+      }
+      // SSE order binds generated users to the last observed submitted user, not the latest HTTP call.
+      // Late events from an earlier round therefore cannot authorize a parent in the next round.
+      if (!this.users.has(info.id) && this.observedRequest) this.users.set(info.id, { request: this.observedRequest, info });
+      return;
+    }
     if (info.sessionID !== this.sessionID || info.role !== "assistant" || typeof info.id !== "string" || typeof info.parentID !== "string") return;
     const request = this.requests.get(info.parentID);
     if (!request) return;
@@ -39,6 +92,36 @@ export class OpenCodeEvents {
   }
 
   private part(part: Record<string, unknown>): void {
+    const user = part.sessionID === this.sessionID && typeof part.messageID === "string" ? this.users.get(part.messageID) : undefined;
+    const request = user?.request;
+    const messageID = typeof part.messageID === "string" ? part.messageID : undefined;
+    if (request && messageID && part.type === "compaction" && part.auto === true) {
+      request.compacted = true;
+      // Count compaction model steps in the original round; do not accept summaries as final replies.
+      this.requests.set(messageID, request);
+    }
+    if (request?.compacted && messageID && part.type === "text" && request.user &&
+      (part.synthetic === true && record(part.metadata) && part.metadata.compaction_continue === true ||
+        typeof request.text === "string" && part.text === request.text && sameUserConfiguration(user!.info, request.user))) {
+      if (!request.parents.has(messageID)) {
+        request.parents.add(messageID);
+        this.requests.set(messageID, request);
+        for (const check of this.parentWaiters) check();
+        this.diagnostic({ event: "response_parent_linked", sessionID: this.sessionID, requestID: request.requestID,
+          round: request.round, parentID: messageID,
+          kind: part.synthetic === true && record(part.metadata) && part.metadata.compaction_continue === true ? "compaction_continuation" : "compaction_replay" });
+      }
+    }
+    if (part.sessionID === this.sessionID && typeof part.id === "string" && !this.compactionParts.has(part.id) &&
+      (part.type === "compaction" || (part.type === "text" && part.synthetic === true &&
+        record(part.metadata) && part.metadata.compaction_continue === true))) {
+      this.compactionParts.add(part.id);
+      this.diagnostic({ event: part.type === "compaction" ? "compaction_started" : "compaction_continuation",
+        sessionID: this.sessionID, ...this.activeRequest,
+        messageID: typeof part.messageID === "string" ? part.messageID : undefined,
+        auto: typeof part.auto === "boolean" ? part.auto : undefined,
+        overflow: typeof part.overflow === "boolean" ? part.overflow : undefined });
+    }
     if (part.sessionID === this.sessionID && part.type === "retry") throw openCodeError("OPENCODE_ERROR", "OpenCode 报告供应商或网络错误，检视已终止。");
     if (part.sessionID !== this.sessionID || part.type !== "tool" || typeof part.id !== "string" || typeof part.tool !== "string" || typeof part.messageID !== "string") return;
     const round = this.messageRounds.get(part.messageID);
@@ -70,6 +153,8 @@ export class OpenCodeEvents {
           let event: unknown;
           try { event = JSON.parse(data); } catch { throw openCodeError("INVALID_OPENCODE_RESPONSE", "OpenCode 事件不是有效 JSON。"); }
           if (!record(event) || !record(event.properties)) continue;
+          if (event.type === "session.compacted" && event.properties.sessionID === this.sessionID)
+            this.diagnostic({ event: "session_compacted", sessionID: this.sessionID, ...this.activeRequest });
           if (event.type === "message.updated" && record(event.properties.info)) this.info(event.properties.info);
           if (event.type === "message.part.updated" && record(event.properties.part)) this.part(event.properties.part);
         }

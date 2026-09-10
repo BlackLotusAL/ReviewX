@@ -40,6 +40,7 @@ const server = createServer(async (request, response) => {
   }
   if (url.pathname === `/session/${sessionID}/message` && request.method === "POST") {
     sequence++;
+    emit("message.updated", { info: { id: input.messageID, sessionID, role: "user", agent: input.agent, model: input.model, format: input.format } });
     if (mode === "slow_headers") await new Promise(resolve => setTimeout(resolve, 2600));
     if (mode === "exit") { process.exit(7); }
     if (mode === "hang") return;
@@ -70,9 +71,19 @@ const server = createServer(async (request, response) => {
       } });
       return;
     }
-    const info = { id: `msg_response_${sequence}`, parentID: mode === "wrong_parent" ? "msg_other" : input.messageID,
-      sessionID: mode === "wrong_session" ? "ses_other" : sessionID, role: "assistant", providerID: "deepseek", modelID: "deepseek-v4-flash",
-      time: { created: 1, ...(mode === "unfinished" ? {} : { completed: 2 }) },
+    const compacted = ["compaction_third", "compaction_unproven"].includes(mode) && sequence === 3;
+    if (compacted) {
+      if (mode !== "compaction_unproven") emit("message.updated", { info: { id: "msg_compact", sessionID, role: "user" } });
+      emit("message.part.updated", { part: { id: "prt_compact", messageID: "msg_compact", sessionID, type: "compaction", auto: true } });
+      emit("session.compacted", { sessionID });
+      if (mode !== "compaction_unproven") emit("message.updated", { info: { id: "msg_continue", sessionID, role: "user" } });
+      emit("message.part.updated", { part: { id: "prt_continue", messageID: "msg_continue", sessionID,
+        type: "text", synthetic: true, metadata: { compaction_continue: true }, text: "PRIVATE_RESPONSE_BODY" } });
+    }
+    const info = { id: mode === "duplicate" ? "msg_response_1" : `msg_response_${sequence}`, parentID: compacted ? "msg_continue" : mode === "wrong_parent" ? "msg_other" : input.messageID,
+      sessionID: mode === "wrong_session" ? "ses_other" : sessionID, role: mode === "wrong_role" ? "user" : "assistant", providerID: "deepseek", modelID: mode === "wrong_model" ? "other" : "deepseek-v4-flash",
+      time: { created: 1, ...(mode === "unfinished" ? {} : { completed: mode === "string_completion" ? "2" : 2 }) },
+      ...(mode === "summary" ? { summary: true } : {}),
       finish: "tool-calls", structured: { status: "complete", nextChecks: [], findings: [], limitations: [] },
       tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 3, write: 0 } }, cost: 0.01 };
     emit("message.updated", { info }); emit("message.updated", { info });

@@ -104,6 +104,46 @@ describe("managed OpenCode HTTP service", () => {
     const h = await harness(mode);
     await expect(h.connection.prompt("current request", "reviewx")).rejects.toMatchObject({ code: "INVALID_OPENCODE_RESPONSE" });
   });
+  test.each([
+    ["wrong_parent", "parent_mismatch"], ["wrong_session", "invalid_contract"],
+    ["unfinished", "missing_completion"], ["string_completion", "missing_completion"],
+    ["wrong_role", "unexpected_role"], ["wrong_model", "model_mismatch"], ["duplicate", "duplicate_message"],
+    ["summary", "compaction_summary"],
+  ])("diagnoses %s without recording message bodies", async (mode, failedChecks) => {
+    const h = await harness(mode);
+    const model = { providerID: "deepseek", modelID: "deepseek-v4-flash" };
+    if (mode === "duplicate") await h.connection.prompt("first", "reviewx", model);
+    await expect(h.connection.prompt("PRIVATE_PROMPT", "reviewx", model)).rejects.toMatchObject({ code: "INVALID_OPENCODE_RESPONSE" });
+    expect(h.events).toContainEqual(expect.objectContaining({ event: "message_received", receivedMessageID: expect.any(String),
+      receivedParentID: expect.any(String), receivedRole: expect.any(String), completedType: expect.any(String), hasStructured: true }));
+    expect(h.events).toContainEqual(expect.objectContaining({ event: "message_rejected", failedChecks }));
+    await h.connection.close();
+    const log = await h.log();
+    for (const body of ["PRIVATE_PROMPT", "PRIVATE_RESPONSE_BODY", '"status":"complete"']) expect(log).not.toContain(body);
+  });
+
+  test("accepts third-round compaction parents only when the current session's event chain proves their origin", async () => {
+    const h = await harness("compaction_third");
+    await h.connection.prompt("investigate", "reviewx");
+    await h.connection.prompt("verify", "reviewx");
+    await expect(h.connection.prompt("serialize", "reviewx_output", undefined, reviewCheckpointJsonSchema)).resolves.toMatchObject({
+      info: { parentID: "msg_continue", structured: { status: "complete" } } });
+    await h.connection.close();
+    expect(h.events).toContainEqual(expect.objectContaining({ event: "compaction_started", round: 3, messageID: "msg_compact" }));
+    expect(h.events).toContainEqual(expect.objectContaining({ event: "compaction_continuation", round: 3, messageID: "msg_continue" }));
+    expect(h.events).toContainEqual(expect.objectContaining({ event: "message_received", round: 3, receivedParentID: "msg_continue", completedAt: 2 }));
+    expect(h.events).toContainEqual(expect.objectContaining({ event: "response_parent_linked", round: 3, parentID: "msg_continue" }));
+    expect(h.events.filter(event => event.event === "round_completed")).toHaveLength(3);
+    expect((await h.calls()).filter(call => call.path?.endsWith("/message"))).toHaveLength(3);
+  });
+  test("does not authorize unproven compaction markers as response parents", async () => {
+    const h = await harness("compaction_unproven");
+    await h.connection.prompt("investigate", "reviewx");
+    await h.connection.prompt("verify", "reviewx");
+    await expect(h.connection.prompt("serialize", "reviewx_output", undefined, reviewCheckpointJsonSchema)).rejects.toMatchObject({
+      code: "INVALID_OPENCODE_RESPONSE", technical: expect.stringContaining("failedChecks=parent_mismatch;") });
+    expect(h.events.some(event => event.event === "response_parent_linked")).toBe(false);
+  });
   test.each([["auth_error", "OPENCODE_HTTP_ERROR"], ["old_version", "OPENCODE_INCOMPATIBLE"]])("fails startup for %s", async (mode, code) => {
     await expect(harness(mode)).rejects.toMatchObject({ code });
   });

@@ -114,6 +114,10 @@ pnpm test:ai:commit --repo . --commit main
 
 真实提交验证曾复现：OpenCode 仍在调查时，Node 默认 300 秒响应头超时先于 60 分钟总时限触发。现在每次检视使用独立 HTTP Agent，取消隐式 headers/body 超时，以已有总时限和停止信号结束请求；清理仍有 5 秒时限。`transport_configured` 会记录该策略，不影响应用其他 HTTP 请求。完整证据和测试边界见 [真实提交检视验证](docs/opencode-real-commit-validation.md)。
 
+`INVALID_OPENCODE_RESPONSE` 与 HTTP 超时不同。查看同轮 `message_received` 和 `message_rejected.failedChecks`，可区分父消息无法关联、重复响应、缺少完成时间、角色或模型不符。`compaction_started`、`compaction_continuation`、`session_compacted` 和 `response_parent_linked` 记录原生压缩及续接关联。仅接受能由同一会话的有序事件链证明来源的续接或原请求重放；HTTP 先返回时最多等待 1 秒取得 SSE 证据，缺证据仍失败。消息正文和结构化内容不会写入这些诊断字段。
+
+`pnpm test:ai:compaction` 使用真实本机 OpenCode 和只监听 `127.0.0.1` 的确定性假模型，强制触发上下文压缩并验证续接和结构化输出，不调用外部模型、不发送真实仓库源码。它验证协议兼容性，不能证明某次远端 DeepSeek 故障的原因。详见 [长会话消息校验验证](docs/opencode-message-validation.md)。
+
 连接失败或服务异常退出时，日志会附带已捕获 stdout、stderr 的尾部，各最多 16 KiB；异常诊断最多 16 KiB、`cause` 链最多 5 层，截断处有标记。文本在截断前脱敏，包括环境凭据、临时 OpenCode 密码及其 Basic 认证编码。HTTP/SSE 诊断只记录元数据和错误信息，不记录请求头、提示词、仓库正文或模型回复正文。
 
 报告与 Finding Markdown 均按不可信输入处理：原始 HTML、危险 scheme、表单和嵌入内容会被丢弃，图片只展示为经过公共 HTTP(S) allowlist 校验的链接，不会自动加载。

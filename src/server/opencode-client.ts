@@ -265,18 +265,55 @@ export async function connectOpenCode(
         const requestID = `msg_${Date.now().toString(16)}${randomBytes(12).toString("hex")}`;
         activeRequestID = requestID;
         activeRound = round;
-        events.register(requestID, round, outputSchema ? 3 : 20);
+        events.register(requestID, round, outputSchema ? 3 : 20, text);
         emit({ event: "round_started", round, agent, sessionID, requestID });
         const value = await rpc(`/session/${encodeURIComponent(sessionID)}/message`, "POST", {
           messageID: requestID, agent, ...(model ? { model } : {}), parts: [{ type: "text", text }],
           ...(outputSchema ? { format: { type: "json_schema", schema: outputSchema, retryCount: 0 } } : {}),
         });
-        const message = decodeOpenCodeMessage(value, sessionID);
-        if (message.info.role !== "assistant" || message.info.parentID !== requestID || seen.has(message.info.id) ||
-          typeof message.info.time.completed !== "number" || !Number.isFinite(message.info.time.completed)) {
-          throw openCodeError("INVALID_OPENCODE_RESPONSE", "OpenCode 返回了未完成、重复或无关联的消息。");
+        // Only protocol metadata: do not log prompt, text, tool inputs or structured bodies.
+        const info = record(value) && record(value.info) ? value.info : {};
+        const time = record(info.time) ? info.time : {};
+        const field = (key: string) => typeof info[key] === "string" ? info[key] as string : undefined;
+        emit({ event: "message_received", elapsedMs: Date.now() - started,
+          receivedMessageID: field("id"), receivedSessionID: field("sessionID"), receivedParentID: field("parentID"),
+          receivedRole: field("role"), receivedModelID: field("modelID"), receivedProviderID: field("providerID"),
+          finish: field("finish"), completedType: typeof time.completed,
+          completedAt: typeof time.completed === "number" && Number.isFinite(time.completed) ? time.completed : undefined,
+          hasStructured: info.structured !== undefined, errorName: record(info.error) && typeof info.error.name === "string" ? info.error.name : undefined,
+          duplicate: typeof info.id === "string" && seen.has(info.id),
+          partCount: record(value) && Array.isArray(value.parts) ? value.parts.length : undefined });
+        let message: OpenCodeMessage;
+        try { message = decodeOpenCodeMessage(value, sessionID); }
+        catch (error) {
+          failureOutput = true;
+          emit({ event: "message_rejected", failedChecks: "invalid_contract", error: diagnostics.error(error) });
+          throw error;
         }
-        if (model && (message.info.modelID !== model.modelID || message.info.providerID !== model.providerID)) throw openCodeError("INVALID_OPENCODE_RESPONSE", "OpenCode 未沿用指定模型。");
+        const failures: Array<[string, string]> = [];
+        if (message.info.role !== "assistant") failures.push(["unexpected_role", "响应角色不是 assistant"]);
+        if (message.info.summary === true) failures.push(["compaction_summary", "压缩摘要不能作为检视结果"]);
+        let linked = events.hasResponseParent(requestID, message.info.parentID);
+        if (!linked && message.info.role === "assistant" && message.info.summary !== true) {
+          const waitStarted = Date.now();
+          linked = await events.waitForResponseParent(requestID, message.info.parentID, requestSignal);
+          emit({ event: "response_parent_waited", linked, elapsedMs: Date.now() - waitStarted });
+          if (died.signal.aborted) throw died.signal.reason;
+          if (signal.aborted) throw openCodeError("OPENCODE_CANCELLED", "检视已停止或达到总时限。");
+        }
+        if (!linked) failures.push(["parent_mismatch", "无法证明响应父消息属于本轮请求"]);
+        if (seen.has(message.info.id)) failures.push(["duplicate_message", "响应消息已在此前轮次使用"]);
+        if (typeof message.info.time.completed !== "number" || !Number.isFinite(message.info.time.completed))
+          failures.push(["missing_completion", "响应缺少有效完成时间"]);
+        if (model && (message.info.modelID !== model.modelID || message.info.providerID !== model.providerID))
+          failures.push(["model_mismatch", "响应未沿用指定模型"]);
+        if (failures.length) {
+          failureOutput = true;
+          const failedChecks = failures.map(([code]) => code).join(",");
+          emit({ event: "message_rejected", failedChecks, expectedModelID: model?.modelID, expectedProviderID: model?.providerID });
+          throw openCodeError("INVALID_OPENCODE_RESPONSE", `OpenCode 消息校验失败：${failures.map(([, reason]) => reason).join("；")}。`,
+            `failedChecks=${failedChecks}; requestID=${requestID}; receivedMessageID=${diagnostics.text(message.info.id)}; receivedParentID=${diagnostics.text(message.info.parentID ?? "missing")}`);
+        }
         seen.add(message.info.id);
         events.message(message);
         emit({ event: "round_completed", round, elapsedMs: Date.now() - started, error: message.info.error?.name });
