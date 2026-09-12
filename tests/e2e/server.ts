@@ -18,7 +18,7 @@ harness.reviewer.results.set("1", {
   findings: [
     {
       severity: "major",
-      confidence: 95,
+      confidence: 35,
       verificationSummary: "已核对调用方与变更代码。",
       evidence: [{ side: "source", path: "src/parser.ts", startLine: 1, endLine: 1 }],
       body: [
@@ -39,7 +39,7 @@ harness.reviewer.results.set("1", {
       ].join("\n"),
     },
     { severity: "suggestion", body: "### 🟢 Suggestion: Add a regression test\n\nKeep the parser behavior covered.",
-      confidence: 92, verificationSummary: "已核对相关测试。", evidence: [{ side: "source", path: "src/parser.ts", startLine: 1, endLine: 1 }] },
+      confidence: 0, verificationSummary: "已核对相关测试。", evidence: [{ side: "source", path: "src/parser.ts", startLine: 1, endLine: 1 }] },
   ],
 });
 harness.reviewer.results.set("2", { findings: [] });

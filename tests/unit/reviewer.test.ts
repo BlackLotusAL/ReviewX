@@ -25,12 +25,17 @@ describe("multi-turn reviewer", () => {
     expect(h.prompt.mock.calls[2]).toEqual([expect.any(String), "reviewx_output_deepseek", { providerID: "deepseek", modelID: "deepseek-v4-flash" }, expect.any(Object)]);
     expect(h.close).toHaveBeenCalledOnce();
   });
-  test("requests missing context, filters low confidence, and preserves limitations", async () => {
+  test("requests missing context, retains low confidence, and preserves limitations", async () => {
     const h = await harness([assistant(), assistant(), assistant({ status: "needs_context", nextChecks: ["Read caller guard"], findings: [], limitations: [] }),
       assistant(), assistant({ ...completeCheckpoint([{ ...finding, confidence: 89 }]), limitations: ["External contract unavailable"] })]);
-    expect(await h.run()).toEqual({ findings: [], limitations: ["External contract unavailable"] });
+    expect(await h.run()).toEqual({ findings: [{ ...finding, confidence: 89 }], limitations: ["External contract unavailable"] });
     expect(h.prompt.mock.calls[3]?.[0]).toContain("Read caller guard");
     expect(h.prompt).toHaveBeenCalledTimes(5);
+  });
+  test.each([[[0]], [[35]], [[89]], [[90]], [[100]], [[90, 0, 100, 35, 89]]])("preserves all scores and ordered bodies: %j", async (scores) => {
+    const findings = scores.map((confidence, index) => ({ ...finding, confidence, body: `${finding.body}\n\nFinding ${index}` }));
+    const h = await harness([assistant(), assistant(), assistant(completeCheckpoint(findings))]);
+    expect((await h.run()).findings).toEqual(findings);
   });
   test("never treats exhausted verification as PASS", async () => {
     const incomplete = () => assistant({ status: "needs_context", nextChecks: ["Missing critical caller"], findings: [], limitations: [] });

@@ -83,7 +83,7 @@ try {
   if (!result.findings.some((finding) => /authori[sz]|owner|requester|delete|权限|越权/iu.test(finding.body))) {
     throw new Error("Real OpenCode returned Findings, but none identified the fixed authorization bypass.");
   }
-  if (!result.findings.every(finding => finding.confidence >= 90 && finding.evidence.length > 0)) throw new Error("Real OpenCode returned unverified findings.");
+  if (!result.findings.every(finding => Number.isInteger(finding.confidence) && finding.confidence >= 0 && finding.confidence <= 100 && finding.evidence.length > 0)) throw new Error("Real OpenCode returned invalid finding scores or evidence.");
   process.stdout.write(`Real Git + OpenCode smoke passed with ${result.findings.length} valid Finding(s).\n`);
 } catch (error) {
   await writeFile(path.join(artifactDirectory, "error.json"), JSON.stringify({ elapsedMs: Date.now() - started,

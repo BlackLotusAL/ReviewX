@@ -92,6 +92,25 @@ describe("ReviewX runtime workflows", () => {
     } finally { await harness.cleanup(); }
   });
 
+  it("retains low-confidence findings for confirmation, persistence, and manual sending", async () => {
+    const harness = await createRuntimeHarness();
+    try {
+      configureMr(harness, "101", "1"); await registerAndRefresh(harness, ["101"]);
+      const result = reviewerResult("zero score", "uncertain finding");
+      result.findings[0].confidence = 0; result.findings[1].confidence = 89;
+      harness.reviewer.results.set("1", result);
+      await harness.runtime.createReview("101", "1"); await harness.runtime.waitForIdle();
+      const attempt = await latest(harness, "101", "1");
+      expect(attempt).toMatchObject({ status: "awaiting_confirmation", result: "findings" });
+      expect(attempt.findings.map(({ body, confidence }) => ({ body, confidence }))).toEqual(result.findings.map(({ body, confidence }) => ({ body, confidence })));
+      expect((await harness.store.read()).attemptsById[attempt.id].findings).toEqual(attempt.findings);
+      expect(harness.codeHub.comments).toEqual([]);
+      await harness.runtime.publishFinding(attempt.id, 1);
+      await harness.runtime.decideFinding(attempt.id, 2, "dismissed");
+      expect((await latest(harness, "101", "1")).findings.map(finding => finding.status)).toEqual(["published", "dismissed"]);
+      expect(harness.codeHub.comments).toHaveLength(1);
+    } finally { await harness.cleanup(); }
+  });
   it("polls verification phases and persists confidence, evidence and limitations before manual sending", async () => {
     const harness = await createRuntimeHarness();
     try {

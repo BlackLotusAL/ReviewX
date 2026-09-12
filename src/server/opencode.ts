@@ -7,7 +7,6 @@ import { assertFindingEvidence } from "./review-context";
 import { reviewCheckpointJsonSchema, reviewCheckpointSchema } from "./schemas";
 
 export const REVIEW_TIMEOUT_MS = 60 * 60_000;
-export const MINIMUM_CONFIDENCE = 90;
 export const MAX_VERIFICATION_ROUNDS = 3;
 export type ReviewerPhase = Extract<ReviewPhase, "understanding_changes" | "verifying_findings" | "finalizing_review">;
 export interface ReviewObserver {
@@ -28,7 +27,7 @@ Every candidate needs a concrete reachable trigger, changed-code attribution, im
 Before accepting a candidate, seek evidence that would DISPROVE it: upstream guards, normalization, intended behavior, valid invariants, existing defects. State why those protections do or do not apply.
 Discard unsupported guesses and cosmetic preferences. Confidence is a 0-100 integer SELF-ASSESSMENT, not a statistical probability.
 Use 0-89 when a necessary premise is unverified. Use 90-95 for a complete code-supported causal chain; 96-100 requires a directly demonstrable trigger and verified caller reachability.
-Do not raise a score to meet the cutoff. Severity and confidence are independent. Only evidence-supported findings with confidence >=90 may be finalized.
+Severity and confidence are independent. Retain every evidence-supported finding regardless of confidence; never omit a finding because its score is low. Explicitly state triggers and unverified premises in the body and verificationSummary without strengthening the conclusion. The user decides whether to publish.
 Findings must include severity (fatal, major, minor or suggestion), full Markdown body, confidence, a concise verificationSummary, and evidence references.
 Finding bodies should use: severity/title, 问题描述, 问题位置, 影响分析 (direct effect, scope, trigger), 解决方案, 预防措施. Include code fences only when helpful.
 Match severity labels: fatal=🔴 Fatal, major=🟠 Major, minor=🟡 Minor, suggestion=🟢 Suggestion.
@@ -40,7 +39,7 @@ const serializerInstructions = `You serialize the immediately preceding ReviewX 
 Do not investigate again, invent findings, invent evidence, change severity/confidence, or strengthen uncertain conclusions.
 Preserve the verified Markdown bodies exactly, including Unicode, quotes, backslashes and newlines.
 If verification explicitly requires more context, return status needs_context, its concrete nextChecks, and findings [].
-If verification is complete, return status complete, nextChecks [], and only the explicitly verified findings with confidence >=90.
+If verification is complete, return status complete, nextChecks [], and all findings retained by verification regardless of confidence. Preserve their order and stated uncertainty; never filter by score.
 Preserve stated limitations. No verified findings is valid only after verification explicitly completed.
 Each finding requires severity, body, integer confidence, verificationSummary and evidence. Evidence paths are relative to the repository, not the review directory.
 Only the StructuredOutput tool is allowed. It is a result channel, not repository access.`;
@@ -129,7 +128,7 @@ ${nextChecks.length ? `Resolve these outstanding checks using the repository: ${
 Read the actual changed code AND relevant unchanged callers, guards, contracts and tests; compare base/ where needed.
 Check whether each trigger is reachable, introduced here, and unprotected. Explicitly discard disproved or unsupported suspicions.
 Do not report pre-existing behavior as a new defect. Do not claim tests ran. Prefer no finding over invented assumptions.
-For every confirmed finding provide its final Chinese Markdown body, severity, integer confidence, one-sentence verificationSummary, and exact evidence references.
+For every retained evidence-supported finding provide its final Chinese Markdown body, severity, integer confidence, one-sentence verificationSummary, and exact evidence references. Retain low-confidence findings and state any unverified premises explicitly; do not discard them because of their score.
 Finish with COMPLETE and the verified findings, or NEEDS_CONTEXT plus concrete outstanding checks. List coverage limitations.
 If there are no findings, still state what relevant protections and change behavior were checked before marking COMPLETE.`, "reviewx", model);
         checkMessage(verified);
@@ -150,9 +149,9 @@ If there are no findings, still state what relevant protections and change behav
           checkpoint = parseReviewCheckpoint(corrected.info.structured, prepared);
         }
         if (checkpoint.status === "complete") {
-          const findings = checkpoint.findings.filter(finding => finding.confidence >= MINIMUM_CONFIDENCE);
+          const findings = checkpoint.findings;
           const limitations = [...new Set([...prepared.limitations, ...checkpoint.limitations])];
-          diagnostic({ event: "review_completed", findings: findings.length, filtered: checkpoint.findings.length - findings.length, verificationRounds: verification, corrections });
+          diagnostic({ event: "review_completed", findings: findings.length, verificationRounds: verification, corrections });
           return { findings, limitations };
         }
         nextChecks = checkpoint.nextChecks;

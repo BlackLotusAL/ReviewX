@@ -50,9 +50,10 @@ describe("permanent logs and immutable reports", () => {
     const mr: MergeRequestSnapshot = { projectId: "1", iid: "2", title: "MR", state: "open", updatedAt: "v", sourceBranch: "feature", targetBranch: "main" };
     const prepared = { rootDirectory: "x", sourceDirectory: "x", baseDirectory: "x", runtimeDirectory: "x", manifestPath: "x", files: [], limitations: [], baseSha: "2".repeat(40), patchPath: "x", bundlePath: "x", sourceSha: "1".repeat(40), targetSha: "2".repeat(40), cleanup: async () => undefined };
     const pathValue = await store.save(attempt, mr, prepared, { findings: [{ severity: "minor", body: "### 🟡 Minor: Issue\n\nBody",
-      confidence: 95, verificationSummary: "Verified caller", evidence: [{ side: "source", path: "src/a.ts", startLine: 1, endLine: 2 }] }], limitations: ["Binary asset omitted"] });
+      confidence: 0, verificationSummary: "Verified caller", evidence: [{ side: "source", path: "src/a.ts", startLine: 1, endLine: 2 }] }], limitations: ["Binary asset omitted"] });
     const report = await store.read(pathValue);
-    expect(report).toContain("95/100");
+    expect(report).toContain("0/100");
+    expect(report).toContain("**FINDINGS**");
     expect(report).toContain("Verified caller");
     expect(report).toContain("Binary asset omitted");
     expect(await store.read(pathValue)).toContain("Attempt ID");
