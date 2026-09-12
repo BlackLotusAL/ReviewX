@@ -1,16 +1,22 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { MergeRequestSnapshot, ReviewCheckpoint, ReviewerFinding } from "@/src/shared/types";
+import { formatFinding } from "@/src/server/finding-format";
+import type { StructuredFinding } from "@/src/server/schemas";
+import type { MergeRequestSnapshot, ReviewerFinding } from "@/src/shared/types";
 import type { PreparedReview } from "@/src/server/git";
 import type { OpenCodeMessage } from "@/src/server/opencode-client";
 
-export const finding: ReviewerFinding = {
-  severity: "major", body: '### 🟠 Major: 越权\n\n```ts\nrole === "user"\n```\n路径 `src\\authorization.ts`', confidence: 95,
+export const structuredFinding: StructuredFinding = {
+  title: "越权", description: "所有者校验缺失。\n\n```ts\nrole === \"user\"\n```",
+  locations: [{ evidenceIndex: 0, symbol: "allow" }],
+  impact: "普通用户调用时可能越权。", solution: "恢复所有者校验。", prevention: "增加普通用户回归用例。",
+  severity: "major", confidence: 95,
   verificationSummary: "已核对调用方，无所有者校验。",
   evidence: [{ side: "source", path: "src/authorization.ts", startLine: 2, endLine: 2 }],
 };
-export const completeCheckpoint = (findings: ReviewerFinding[] = [finding]): ReviewCheckpoint => ({ status: "complete", nextChecks: [], findings, limitations: [] });
+export const finding = formatFinding(structuredFinding);
+export const completeCheckpoint = (findings: ReviewerFinding[] = [finding]) => ({ status: "complete", nextChecks: [], findings: findings.map(item => ({ ...structuredFinding, severity: item.severity, confidence: item.confidence, verificationSummary: item.verificationSummary, evidence: item.evidence, description: item.body === finding.body ? structuredFinding.description : item.body })), limitations: [] });
 export function assistant(structured?: unknown, error?: string): OpenCodeMessage {
   return { info: { id: "msg_assistant", parentID: "msg_user", sessionID: "ses_test", role: "assistant",
     providerID: "deepseek", modelID: "deepseek-v4-flash", time: { created: 1, completed: 2 },

@@ -1,6 +1,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { AppError } from "@/src/server/errors";
+import { finding as formattedFinding } from "../helpers/reviewer";
 import type { AttemptView, ReviewerResult } from "@/src/shared/types";
 import {
   configureMr,
@@ -97,6 +98,7 @@ describe("ReviewX runtime workflows", () => {
     try {
       configureMr(harness, "101", "1"); await registerAndRefresh(harness, ["101"]);
       const result = reviewerResult("zero score", "uncertain finding");
+      result.findings[0] = { ...formattedFinding };
       result.findings[0].confidence = 0; result.findings[1].confidence = 89;
       harness.reviewer.results.set("1", result);
       await harness.runtime.createReview("101", "1"); await harness.runtime.waitForIdle();
@@ -105,10 +107,12 @@ describe("ReviewX runtime workflows", () => {
       expect(attempt.findings.map(({ body, confidence }) => ({ body, confidence }))).toEqual(result.findings.map(({ body, confidence }) => ({ body, confidence })));
       expect((await harness.store.read()).attemptsById[attempt.id].findings).toEqual(attempt.findings);
       expect(harness.codeHub.comments).toEqual([]);
+      expect(await harness.runtime.readReport(attempt.id)).toContain(result.findings[0].body);
       await harness.runtime.publishFinding(attempt.id, 1);
       await harness.runtime.decideFinding(attempt.id, 2, "dismissed");
       expect((await latest(harness, "101", "1")).findings.map(finding => finding.status)).toEqual(["published", "dismissed"]);
       expect(harness.codeHub.comments).toHaveLength(1);
+      expect(harness.codeHub.comments[0].body).toBe(result.findings[0].body);
     } finally { await harness.cleanup(); }
   });
   it("polls verification phases and persists confidence, evidence and limitations before manual sending", async () => {

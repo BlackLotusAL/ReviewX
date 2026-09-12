@@ -21,16 +21,16 @@ try {
   assert.equal((await stat(path.join(prepared.runtimeDirectory, "session.sqlite"))).isFile(), true);
   const checkpoint = completeCheckpoint();
   const requests: Array<[string, string, Record<string, unknown>?]> = [
-    [`Remember this exact fixture checkpoint, including every body character: ${JSON.stringify(checkpoint)}. Reply only ACK.`, "reviewx"],
-    ["Protocol verification complete. Repeat the retained checkpoint body exactly, its confidence and evidence, and mark COMPLETE. Do not change any fixture data.", "reviewx"],
+    [`Remember this exact fixture checkpoint, including every section character: ${JSON.stringify(checkpoint)}. Reply only ACK.`, "reviewx"],
+    ["Protocol verification complete. Repeat the retained checkpoint sections exactly, its confidence and evidence, and mark COMPLETE. Do not change any fixture data.", "reviewx"],
     ["Serialize the retained, verified checkpoint unchanged through StructuredOutput.", "reviewx_output_deepseek", reviewCheckpointJsonSchema],
-    ["Continue after the structured output. Verify the initially retained fixture again. Mark COMPLETE and repeat its exact body, confidence and evidence.", "reviewx"],
+    ["Continue after the structured output. Verify the initially retained fixture again. Mark COMPLETE and repeat its exact sections, confidence and evidence.", "reviewx"],
     ["Serialize the retained checkpoint again, unchanged, via StructuredOutput.", "reviewx_output_deepseek", reviewCheckpointJsonSchema],
   ];
   for (const [text, agent, schema] of requests) {
     const response = await connection.prompt(text, agent, model, schema);
     transcript.push({ text, agent, response });
-    if (schema) assert.deepEqual(parseReviewCheckpoint(response.info.structured, prepared), checkpoint);
+    if (schema) assert.deepEqual(parseReviewCheckpoint(response.info.structured, prepared), parseReviewCheckpoint(checkpoint, prepared));
     process.stdout.write(`Protocol turn ${transcript.length}/5 passed
 `);
   }

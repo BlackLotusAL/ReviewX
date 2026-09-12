@@ -1,3 +1,5 @@
+import { formatFinding } from "@/src/server/finding-format";
+import type { ReviewerFinding } from "@/src/shared/types";
 import { createServer } from "node:http";
 import next from "next";
 import { installRuntimeForTests } from "@/src/server/runtime";
@@ -40,7 +42,7 @@ harness.reviewer.results.set("1", {
     },
     { severity: "suggestion", body: "### 🟢 Suggestion: Add a regression test\n\nKeep the parser behavior covered.",
       confidence: 0, verificationSummary: "已核对相关测试。", evidence: [{ side: "source", path: "src/parser.ts", startLine: 1, endLine: 1 }] },
-  ],
+  ].map(item => formatFinding({ ...(item as ReviewerFinding), title: "检视意见", description: item.body, locations: [{ evidenceIndex: 0, symbol: "parser" }], impact: "指定输入下解析行为可能异常。", solution: "待确认输入契约后调整。", prevention: "补充边界输入测试。" })),
 });
 harness.reviewer.results.set("2", { findings: [] });
 harness.reviewer.failures.set("3", new AppError({ code: "REVIEW_INCOMPLETE", message: "检视未完成。", reason: "必要调用方未取得。",

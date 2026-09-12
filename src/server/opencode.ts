@@ -5,6 +5,7 @@ import type { PreparedReview } from "./git";
 import { connectOpenCode, openCodeError, type OpenCodeConnectionFactory, type OpenCodeMessage, type ReviewModel, type ReviewTelemetry } from "./opencode-client";
 import { assertFindingEvidence } from "./review-context";
 import { reviewCheckpointJsonSchema, reviewCheckpointSchema } from "./schemas";
+import { formatFinding } from "./finding-format";
 
 export const REVIEW_TIMEOUT_MS = 60 * 60_000;
 export const MAX_VERIFICATION_ROUNDS = 3;
@@ -29,7 +30,7 @@ Discard unsupported guesses and cosmetic preferences. Confidence is a 0-100 inte
 Use 0-89 when a necessary premise is unverified. Use 90-95 for a complete code-supported causal chain; 96-100 requires a directly demonstrable trigger and verified caller reachability.
 Severity and confidence are independent. Retain every evidence-supported finding regardless of confidence; never omit a finding because its score is low. Explicitly state triggers and unverified premises in the body and verificationSummary without strengthening the conclusion. The user decides whether to publish.
 Findings must include severity (fatal, major, minor or suggestion), full Markdown body, confidence, a concise verificationSummary, and evidence references.
-Finding bodies should use: severity/title, 问题描述, 问题位置, 影响分析 (direct effect, scope, trigger), 解决方案, 预防措施. Include code fences only when helpful.
+Every finding MUST contain title, description (问题描述), locations (问题位置), impact (影响分析: direct effect, scope, trigger), solution (解决方案), and prevention (预防措施). For locations provide evidenceIndex (zero-based index into evidence) and the relevant symbol; for code without a named symbol describe the code block. The server renders these as six fixed Markdown sections. Include code fences only when helpful. If a remedy cannot be supported, state 待确认 and the information needed instead of inventing a fix.
 Match severity labels: fatal=🔴 Fatal, major=🟠 Major, minor=🟡 Minor, suggestion=🟢 Suggestion.
 End verification with an explicit decision: COMPLETE if all relevant checks are resolved (including evidence-backed exclusions), or NEEDS_CONTEXT with concrete next checks.
 If a critical file is missing, a read fails, context is truncated, or you hit the step limit before necessary checks, say NEEDS_CONTEXT. Never call an incomplete review PASS.
@@ -37,11 +38,11 @@ Do not output JSON during investigation. Describe the evidence and the verified 
 
 const serializerInstructions = `You serialize the immediately preceding ReviewX verification in this SAME session. Reply via StructuredOutput only.
 Do not investigate again, invent findings, invent evidence, change severity/confidence, or strengthen uncertain conclusions.
-Preserve the verified Markdown bodies exactly, including Unicode, quotes, backslashes and newlines.
+Organize the established conclusions into title, description, locations, impact, solution and prevention. Preserve their meaning, uncertainty, Unicode, quotes, backslashes and newlines. Do not output body or repeat section headings inside content. locations contains evidenceIndex (zero-based reference into evidence) and symbol. Use a single-line title without severity markup.
 If verification explicitly requires more context, return status needs_context, its concrete nextChecks, and findings [].
 If verification is complete, return status complete, nextChecks [], and all findings retained by verification regardless of confidence. Preserve their order and stated uncertainty; never filter by score.
 Preserve stated limitations. No verified findings is valid only after verification explicitly completed.
-Each finding requires severity, body, integer confidence, verificationSummary and evidence. Evidence paths are relative to the repository, not the review directory.
+Each finding requires severity, title, description, locations, impact, solution, prevention, integer confidence, verificationSummary and evidence. Every section must be nonempty. Where a supported remedy is unavailable, state 待确认 and the missing information. Evidence paths are relative to the repository, not the review directory.
 Only the StructuredOutput tool is allowed. It is a result channel, not repository access.`;
 
 export function reviewEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -85,8 +86,14 @@ export function parseReviewCheckpoint(value: unknown, prepared: Pick<PreparedRev
   const parsed = reviewCheckpointSchema.safeParse(value);
   if (!parsed.success) throw openCodeError("INVALID_REVIEWER_OUTPUT", "OpenCode 结构化结果不符合检视契约。",
     parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; "));
-  assertFindingEvidence(parsed.data.findings, prepared.files);
-  return parsed.data;
+  for (const finding of parsed.data.findings) {
+    if (finding.locations.some(location => location.evidenceIndex >= finding.evidence.length)) {
+      throw openCodeError("INVALID_REVIEW_EVIDENCE", "问题位置未关联到有效证据。", "locations.evidenceIndex must reference an existing evidence entry");
+    }
+  }
+  const findings = parsed.data.findings.map(formatFinding);
+  assertFindingEvidence(findings, prepared.files);
+  return { ...parsed.data, findings };
 }
 
 export class OpenCodeReviewer implements ReviewerPort {
@@ -135,7 +142,7 @@ If there are no findings, still state what relevant protections and change behav
         await phase("finalizing_review");
         let checkpoint: ReviewCheckpoint;
         overall.throwIfAborted();
-        const result = await connection.prompt("Serialize the most recent verification into the requested checkpoint. Preserve verified bodies and scores. COMPLETE maps to complete; outstanding necessary checks map to needs_context. Use StructuredOutput exactly once.",
+        const result = await connection.prompt("Serialize the most recent verification into the requested checkpoint. Organize all six sections from verified conclusions, preserving content, uncertainty and scores. COMPLETE maps to complete; outstanding necessary checks map to needs_context. Use StructuredOutput exactly once.",
           outputAgent, model, reviewCheckpointJsonSchema as Record<string, unknown>);
         try {
           checkMessage(result);

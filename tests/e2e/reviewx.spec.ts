@@ -54,6 +54,9 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   await expect(drawer.getByRole("button", { name: "发布选中意见" })).toHaveCount(0);
   const findings = drawer.locator(".finding-card");
   await expect(findings).toHaveCount(2);
+  for (const heading of ["问题描述", "问题位置", "影响分析", "解决方案", "预防措施"]) {
+    await expect(findings.nth(0).getByRole("heading", { name: heading, exact: true })).toBeVisible();
+  }
   await expect(findings.nth(1).getByText("置信度 0/100")).toBeVisible();
   await expect(findings.nth(0).getByText("置信度 35/100")).toBeVisible();
   await expect(findings.nth(0).getByText("已核对调用方与变更代码。")).toHaveCount(0);

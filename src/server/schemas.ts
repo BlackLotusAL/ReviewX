@@ -73,10 +73,19 @@ export const reviewerResultSchema = z.strictObject({
   findings: z.array(reviewerFindingSchema),
   limitations: z.array(reviewText).optional(),
 });
+export const structuredFindingSchema = reviewerFindingSchema.omit({ body: true }).extend({
+  title: reviewText.refine(value => !/[\r\n]/u.test(value), "single-line title required"),
+  description: reviewText,
+  locations: z.array(z.strictObject({ evidenceIndex: z.number().int().nonnegative(), symbol: reviewText })).min(1),
+  impact: reviewText,
+  solution: reviewText,
+  prevention: reviewText,
+});
+export type StructuredFinding = z.infer<typeof structuredFindingSchema>;
 export const reviewCheckpointSchema = z.strictObject({
   status: z.enum(["complete", "needs_context"]),
   nextChecks: z.array(reviewText),
-  findings: z.array(reviewerFindingSchema),
+  findings: z.array(structuredFindingSchema),
   limitations: z.array(reviewText),
 }).superRefine((value, context) => {
   if (value.status === "complete" && value.nextChecks.length !== 0) context.addIssue({ code: "custom", path: ["nextChecks"], message: "complete requires no outstanding checks" });

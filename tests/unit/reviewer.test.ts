@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { OpenCodeReviewer, parseReviewCheckpoint, reviewEnvironment, type ReviewerPhase } from "@/src/server/opencode";
 import type { OpenCodeConnection, OpenCodeConnectionFactory, OpenCodeMessage } from "@/src/server/opencode-client";
-import { assistant, completeCheckpoint, finding, preparedFixture } from "../helpers/reviewer";
+import { assistant, completeCheckpoint, finding, preparedFixture, structuredFinding } from "../helpers/reviewer";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { await Promise.all(cleanups.splice(0).map(cleanup => cleanup())); });
@@ -17,6 +17,19 @@ async function harness(responses: OpenCodeMessage[]) {
 }
 
 describe("multi-turn reviewer", () => {
+  test.each(["title", "description", "locations", "impact", "solution", "prevention"])("requires %s and corrects missing sections once", async key => {
+    const invalid = { ...structuredFinding } as Record<string, unknown>; delete invalid[key];
+    const bad = { ...completeCheckpoint(), findings: [invalid] };
+    const h = await harness([assistant(), assistant(), assistant(bad), assistant(completeCheckpoint())]);
+    expect((await h.run()).findings).toEqual([finding]);
+    expect(h.prompt).toHaveBeenCalledTimes(4);
+    const failed = await harness([assistant(), assistant(), assistant(bad), assistant(bad)]);
+    await expect(failed.run()).rejects.toMatchObject({ code: "INVALID_REVIEWER_OUTPUT" });
+  });
+  test("rejects positions that do not refer to evidence", async () => {
+    const h = await harness([]);
+    expect(() => parseReviewCheckpoint({ ...completeCheckpoint(), findings: [{ ...structuredFinding, locations: [{ evidenceIndex: 1, symbol: "allow" }] }] }, h.prepared)).toThrow();
+  });
   test("investigates, always verifies, and reads only the structured result with confidence/evidence", async () => {
     const h = await harness([assistant(completeCheckpoint([])), assistant(), assistant(completeCheckpoint())]);
     expect(await h.run()).toEqual({ findings: [finding], limitations: [] });
@@ -35,7 +48,7 @@ describe("multi-turn reviewer", () => {
   test.each([[[0]], [[35]], [[89]], [[90]], [[100]], [[90, 0, 100, 35, 89]]])("preserves all scores and ordered bodies: %j", async (scores) => {
     const findings = scores.map((confidence, index) => ({ ...finding, confidence, body: `${finding.body}\n\nFinding ${index}` }));
     const h = await harness([assistant(), assistant(), assistant(completeCheckpoint(findings))]);
-    expect((await h.run()).findings).toEqual(findings);
+    expect((await h.run()).findings).toEqual(parseReviewCheckpoint(completeCheckpoint(findings), h.prepared).findings);
   });
   test("never treats exhausted verification as PASS", async () => {
     const incomplete = () => assistant({ status: "needs_context", nextChecks: ["Missing critical caller"], findings: [], limitations: [] });
