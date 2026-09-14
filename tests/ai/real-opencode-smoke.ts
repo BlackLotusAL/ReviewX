@@ -54,6 +54,7 @@ try {
     GIT_CONFIG_VALUE_0: cloneUrl,
   };
   const project: ProjectRecord = {
+    webUrl: "https://codehub.example/project/home",
     id: "9001", name: "smoke/authorization", cloneUrl,
     addedAt: "2026-09-02T00:00:00Z", updatedAt: "2026-09-02T00:00:00Z",
   };

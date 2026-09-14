@@ -242,8 +242,8 @@ for (const viewport of [{ width: 1675, height: 1216 }, { width: 1230, height: 12
     await expect(page.locator(".mr-card")).toHaveCount(14);
     await expect(page.locator(".mr-project-id")).toHaveCount(0);
     await expect(page.locator(".project-copy > .mono").first()).toHaveText("#101");
-    await expect(page.locator(".project-copy strong").first()).toHaveCSS("font-size", "16px");
-    await expect(page.locator(".project-item > .icon").first()).toHaveCSS("width", "22px");
+    await expect(page.locator(".project-copy strong").first()).toHaveCSS("font-size", "13px");
+    await expect(page.locator(".project-item > .icon").first()).toHaveCSS("width", "16px");
     await expect(page.locator(".mr-main h4").first()).toHaveCSS("font-size", "18px");
     await expect(page.locator(".mr-card").first()).toHaveCSS("background-color", "rgb(245, 247, 250)");
     await expect(page.locator(".mr-card").first().locator(".mr-progress")).toHaveCount(0);
@@ -308,3 +308,29 @@ for (const viewport of [{ width: 1675, height: 1216 }, { width: 1230, height: 12
     expect(requests).toEqual([]);
   });
 }
+
+test("directory navigation and queue links locate content without opening details", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/preview");
+  await expect(page.locator(".queue-entry")).toHaveCount(5);
+  await expect(page.locator(".queue-heading")).toContainText("执行中 4 · 排队 1");
+  const directory = page.getByRole("button", { name: "platform", exact: true });
+  await directory.click();
+  await expect(directory).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".project-id-link", { hasText: "#101" })).toHaveCount(0);
+  await expect(page.locator(".mr-groups .mr-card")).toHaveCount(14);
+  await directory.press("Enter");
+  const projectLink = page.getByRole("button", { name: "定位项目 apps/internal/tools/task-console", exact: true });
+  await projectLink.focus();
+  await projectLink.press("Enter");
+  await expect(page.locator("#project-202")).toBeFocused();
+  await expect(page.locator("#project-202")).toBeInViewport();
+  await expect(page.locator("#project-202")).toHaveText("task-console");
+  await page.locator(".queue-entry").last().click();
+  await expect(page.locator("#mr-101-402")).toBeFocused();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await opener(page, "402").click();
+  expect(await page.getByRole("dialog").evaluate(el => getComputedStyle(el, "::backdrop").backdropFilter)).toBe("blur(6px)");
+  await page.keyboard.press("Escape");
+  await expect(opener(page, "402")).toBeFocused();
+});

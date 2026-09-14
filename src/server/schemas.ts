@@ -15,6 +15,7 @@ export function isCredentialFreeHttpsUrl(value: string): boolean {
 export const credentialFreeHttpsUrlSchema = z.string().url().refine(isCredentialFreeHttpsUrl, "URL must be credential-free HTTPS");
 
 export const codeHubRepoSchema = z.object({
+  web_url: z.string(),
   repo_id: positiveIdSchema.optional(),
   clone_urls: z.object({
     https: z.string().url().refine((value) => {

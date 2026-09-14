@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import type { AppStateView, AttemptStatus, AttemptView, FindingStatus, MrDetailView, MrRowView, MergeRequestSnapshot, ReviewPhase, SafeErrorView, Severity } from "@/src/shared/types";
 import { createPreviewDataSource, liveReviewData, type ReviewPreviewData } from "@/src/client/review-data";
 import { reviewDuration } from "@/src/shared/review-duration";
 import { Button, DetailDialog, Diagnostic, Icon, Skeleton, StatusBadge } from "./ui";
+import { projectTree, projectShortName, reviewQueue, projectAnchor, mrAnchor, navigateTo, type ProjectTreeNode } from "@/src/client/workspace-navigation";
 import { Markdown } from "./markdown";
 
 const statusLabels: Record<"unreviewed" | AttemptStatus, string> = {
@@ -53,6 +54,9 @@ function MrWebLink({ mr, className = "iid", readOnly = false }: { mr: MergeReque
 export default function ReviewWorkspace({ previewData }: { previewData?: ReviewPreviewData }) {
   const dataSource = useMemo(() => previewData ? createPreviewDataSource(previewData) : liveReviewData, [previewData]);
   const [state, setState] = useState<AppStateView | null>(null);
+  const [collapsedDirectories, setCollapsedDirectories] = useState<Set<string>>(() => new Set());
+  const tree = useMemo(() => projectTree(state?.projects ?? []), [state]);
+  const queue = useMemo(() => reviewQueue(state?.projects ?? []), [state]);
   const [clock, setClock] = useState(0);
   const hasRunningReview = state?.projects.some(project => project.mergeRequests.some(mr => mr.status === "reviewing" || mr.status === "stopping"));
   useEffect(() => {
@@ -266,6 +270,31 @@ export default function ReviewWorkspace({ previewData }: { previewData?: ReviewP
   const disabled = pending !== null || Boolean(state?.fatalError);
   const refreshing = state?.refreshOperation.status === "refreshing" || pending === "refresh";
 
+  function renderTree(nodes: ProjectTreeNode[], depth = 0): ReactNode {
+    return <ul className={`project-tree ${depth > 4 ? "depth-capped" : ""}`}>{nodes.map(node => {
+      if (node.kind === "project") {
+        const project = node.project;
+        return <li key={`project-${project.id}`}><article className="project-item" key={project.id}>
+          <Icon name="folder" /><div className="project-copy"><button className="project-locate" aria-label={`定位项目 ${project.name}`} onClick={() => navigateTo(projectAnchor(project.id))}><strong title={project.name}>{projectShortName(project.name)}</strong></button>
+            <a className="mono project-id-link" href={project.webUrl} target="_blank" rel="noreferrer noopener" aria-label={dataSource.readOnly ? `示例 Project #${project.id}` : `在 CodeHub 打开 Project #${project.id}`} onClick={dataSource.readOnly ? event => event.preventDefault() : undefined} onAuxClick={dataSource.readOnly ? event => event.preventDefault() : undefined}>#{project.id}<Icon name="external" /></a>
+          </div>
+          <Button variant="quiet" className="remove-button" disabled={disabled || project.removing || state?.publicationProjectId === project.id} busy={project.removing || pending === `remove-${project.id}`} onClick={async () => {
+            if (await mutate(`remove-${project.id}`, `/api/projects/${encodeURIComponent(project.id)}`, "DELETE", {}, "project")) { setProjectFeedback(""); announce("项目已移除。"); }
+          }}>{project.removing ? "移除中" : "移除"}</Button>
+        </article></li>;
+      }
+      const expanded = !collapsedDirectories.has(node.path);
+      return <li key={`directory-${node.path}`}>
+        <button className="directory-toggle" aria-expanded={expanded} onClick={() => setCollapsedDirectories(previous => {
+          const next = new Set(previous);
+          if (next.has(node.path)) next.delete(node.path); else next.add(node.path);
+          return next;
+        })}><Icon name="chevron" /><Icon name="folder" /><span>{node.name}</span></button>
+        {expanded && renderTree(node.children, depth + 1)}
+      </li>;
+    })}</ul>;
+  }
+
   return <main className="app-shell">
     <div className="sr-only" aria-live="polite" aria-atomic="true"><span key={announcement.id}>{announcement.text}</span></div>
     <section className="project-panel" aria-labelledby="project-heading">
@@ -279,12 +308,7 @@ export default function ReviewWorkspace({ previewData }: { previewData?: ReviewP
       </div>
       {(state ? state.projects.length > 0 : !pollError) && <div className="project-list" aria-label="已登记 Project">
         {!state && !pollError && <Skeleton label="正在读取项目…" compact />}
-        {state?.projects.map((project) => <article className="project-item" key={project.id}>
-          <Icon name="folder" /><div className="project-copy"><strong>{project.name}</strong><span className="mono">#{project.id}</span></div>
-          <Button variant="quiet" className="remove-button" disabled={disabled || project.removing || state.publicationProjectId === project.id} busy={project.removing || pending === `remove-${project.id}`} onClick={async () => {
-            if (await mutate(`remove-${project.id}`, `/api/projects/${encodeURIComponent(project.id)}`, "DELETE", {}, "project")) { setProjectFeedback(""); announce("项目已移除。"); }
-          }}>{project.removing ? "移除中" : "移除"}</Button>
-        </article>)}
+        {renderTree(tree)}
       </div>}
       <div className="sidebar-footer"><a className="log-link" href="/logs" target="_blank" rel="noreferrer"><Icon name="document" />查看当前会话日志<Icon name="external" /></a></div>
     </section>
@@ -293,6 +317,15 @@ export default function ReviewWorkspace({ previewData }: { previewData?: ReviewP
       <header className="panel-header"><h2 id="mr-heading" tabIndex={-1}>MR 检视队列</h2><Button variant="secondary" icon="refresh" className="refresh-button" busy={refreshing} disabled={disabled || refreshing || !state?.projects.length} onClick={async () => {
         if (await mutate("refresh", "/api/mrs/refresh", "POST", {})) announce("MR 刷新请求已完成。");
       }}>{refreshing ? "刷新中…" : "刷新 MR"}</Button></header>
+      {state && <section className="queue-overview" aria-labelledby="queue-heading">
+        <div className="queue-heading"><h3 id="queue-heading">当前检视队列</h3><span>执行中 {queue.filter(({ mr }) => mr.status !== "queued").length} · 排队 {queue.filter(({ mr }) => mr.status === "queued").length}</span></div>
+        {queue.length ? <ul className="queue-list">{queue.map(({ project, mr }) => <li key={`${project.id}/${mr.iid}`}>
+          <a className="queue-entry" href={`#${mrAnchor(project.id, mr.iid)}`} onClick={event => { event.preventDefault(); navigateTo(mrAnchor(project.id, mr.iid)); }}>
+            <span className="queue-copy"><span className="queue-project" title={project.name}>{projectShortName(project.name)} <span className="mono">!{mr.iid}</span></span><strong>{mr.title}</strong></span>
+            <span className="queue-state"><StatusBadge value={mr.status} tone={statusTone(mr.status)} busy={isBusy(mr.status)}>{statusLabels[mr.status]}</StatusBadge><span>{mr.status === "queued" ? `队列第 ${mr.queuePosition ?? "—"} 位` : mr.phase ? phaseLabels[mr.phase] : ""}</span></span>
+          </a>
+        </li>)}</ul> : <p className="queue-empty">当前没有执行中或排队中的检视</p>}
+      </section>}
       {state?.fatalError && <Diagnostic error={state.fatalError} />}
       {pollError && <Diagnostic error={pollError} />}
       {actionError?.scope === "page" && <Diagnostic error={actionError.error} />}
@@ -301,7 +334,7 @@ export default function ReviewWorkspace({ previewData }: { previewData?: ReviewP
       {state?.projects.length === 0 && <div className="welcome"><span className="empty-symbol"><Icon name="branch" /></span><h3>暂无项目</h3><Button variant="secondary" icon="arrow" onClick={() => document.getElementById("project-id")?.focus()}>添加项目</Button></div>}
       {Boolean(state?.projects.length) && <div className="mr-groups">
         {state?.projects.map((project) => <section className="mr-group" key={project.id}>
-          <div className="group-title"><div><Icon name="folder" /><h3>{project.name}</h3></div><span>最近刷新 <time className="mono">{formatDate(project.refreshedAt)}</time></span></div>
+          <div className="group-title"><div><Icon name="folder" /><h3 id={projectAnchor(project.id)} tabIndex={-1} title={project.name}>{projectShortName(project.name)}</h3></div><span>最近刷新 <time className="mono">{formatDate(project.refreshedAt)}</time></span></div>
           {!project.refreshedAt && <div className="empty inset"><Icon name="refresh" /><p>尚未刷新 MR</p></div>}
           {project.refreshedAt && project.mergeRequests.length === 0 && <div className="empty inset"><Icon name="check" /><p>暂无开放的 MR</p></div>}
           {project.mergeRequests.map((mr, index) => {
@@ -309,7 +342,7 @@ export default function ReviewWorkspace({ previewData }: { previewData?: ReviewP
             const actionPending = pending === `review-${mr.projectId}-${mr.iid}` || pending === `stop-${mr.latestAttemptId}`;
             const duration = reviewDuration(mr, previewData ? Date.parse(previewData.referenceTime) : clock);
             const hasProgress = Boolean(mr.queuePosition || (mr.phase && isBusy(mr.status)));
-            return <article key={mr.iid} className={`mr-card ${index < 6 ? "has-entry" : ""} ${active ? "selected" : ""}`} style={{ "--entry-delay": `${Math.min(index, 5) * 40}ms` } as CSSProperties}>
+            return <article key={mr.iid} id={mrAnchor(project.id, mr.iid)} tabIndex={-1} className={`mr-card ${index < 6 ? "has-entry" : ""} ${active ? "selected" : ""}`} style={{ "--entry-delay": `${Math.min(index, 5) * 40}ms` } as CSSProperties}>
               <div className="mr-main"><div className="mr-identity"><MrWebLink mr={mr} readOnly={dataSource.readOnly} /></div><h4><button className="mr-open" aria-label={`查看 MR !${mr.iid}：${mr.title}`} aria-haspopup="dialog" onClick={(event) => chooseMr(mr, event.currentTarget)}>{mr.title}</button></h4><p className="mr-metadata"><span>更新于 <time className="mono">{formatDate(mr.updatedAt)}</time></span>{duration !== null && <span className="mr-duration">检视耗时 <span className="mono">{duration}</span></span>}</p></div>
               <div className="mr-state"><StatusBadge value={mr.status} tone={statusTone(mr.status)} busy={isBusy(mr.status)}>{statusLabels[mr.status]}</StatusBadge>{hasProgress && <div className="mr-progress">{mr.queuePosition ? <span className="queue-position">队列第 <span className="mono">{mr.queuePosition}</span> 位</span> : mr.phase && isBusy(mr.status) ? <span className="phase" key={mr.phase}>{phaseLabels[mr.phase]}</span> : null}</div>}</div>
               <div className="mr-action">{mr.primaryAction && <Button variant={mr.primaryAction === "start" ? "primary" : "secondary"} icon={mr.primaryAction === "start" ? "play" : mr.primaryAction === "stop" ? "stop" : "refresh"} disabled={disabled} busy={actionPending} onClick={() => void primaryAction(mr)}>{actionPending ? (mr.primaryAction === "stop" ? "停止中…" : "提交中…") : mr.primaryAction === "start" ? "开始检视" : mr.primaryAction === "stop" ? "停止" : "重新检视"}</Button>}</div>

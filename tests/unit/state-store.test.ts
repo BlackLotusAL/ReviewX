@@ -39,7 +39,7 @@ describe("atomic persistent state", () => {
   test("writes valid indented JSON atomically and fails immediately under a live lock", async () => {
     const { paths, store } = await setup();
     await store.mutate((draft) => { draft.registeredProjectIds.push("1"); draft.projectsById["1"] = {
-      id: "1", name: "team/repo", cloneUrl: "https://example.com/team/repo.git", addedAt: "a", updatedAt: "b",
+      id: "1", name: "team/repo", webUrl: "https://example.com/team/repo", cloneUrl: "https://example.com/team/repo.git", addedAt: "a", updatedAt: "b",
     }; });
     expect(JSON.parse(await readFile(paths.stateFile, "utf8")).registeredProjectIds).toEqual(["1"]);
     expect((await readdir(paths.root)).some((name) => name.includes(".tmp-"))).toBe(false);

@@ -27,7 +27,7 @@ describe.runIf(process.platform === "win32")("real PowerShell adapters for exter
       "$utf8 = [Text.UTF8Encoding]::new($false)",
       "$line = ConvertTo-Json -Compress -InputObject ([object[]]$args)",
       "[IO.File]::AppendAllText($env:CODEHUB_CAPTURE, $line + [Environment]::NewLine, $utf8)",
-      "if ($args[0] -eq 'repo') { [Console]::Out.Write('{\"repo_id\":\"101\",\"clone_urls\":{\"https\":\"https://codehub.example/team/repo.git\"}}'); exit 0 }",
+      "if ($args[0] -eq 'repo') { [Console]::Out.Write('{\"repo_id\":\"101\",\"web_url\":\"http://codehub.example/project/101\",\"clone_urls\":{\"https\":\"https://codehub.example/team/repo.git\"}}'); exit 0 }",
       "if ($args[1] -eq 'list') { [Console]::Out.Write('[{\"iid\":\"7\",\"title\":\"Example MR\"}]'); exit 0 }",
       "if ($args[1] -eq 'view') { if ($env:CODEHUB_BAD_WEB_URL -eq '1') { [Console]::Out.Write('{\"repo_id\":\"101\",\"iid\":\"7\",\"state\":\"opened\",\"source_branch\":\"feature\",\"target_branch\":\"main\",\"updated_at\":\"2026-09-02T00:00:00Z\"}'); exit 0 }; [Console]::Out.Write('{\"repo_id\":\"101\",\"iid\":\"7\",\"title\":\"Example MR\",\"state\":\"opened\",\"source_branch\":\"feature\",\"target_branch\":\"main\",\"updated_at\":\"2026-09-02T00:00:00Z\",\"web_url\":\"https://codehub.example/team/repo/merge_requests/7\"}'); exit 0 }",
       "if ($args[1] -eq 'comment') { [Console]::Out.Write('{\"comment_id\":\"comment-1\",\"repo_id\":\"101\",\"mr_iid\":\"7\",\"severity\":\"major\"}'); exit 0 }",
@@ -36,7 +36,7 @@ describe.runIf(process.platform === "win32")("real PowerShell adapters for exter
     await writeFile(path.join(root, "codehub.ps1"), script, "utf8");
     const client = new CodeHubClient(shimEnvironment(root, { CODEHUB_CAPTURE: capture }));
 
-    await expect(client.viewRepo("101")).resolves.toEqual({ cloneUrl: "https://codehub.example/team/repo.git", name: "team/repo" });
+    await expect(client.viewRepo("101")).resolves.toEqual({ webUrl: "http://codehub.example/project/101", cloneUrl: "https://codehub.example/team/repo.git", name: "team/repo" });
     await expect(client.listOpenMrs("101")).resolves.toEqual([{ iid: "7", title: "Example MR" }]);
     await expect(client.viewMr("101", "7")).resolves.toMatchObject({
       projectId: "101",

@@ -28,6 +28,7 @@ const errorSchema = z.strictObject({
   stack: z.string().optional(),
 });
 const projectSchema = z.strictObject({
+  webUrl: z.string(),
   id: positiveId,
   name: z.string().min(1),
   cloneUrl: z.string().url().refine((value) => {

@@ -50,6 +50,7 @@ async function repositoryFixture(options: { secret?: boolean; sourceBranch?: str
     ...(options.environmentSecret ? { CODEHUB_TOKEN: options.environmentSecret } : {}),
   };
   const project: ProjectRecord = {
+    webUrl: "https://codehub.example/project/home",
     id: "101", name: "team/repo", cloneUrl, addedAt: "2026-09-02T00:00:00Z", updatedAt: "2026-09-02T00:00:00Z",
   };
   const details: MergeRequestSnapshot = {

@@ -103,6 +103,7 @@ export class ReviewXRuntime {
       return {
         id: project.id,
         name: project.name,
+        webUrl: project.webUrl,
         removing: this.#removingProjects.has(projectId),
         refreshedAt: snapshot?.refreshedAt,
         mergeRequests: (snapshot?.mergeRequests ?? []).map((mr) => this.#mrRow(mr)),
@@ -204,6 +205,7 @@ export class ReviewXRuntime {
           id: projectId,
           name: resolved.name,
           cloneUrl: resolved.cloneUrl,
+          webUrl: resolved.webUrl,
           addedAt: previous?.addedAt ?? now,
           updatedAt: now,
         };
