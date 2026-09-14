@@ -40,7 +40,7 @@ async function abortableDelay(milliseconds: number, signal: AbortSignal): Promis
 export class FakeCodeHub implements CodeHubPort {
   readonly calls: string[][] = [];
   readonly comments: Array<{ projectId: string; mrIid: string; body: string; severity: Severity }> = [];
-  readonly repos = new Map<string, { cloneUrl: string; name: string }>();
+  readonly repos = new Map<string, { cloneUrl: string; name: string; webUrl: string }>();
   readonly lists = new Map<string, CodeHubMrListEntry[]>();
   readonly viewSequences = new Map<string, MergeRequestSnapshot[]>();
   readonly viewIndexes = new Map<string, number>();
@@ -50,9 +50,9 @@ export class FakeCodeHub implements CodeHubPort {
   maximumActiveComments = 0;
   listFailures = new Map<string, Error>();
 
-  async viewRepo(projectId: string): Promise<{ cloneUrl: string; name: string }> {
+  async viewRepo(projectId: string): Promise<{ cloneUrl: string; name: string; webUrl: string }> {
     this.calls.push(["repo", "view", projectId]);
-    return clone(this.repos.get(projectId) ?? { cloneUrl: `https://codehub.example/team/project-${projectId}.git`, name: `team/project-${projectId}` });
+    return clone(this.repos.get(projectId) ?? { webUrl: `https://codehub.example/team/project-${projectId}`, cloneUrl: `https://codehub.example/team/project-${projectId}.git`, name: `team/project-${projectId}` });
   }
 
   async listOpenMrs(projectId: string): Promise<CodeHubMrListEntry[]> {

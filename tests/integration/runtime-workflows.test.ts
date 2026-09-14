@@ -418,3 +418,20 @@ describe("ReviewX runtime workflows", () => {
     }
   });
 });
+
+it("persists project web URLs verbatim and never looks them up during refresh or polling", async () => {
+  const harness = await createRuntimeHarness();
+  try {
+    const webUrl = "http://codehub.example/project/101/home?tab=files#readme";
+    harness.codeHub.repos.set("101", { name: "team/repo", cloneUrl: "https://codehub.example/team/repo.git", webUrl });
+    configureMr(harness, "101", "1");
+    await harness.runtime.addProject("101");
+    expect(harness.runtime.snapshot().projects[0].webUrl).toBe(webUrl);
+    expect((await harness.store.read()).projectsById["101"].webUrl).toBe(webUrl);
+    harness.runtime.snapshot(); harness.runtime.snapshot();
+    await harness.runtime.refreshMrs();
+    await harness.runtime.refreshMrs();
+    expect(harness.codeHub.calls.filter(call => call[0] === "repo")).toEqual([["repo", "view", "101"]]);
+    expect(harness.runtime.snapshot().projects[0].webUrl).toBe(webUrl);
+  } finally { await harness.cleanup(); }
+});

@@ -74,3 +74,10 @@ MR 列表项除 MR 快照外，还会包含页面状态 `status`、可选执行�
 ReviewX 调用 MR 列表时固定传递 `--state open`，这是 CodeHub CLI 的筛选参数。`codehub mr view` JSON 返回值使用独立的数据词汇：`state` 为 `open` 或 `opened` 时均视为开放状态，比较时忽略首尾空白和大小写。其他状态不会被推断或纠正，并在 Git、OpenCode 启动前终止当前刷新或 attempt。
 
 每次新的 `mr view` 响应还必须包含 `web_url`，且值必须是无用户名、密码的 HTTPS URL。缺失或非法值以 `CODEHUB_INVALID_RESPONSE` 终止本次刷新，并提示升级兼容的 CodeHub CLI；既有旧状态仍可启动和读取。
+
+
+### 项目网页链接
+
+`GET /api/state` 的 `projects[]` 必须包含字符串 `webUrl`，来源为 `codehub repo view` 的必填字符串 `web_url`。项目登记时原样保存并返回，不检查 URL 格式、协议或凭据；手动刷新与状态轮询均不补查项目地址。不提供缺失地址降级或旧项目数据迁移。
+
+项目卡片主体定位到本页项目 MR 分组；`#ID` 在新标签页打开 `webUrl`，移除按钮保持独立操作。预览中的示例外链不跳转。

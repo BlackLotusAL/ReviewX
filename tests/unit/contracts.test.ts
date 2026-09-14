@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { isOpenMrState, normalizeCommentBody, projectNameFromCloneUrl } from "@/src/server/codehub";
 import { extractOpenCodeFinalBody, parseReviewerBody } from "@/src/server/opencode";
-import { codeHubMrSchema, reviewerResultSchema } from "@/src/server/schemas";
+import { codeHubRepoSchema, codeHubMrSchema, reviewerResultSchema } from "@/src/server/schemas";
 import { safeMarkdownUrl } from "@/src/shared/markdown";
 import { assertSameOrigin, jsonBody } from "@/src/server/http";
 
@@ -110,4 +110,15 @@ describe("PRD boundary contracts", () => {
       else process.env.REVIEWX_ORIGIN = previous;
     }
   });
+});
+
+
+test("project web_url is a required string and is passed through without URL validation", () => {
+  const repo = { clone_urls: { https: "https://codehub.example/a/b.git" } };
+  for (const web_url of [undefined, null, 42]) {
+    expect(codeHubRepoSchema.safeParse({ ...repo, web_url }).success).toBe(false);
+  }
+  for (const web_url of ["", "relative/path", "http://codehub.example/a", "https://user:pass@codehub.example/a"]) {
+    expect(codeHubRepoSchema.parse({ ...repo, web_url }).web_url).toBe(web_url);
+  }
 });

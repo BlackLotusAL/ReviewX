@@ -13,7 +13,7 @@ interface Example {
 
 const projects = [
   { id: "101", name: "platform/review-engine", target: "main" },
-  { id: "202", name: "apps/task-console", target: "release/1.5" },
+  { id: "202", name: "apps/internal/tools/task-console", target: "release/1.5" },
 ];
 
 const examples: Example[] = [
@@ -120,7 +120,7 @@ export function createReviewPreviewData(): ReviewPreviewData {
   const data: ReviewPreviewData = {
     referenceTime: at(180),
     state: { revision: 1, refreshOperation: { status: "idle" }, publicationBusy: false, fatalError: null, currentLogUrl: "/api/logs/current",
-      projects: projects.map(project => ({ id: project.id, name: project.name, removing: false, refreshedAt: at(180), mergeRequests: [] })) },
+      projects: projects.map(project => ({ id: project.id, name: project.name, webUrl: `https://codehub.example/${project.name}`, removing: false, refreshedAt: at(180), mergeRequests: [] })) },
     details: {}, reports: {},
   };
   examples.forEach((example, index) => {

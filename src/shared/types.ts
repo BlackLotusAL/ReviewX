@@ -62,6 +62,7 @@ export interface DiagnosticRecord {
 }
 
 export interface ProjectRecord {
+  webUrl: string;
   id: string;
   name: string;
   cloneUrl: string;
@@ -179,6 +180,7 @@ export interface MrRowView extends MergeRequestSnapshot {
 }
 
 export interface ProjectView {
+  webUrl: string;
   id: string;
   name: string;
   removing: boolean;

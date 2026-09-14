@@ -96,7 +96,7 @@ export type CommentCreateResult =
   | { kind: "unknown"; error: AppError };
 
 export interface CodeHubPort {
-  viewRepo(projectId: string, signal?: AbortSignal): Promise<{ cloneUrl: string; name: string }>;
+  viewRepo(projectId: string, signal?: AbortSignal): Promise<{ cloneUrl: string; name: string; webUrl: string }>;
   listOpenMrs(projectId: string, signal?: AbortSignal): Promise<CodeHubMrListEntry[]>;
   viewMr(projectId: string, mrIid: string, title?: string, signal?: AbortSignal): Promise<MergeRequestSnapshot>;
   createComment(projectId: string, mrIid: string, body: string, severity: Severity): Promise<CommentCreateResult>;
@@ -121,7 +121,7 @@ export class CodeHubClient implements CodeHubPort {
     });
   }
 
-  async viewRepo(projectId: string, signal?: AbortSignal): Promise<{ cloneUrl: string; name: string }> {
+  async viewRepo(projectId: string, signal?: AbortSignal): Promise<{ cloneUrl: string; name: string; webUrl: string }> {
     const repo = parseSuccess("Project 验证", await this.#run(["repo", "view", projectId, "--output", "json"], signal), codeHubRepoSchema);
     if (repo.repo_id !== undefined && repo.repo_id !== projectId) {
       throw new AppError({
@@ -134,7 +134,7 @@ export class CodeHubClient implements CodeHubPort {
         httpStatus: 502,
       });
     }
-    return { cloneUrl: repo.clone_urls.https, name: projectNameFromCloneUrl(repo.clone_urls.https) };
+    return { webUrl: repo.web_url, cloneUrl: repo.clone_urls.https, name: projectNameFromCloneUrl(repo.clone_urls.https) };
   }
 
   async listOpenMrs(projectId: string, signal?: AbortSignal): Promise<CodeHubMrListEntry[]> {

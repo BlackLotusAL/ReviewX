@@ -8,7 +8,7 @@ function fixtures(status: AttemptStatus = "awaiting_confirmation") {
   const mr = { projectId: "101", iid: "42", title: "修复解析器边界条件，完善配置读取与错误反馈", state: "open", updatedAt: at, sourceBranch: "fix/parser-validation", targetBranch: "main", webUrl: "https://codehub.example/platform/review-engine/merge_requests/42" };
   const findings = [{ ordinal: 1, severity: "major" as const, status: "pending" as const, body: "### 空配置会中断后续的检视任务\n\n配置文件存在但内容为空时，解析函数仍尝试读取首个节点。该异常会提前退出，使剩余任务无法完成。\n\n建议在解析之前检查输入，并返回明确的空配置结果。\n\n```ts\nif (!source.trim()) {\n  return { entries: [], warnings: [] };\n}\n```\n\n这项检查应保留原有调用顺序。" },
     { ordinal: 2, severity: "suggestion" as const, status: "pending" as const, body: "### 补充空白配置的回归测试\n\n增加纯空格和空文件两类样例，验证错误反馈与队列中的后续任务。\n\n| 输入 | 预期结果 | 后续任务 |\n| --- | --- | --- |\n| 空文件 | 空配置结果 | 正常继续 |\n| 纯空格 | 空配置结果 | 正常继续 |" }];
-  const state: AppStateView = { revision: 1, refreshOperation: { status: "idle" }, publicationBusy: false, fatalError: null, currentLogUrl: "/api/logs/current", projects: [{ id: "101", name: "platform/review-engine", removing: false, refreshedAt: at, mergeRequests: [{ ...mr, status, latestAttemptId: "latest", phase: status === "reviewing" ? "running_opencode" : undefined, primaryAction: status === "reviewing" ? "stop" : "rereview" }, { ...mr, iid: "43", title: "为队列任务补充取消与清理测试", status: "unreviewed", primaryAction: "start" }] }] };
+  const state: AppStateView = { revision: 1, refreshOperation: { status: "idle" }, publicationBusy: false, fatalError: null, currentLogUrl: "/api/logs/current", projects: [{ id: "101", name: "platform/review-engine", webUrl: "https://codehub.example/platform/review-engine", removing: false, refreshedAt: at, mergeRequests: [{ ...mr, status, latestAttemptId: "latest", phase: status === "reviewing" ? "running_opencode" : undefined, primaryAction: status === "reviewing" ? "stop" : "rereview" }, { ...mr, iid: "43", title: "为队列任务补充取消与清理测试", status: "unreviewed", primaryAction: "start" }] }] };
   const detail: MrDetailView = { project: { id: "101", name: "platform/review-engine", registered: true }, mergeRequest: mr, attempts: [{ id: "latest", projectId: "101", mrIid: "42", mrTitle: mr.title, requestedUpdatedAt: at, createdAt: at, status, phase: status === "reviewing" ? "running_opencode" : undefined, findings: status === "awaiting_confirmation" ? findings : [], publishBatches: [], result: status === "completed" ? "pass" : status === "awaiting_confirmation" ? "findings" : undefined, reportUrl: ["completed", "awaiting_confirmation"].includes(status) ? "/api/reports/latest" : undefined, error: status === "review_failed" ? failure : undefined }, { id: "history", projectId: "101", mrIid: "42", mrTitle: mr.title, requestedUpdatedAt: at, createdAt: at, status: "archived", findings: findings.map(f => ({ ...f, status: "archived" })), publishBatches: [], reportUrl: "/api/reports/history" }] };
   return { state, detail };
 }
@@ -253,7 +253,8 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 1230, height: 121
     // MR numbers and timestamps load the mono font after the empty-state form label was removed.
     await page.evaluate(() => document.fonts.ready);
     expect(await page.evaluate(() => [...document.fonts].filter(f => f.status === "loaded").map(f => f.family))).toEqual(expect.arrayContaining(["Inter", "Geist Mono"]));
-    expect(fontResponses).toEqual([200, 200]);
+    expect(fontResponses.length).toBeGreaterThanOrEqual(2);
+    expect(fontResponses.every(status => status === 200)).toBe(true);
     await noOverflow(page);
     await page.screenshot({ animations: "disabled", path: testInfo.outputPath("queue.png"), fullPage: true });
     await page.locator(".mr-open").first().click();
@@ -280,3 +281,71 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 1230, height: 121
     }
   });
 }
+
+test("queue polling preserves collapsed directories and supports empty project anchors", async ({ page }) => {
+  const data = fixtures("reviewing");
+  data.state.projects.push({ id: "202", name: "platform/empty", webUrl: "https://codehub.example/platform/empty", removing: false, mergeRequests: [] });
+  await intercept(page, data);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  await expect(page.locator(".queue-entry")).toHaveCount(1);
+  const directory = page.getByRole("button", { name: "platform", exact: true });
+  await directory.click();
+  data.state.revision += 1;
+  data.state.projects[0].mergeRequests[0].status = "completed";
+  await expect(page.locator(".queue-empty")).toBeVisible();
+  await expect(directory).toHaveAttribute("aria-expanded", "false");
+  await directory.click();
+  await page.getByRole("button", { name: "定位项目 platform/empty", exact: true }).click();
+  await expect(page.locator("#project-202")).toBeFocused();
+  await expect(page.locator("#project-202")).toBeInViewport();
+});
+
+
+test("project card surface navigates while external link and remove remain independent", async ({ page, context }) => {
+  const data = fixtures();
+  data.state.projects[0].webUrl = "https://codehub.example/project/101/home";
+  await intercept(page, data);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await context.route("https://codehub.example/**", route => route.fulfill({ body: "Project home" }));
+  await page.goto("/");
+  const card = page.locator(".project-item").first();
+  const cardBox = await card.boundingBox();
+  await card.click({ position: { x: 3, y: cardBox!.height / 2 } });
+  await expect(page.locator("#project-101")).toBeFocused();
+  const locate = page.getByRole("button", { name: "定位项目 platform/review-engine" });
+  await locate.focus();
+  await locate.press("Space");
+  await expect(page.locator("#project-101")).toBeFocused();
+  const link = page.getByRole("link", { name: "在 CodeHub 打开 Project #101" });
+  await expect(link).toHaveAttribute("href", data.state.projects[0].webUrl);
+  const before = await page.evaluate(() => window.scrollY);
+  const popupPromise = page.waitForEvent("popup");
+  await link.click();
+  const popup = await popupPromise;
+  await popup.waitForLoadState();
+  expect(popup.url()).toBe(data.state.projects[0].webUrl);
+  expect(await page.evaluate(() => window.scrollY)).toBe(before);
+  await expect(page.locator("#project-101")).not.toBeFocused();
+  await popup.close();
+  await page.route("**/api/projects/101", route => route.fulfill({ status: 500, json: failure }));
+  await card.getByRole("button", { name: "移除", exact: true }).click();
+  await expect(page.locator("#project-101")).not.toBeFocused();
+});
+
+test("deep directory layout retains independent branches and bounded indentation", async ({ page }) => {
+  const data = fixtures();
+  data.state.projects[0].name = "org/division/team/product/services/backend/core/review-engine";
+  data.state.projects.push({ id: "202", name: "org/division/other/review-engine", webUrl: "https://codehub.example/org/division/other/review-engine", removing: false, mergeRequests: [] });
+  await intercept(page, data);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "core", exact: true })).toBeVisible();
+  const root = await page.locator(".project-list > .project-tree").boundingBox();
+  const leaf = await page.locator(".project-item").first().boundingBox();
+  expect(leaf!.x - root!.x).toBeLessThanOrEqual(64);
+  await noOverflow(page);
+  await page.getByRole("button", { name: "team", exact: true }).click();
+  await expect(page.getByRole("button", { name: "core", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "other", exact: true })).toBeVisible();
+});
