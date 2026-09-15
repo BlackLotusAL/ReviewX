@@ -18,8 +18,8 @@ test("queue uses global FIFO after active tasks and removes finished tasks", () 
   queued.queuePosition = 2;
   projects[1].mergeRequests.push({ ...queued, projectId: projects[1].id, iid: "999", queuePosition: 1 });
   const queue = reviewQueue(projects);
-  expect(queue.map(({ mr }) => mr.status)).toEqual(["reviewing", "reviewing", "reviewing", "stopping", "queued", "queued"]);
-  expect(queue.slice(-2).map(({ mr }) => mr.queuePosition)).toEqual([1, 2]);
+  expect(queue.map(({ mr }) => mr.status)).toEqual(["reviewing", "reviewing", "reviewing", "stopping", "publishing", "queued", "queued", "awaiting_confirmation", "publish_failed"]);
+  expect(queue.filter(({ mr }) => mr.status === "queued").map(({ mr }) => mr.queuePosition)).toEqual([1, 2]);
   for (const { mr } of queue) mr.status = "completed";
   expect(reviewQueue(projects)).toEqual([]);
   expect(reviewQueue([])).toEqual([]);

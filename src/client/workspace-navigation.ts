@@ -31,9 +31,10 @@ export function projectTree(projects: ProjectView[]): ProjectTreeNode[] {
 export function reviewQueue(projects: ProjectView[]) {
   const rows = projects.flatMap(project => project.mergeRequests.map(mr => ({ project, mr })));
   return [
-    ...rows.filter(({ mr }) => mr.status === "reviewing" || mr.status === "stopping"),
+    ...rows.filter(({ mr }) => mr.status === "reviewing" || mr.status === "stopping" || mr.status === "publishing"),
     ...rows.filter(({ mr }) => mr.status === "queued")
       .sort((a, b) => (a.mr.queuePosition ?? Infinity) - (b.mr.queuePosition ?? Infinity)),
+    ...rows.filter(({ mr }) => mr.status === "awaiting_confirmation" || mr.status === "publish_failed"),
   ];
 }
 

@@ -28,6 +28,34 @@ async function noOverflow(page: Page) {
   }
 }
 
+for (const outcome of ["failed", "unknown"] as const) {
+  test(`queue retains publishing and ${outcome} findings after review`, async ({ page }) => {
+    const data = fixtures("reviewing");
+    await intercept(page, data);
+    await page.goto("/");
+    const entry = page.locator('.queue-entry[href="#mr-101-42"]');
+    await expect(entry.locator(".status")).toHaveText("检视中");
+    data.detail = fixtures().detail;
+    data.state.projects[0].mergeRequests[0].status = "awaiting_confirmation";
+    data.state.revision++;
+    await expect(entry.locator(".status")).toHaveText("待处理");
+    await entry.click();
+    await expect(page.locator("#mr-101-42")).toBeFocused();
+    data.state.projects[0].mergeRequests[0].status = "publishing";
+    data.detail.attempts[0].status = "publishing";
+    data.state.revision++;
+    await expect(entry.locator(".status")).toHaveText("发送中");
+    await expect(page.locator(".queue-heading")).toContainText("执行中 1 · 排队 0 · 待处理 0 · 发布失败 0");
+    data.detail.attempts[0].findings[0].status = outcome;
+    data.detail.attempts[0].findings[1].status = "dismissed";
+    data.detail.attempts[0].status = "publish_failed";
+    data.state.projects[0].mergeRequests[0].status = "publish_failed";
+    data.state.revision++;
+    await expect(entry.locator(".status")).toHaveText("发布失败");
+    await expect(page.locator(".queue-heading")).toContainText("执行中 0 · 排队 0 · 待处理 0 · 发布失败 1");
+  });
+}
+
 test("state polling recovers automatically without a manual retry button", async ({ page }) => {
   const data = fixtures();
   let healthy = false;
