@@ -16,7 +16,7 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
 
   await page.getByLabel("Project ID").fill("101");
   await page.getByRole("button", { name: "添加", exact: true }).click();
-  await expect(page.getByLabel("已登记 Project").getByText("team/project-101", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("已登记 Project").getByRole("button", { name: "定位项目 team/project-101", exact: true })).toBeVisible();
   await expect(page.locator(".inline-feedback")).toHaveText("项目已添加");
   await expect(page.getByText("尚未刷新 MR", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "刷新 MR" }).click();
@@ -46,6 +46,9 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText("待处理", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
   await expect(secondCard.getByText("已完成")).toBeVisible({ timeout: 15_000 });
+  const queueEntry = page.locator('.queue-entry[href="#mr-101-1"]');
+  await expect(queueEntry.locator(".status")).toHaveText("待处理");
+  await expect(page.locator('.queue-entry[href="#mr-101-2"]')).toHaveCount(0);
   const drawerMrLink = drawer.getByRole("link", { name: "在 CodeHub 打开 MR !1" });
   await expect(drawerMrLink).toHaveAttribute("href", "https://codehub.example/team/project-101/merge_requests/1");
   await expect(drawerMrLink).toHaveAttribute("target", "_blank");
@@ -66,17 +69,21 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
 
   await findings.nth(0).getByRole("button", { name: "发送到 CodeHub" }).click();
   await expect(findings.nth(0).getByText("已发送", { exact: true })).toBeVisible();
+  await expect(queueEntry.locator(".status")).toHaveText("待处理");
   await expect(findings.nth(1).getByText("待处理", { exact: true })).toBeVisible();
 
   await findings.nth(1).getByRole("button", { name: "不发送" }).click();
   await expect(findings.nth(1).getByText("已跳过", { exact: true }).first()).toBeVisible();
   await expect(findings.nth(1).getByRole("button", { name: "撤销" })).toBeVisible();
   await expect(drawer.getByText("已完成", { exact: true }).first()).toBeVisible();
+  await expect(queueEntry).toHaveCount(0);
 
   await findings.nth(1).getByRole("button", { name: "撤销" }).click();
+  await expect(queueEntry.locator(".status")).toHaveText("待处理");
   await expect(findings.nth(1).getByText("待处理", { exact: true })).toBeVisible();
   await findings.nth(1).getByRole("button", { name: "发送到 CodeHub" }).click();
   await expect(findings.nth(1).getByText("已发送", { exact: true })).toBeVisible();
+  await expect(queueEntry).toHaveCount(0);
   await expect(drawer.getByText("已完成", { exact: true }).first()).toBeVisible();
 
   const report = drawer.locator("details.report-section");

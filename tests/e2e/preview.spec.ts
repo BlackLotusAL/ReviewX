@@ -36,6 +36,8 @@ test("fixed preview covers every MR with matching details and reports without an
   await expect(page.locator(".project-item")).toHaveCount(2);
   await expect(page.locator(".mr-card")).toHaveCount(14);
   await expect(page.locator(".mr-card .status")).toHaveText(statusLabels);
+  await expect(page.locator(".queue-heading")).toContainText("执行中 5 · 排队 1 · 待处理 1 · 发布失败 1");
+  await expect(page.locator(".queue-entry .status")).toHaveText(["检视中", "检视中", "检视中", "停止中", "发送中", "排队中", "待处理", "发布失败"]);
   await expect(page.locator(".mr-card .phase")).toHaveText(["准备 Git 代码", "运行 OpenCode", "保存报告", "清理临时目录"]);
   await expect(page.locator(".queue-position")).toHaveText("队列第 1 位");
   for (const [index, row] of rows.entries()) {
@@ -312,8 +314,8 @@ for (const viewport of [{ width: 1675, height: 1216 }, { width: 1230, height: 12
 test("directory navigation and queue links locate content without opening details", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/preview");
-  await expect(page.locator(".queue-entry")).toHaveCount(5);
-  await expect(page.locator(".queue-heading")).toContainText("执行中 4 · 排队 1");
+  await expect(page.locator(".queue-entry")).toHaveCount(8);
+  await expect(page.locator(".queue-heading")).toContainText("执行中 5 · 排队 1 · 待处理 1 · 发布失败 1");
   const directory = page.getByRole("button", { name: "platform", exact: true });
   await directory.click();
   await expect(directory).toHaveAttribute("aria-expanded", "false");
@@ -326,7 +328,7 @@ test("directory navigation and queue links locate content without opening detail
   await expect(page.locator("#project-202")).toBeFocused();
   await expect(page.locator("#project-202")).toBeInViewport();
   await expect(page.locator("#project-202")).toHaveText("task-console");
-  await page.locator(".queue-entry").last().click();
+  await page.locator('.queue-entry[href="#mr-101-402"]').click();
   await expect(page.locator("#mr-101-402")).toBeFocused();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await opener(page, "402").click();

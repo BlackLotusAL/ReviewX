@@ -11,7 +11,8 @@ process.env.REVIEWX_ORIGIN = origin;
 const harness = await createRuntimeHarness();
 configureMr(harness, "101", "1", "Security-sensitive parser update");
 configureMr(harness, "101", "2", "Queue worker tests");
-harness.reviewer.delayMs = 650;
+// Leave time for browser actions and the dev server's first stop-route compilation.
+harness.reviewer.delayMs = 3_000;
 harness.reviewer.results.set("1", {
   findings: [
     {
