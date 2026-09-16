@@ -41,10 +41,12 @@ test("fixed preview covers every MR with matching details and reports without an
   await expect(page.locator(".project-item")).toHaveCount(2);
   await expect(page.locator(".mr-card")).toHaveCount(14);
   await expect(page.locator(".mr-card .status")).toHaveText(statusLabels);
+  await page.getByRole("button", { name: "当前检视队列", exact: true }).click();
   await expect(page.locator(".queue-heading")).toContainText("执行中 5 · 排队 1 · 待处理 1 · 发布失败 1");
   await expect(page.locator(".queue-entry .status")).toHaveText(["检视中", "检视中", "检视中", "停止中", "发送中", "排队中", "待处理", "发布失败"]);
   await expect(page.locator(".mr-card .phase")).toHaveText(["准备 Git 代码", "运行 OpenCode", "保存报告", "清理临时目录"]);
   await expect(page.locator(".queue-position")).toHaveText("队列第 1 位");
+  await page.keyboard.press("Escape");
   for (const [index, row] of rows.entries()) {
     await opener(page, row.iid).click();
     const dialog = page.getByRole("dialog");
@@ -240,7 +242,7 @@ test("live duration ticks during execution and stopping, then freezes without de
   expect(unexpected).toEqual([]);
 });
 
-for (const viewport of [{ width: 1675, height: 1216 }, { width: 1230, height: 1216 }, { width: 1024, height: 768 }, { width: 899, height: 900 }, { width: 900, height: 900 }, { width: 901, height: 900 }, { width: 989, height: 900 }, { width: 990, height: 900 }, { width: 991, height: 900 }, { width: 390, height: 844 }]) {
+for (const viewport of [{ width: 1675, height: 1216 }, { width: 1230, height: 1216 }, { width: 1024, height: 768 }, { width: 899, height: 900 }, { width: 900, height: 900 }, { width: 901, height: 900 }, { width: 1074, height: 900 }, { width: 1075, height: 900 }, { width: 1433, height: 900 }, { width: 1434, height: 900 }, { width: 390, height: 844 }]) {
   test(`preview layout at ${viewport.width}x${viewport.height}`, async ({ page, context }, testInfo) => {
     const requests = await forbidApi(context);
     const scale = viewport.width > 900 ? 0.9 : 1;
@@ -271,7 +273,10 @@ for (const viewport of [{ width: 1675, height: 1216 }, { width: 1230, height: 12
     await expect(page.locator("#mr-heading .status-dot")).toHaveCount(0);
     if (viewport.width > 900) expect(await page.locator(".project-panel").evaluate(el => el.getBoundingClientRect().width)).toBeCloseTo(324, 1);
     await expectSize(page.locator("body"), "font-size", 15 * scale);
-    await expect(page.locator(".mr-main").first()).toHaveCSS("grid-column-start", viewport.width <= 990 ? "1" : "auto");
+    await expect(page.locator(".mr-main").first()).toHaveCSS("grid-column-start", "1");
+    const columns = await page.locator(".mr-grid").first().evaluate(el => getComputedStyle(el).gridTemplateColumns.split(" ").length);
+    const expectedColumns = viewport.width >= 1434 ? 3 : viewport.width >= 1075 || (viewport.width >= 899 && viewport.width <= 900) ? 2 : 1;
+    expect(columns).toBe(expectedColumns);
     await noOverflow(page);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: testInfo.outputPath("preview-queue.png"), fullPage: true, animations: "disabled" });
@@ -332,7 +337,8 @@ for (const viewport of [{ width: 1675, height: 1216 }, { width: 1230, height: 12
 test("directory navigation and queue links locate content without opening details", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/preview");
-  await expect(page.locator(".queue-entry")).toHaveCount(8);
+
+  await page.getByRole("button", { name: "当前检视队列", exact: true }).click();
   await expect(page.locator(".queue-heading")).toContainText("执行中 5 · 排队 1 · 待处理 1 · 发布失败 1");
   const directory = page.getByRole("button", { name: "platform", exact: true });
   await directory.click();
@@ -346,6 +352,7 @@ test("directory navigation and queue links locate content without opening detail
   await expect(page.locator("#project-202")).toBeFocused();
   await expect(page.locator("#project-202")).toBeInViewport();
   await expect(page.locator("#project-202")).toHaveText("task-console");
+  await page.getByRole("button", { name: "当前检视队列", exact: true }).click();
   await page.locator('.queue-entry[href="#mr-101-402"]').click();
   await expect(page.locator("#mr-101-402")).toBeFocused();
   await expect(page.getByRole("dialog")).toHaveCount(0);

@@ -41,9 +41,22 @@ export function reviewQueue(projects: ProjectView[]) {
 export const projectAnchor = (id: string) => `project-${encodeURIComponent(id)}`;
 export const mrAnchor = (projectId: string, iid: string) => `mr-${encodeURIComponent(projectId)}-${encodeURIComponent(iid)}`;
 
+/** Walk main-list order, retaining the cursor even after its status changes. */
+export function nextPendingMr(projects: ProjectView[], cursor: string | null) {
+  const rows = projects.flatMap(project => project.mergeRequests);
+  const start = rows.findIndex(mr => mrAnchor(mr.projectId, mr.iid) === cursor);
+  for (let step = 1; step <= rows.length; step++) {
+    const mr = rows[(start + step) % rows.length];
+    if (mr.status === "awaiting_confirmation" || mr.status === "publish_failed") return mr;
+  }
+  return null;
+}
+
 export function navigateTo(id: string) {
   const target = document.getElementById(id);
   if (!target) return;
+  // A sticky heading's visual position no longer identifies the group start.
+  const destination = target.closest(".group-title") ? target.closest(".mr-group") ?? target : target;
+  destination.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   target.focus({ preventScroll: true });
-  target.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 }
