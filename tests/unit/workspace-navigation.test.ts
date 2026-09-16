@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { projectShortName, projectTree, reviewQueue } from "@/src/client/workspace-navigation";
+import { projectShortName, projectTree, reviewQueue, nextPendingMr, mrAnchor } from "@/src/client/workspace-navigation";
 import { createReviewPreviewData } from "@/src/preview/mr-fixtures";
 
 test("groups shared nested directories without merging same-name projects", () => {
@@ -23,4 +23,24 @@ test("queue uses global FIFO after active tasks and removes finished tasks", () 
   for (const { mr } of queue) mr.status = "completed";
   expect(reviewQueue(projects)).toEqual([]);
   expect(reviewQueue([])).toEqual([]);
+});
+
+test("pending navigation follows list order across projects and wraps around", () => {
+  const projects = createReviewPreviewData().state.projects;
+  const first = projects[0].mergeRequests[0];
+  first.status = "awaiting_confirmation";
+  const candidates = projects.flatMap(p => p.mergeRequests).filter(mr => ["awaiting_confirmation", "publish_failed"].includes(mr.status));
+  expect(nextPendingMr(projects, null)).toBe(first);
+  for (let i = 0; i < candidates.length; i++) {
+    const current = candidates[i];
+    expect(nextPendingMr(projects, mrAnchor(current.projectId, current.iid))).toBe(candidates[(i + 1) % candidates.length]);
+  }
+  first.status = "completed";
+  expect(nextPendingMr(projects, mrAnchor(first.projectId, first.iid))).toBe(candidates[1]);
+  expect(nextPendingMr(projects, "removed-mr")).toBe(candidates[1]);
+  for (const mr of candidates.slice(2)) mr.status = "completed";
+  expect(nextPendingMr(projects, mrAnchor(candidates[1].projectId, candidates[1].iid))).toBe(candidates[1]);
+  candidates[1].status = "completed";
+  expect(nextPendingMr(projects, null)).toBeNull();
+  expect(nextPendingMr([], null)).toBeNull();
 });
