@@ -30,6 +30,9 @@ for (const viewport of [{ width: 1230, height: 900 }, { width: 390, height: 844 
     expect(await page.locator(".session-log").textContent()).toBe(text);
     await expect(page.locator(".log-entry-error")).toContainText("    Cause: Server is offline.");
     const logPage = page.getByRole("main", { name: "当前会话日志" });
+    expect((await logPage.boundingBox())!.height).toBeCloseTo(viewport.height, 1);
+    const fontSize = await page.locator(".log-entry").first().evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+    expect(fontSize).toBeCloseTo(viewport.width > 900 ? 10.8 : 11, 1);
     await expect(logPage.getByRole("button")).toHaveCount(0);
     await expect(logPage.getByRole("link")).toHaveCount(0);
     expect(await page.locator(".session-log script, .session-log img, .session-log b").count()).toBe(0);
