@@ -1,7 +1,7 @@
 import type { MergeRequestSnapshot, Severity } from "@/src/shared/types";
-import { resolveCommand } from "@/src/cli/resolve-command";
-import { AppError, isAppError } from "./errors";
-import { runProcess, type ProcessResult, type ResolvedCommand } from "./process";
+import { resolveCommand } from "@/src/server/platform/resolve-command";
+import { AppError, isAppError } from "../errors";
+import { runProcess, type ProcessResult, type ResolvedCommand } from "../platform/process";
 import {
   codeHubCommentSchema,
   codeHubErrorSchema,
@@ -11,7 +11,7 @@ import {
   type CodeHubComment,
   type CodeHubMr,
   type CodeHubMrListEntry,
-} from "./schemas";
+} from "./codehub-schemas";
 
 const PROCESS_TIMEOUT_MS = 30_000;
 

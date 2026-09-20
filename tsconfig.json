@@ -41,6 +41,10 @@
   ],
   "exclude": [
     "node_modules",
-    "dist"
+    "dist",
+    "artifacts",
+    "test-results",
+    "playwright-report",
+    "coverage"
   ]
 }

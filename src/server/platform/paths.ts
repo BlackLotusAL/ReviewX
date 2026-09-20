@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { AppError } from "./errors";
+import { AppError } from "../errors";
 
 export interface DataPaths {
   root: string;

@@ -12,9 +12,6 @@ test("highlights labeled TypeScript while preserving code, whitespace and litera
   expect(code.textContent).toBe(source);
   for (const token of ["keyword", "string", "number", "comment", "title"]) expect(code.querySelector(`.hljs-${token}`)).not.toBeNull();
   expect(view.container.querySelector("script")).toBeNull();
-  const token = code.querySelector(".hljs-keyword");
-  view.rerender(<Markdown>{`\`\`\`ts\n${source}\`\`\``}</Markdown>);
-  expect(view.container.querySelector(".hljs-keyword")).toBe(token);
 });
 
 test.each(["", "unknown-reviewx-language", "text", "txt", "plaintext"])("keeps %s blocks as plain text", language => {

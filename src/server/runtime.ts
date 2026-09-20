@@ -1,28 +1,29 @@
+import { projectAppState, projectAttempt, projectMrDetail, selectMrDetail } from "./review/views";
 import { randomUUID } from "node:crypto";
 import { relative, sep } from "node:path";
 import type {
   AppStateView,
   AttemptStatus,
-  AttemptView,
   MergeRequestSnapshot,
   MrDetailView,
-  MrRowView,
   PersistentState,
-  ProjectView,
   ReviewAttempt,
   ReviewPhase,
   SafeErrorView,
   StoredFinding,
 } from "@/src/shared/types";
-import { CodeHubClient, isOpenMrState, type CodeHubPort } from "./codehub";
+import { isOpenMrState, type CodeHubPort } from "./integrations/codehub";
 import { AppError, conflictError, isAppError, notFoundError, unexpectedError, validationError } from "./errors";
-import { settleFindingDecisions } from "./finding-state";
-import { GitPreparer, type GitPreparerPort, type PreparedReview } from "./git";
-import { Logger, createLogFile } from "./logger";
-import { OpenCodeReviewer, type ReviewerPort } from "./opencode";
-import { ensureDataPaths, resolveDataPaths, type DataPaths } from "./paths";
-import { readContainedFile, ReportStore } from "./report-store";
-import { StateStore } from "./state-store";
+import { settleFindingDecisions } from "./review/finding-state";
+import type { GitPreparerPort, PreparedReview } from "./integrations/git";
+import type { Logger } from "./platform/logger";
+import type { ReviewerPort } from "./integrations/opencode";
+import type { DataPaths } from "./platform/paths";
+import { readContainedFile, ReportStore } from "./storage/report-store";
+import { freezeReviewRules } from "./review/rules";
+import { reviewError } from "@/src/server/review/materials";
+import type { ReviewProgress } from "@/src/shared/review-contract";
+import { StateStore } from "./storage/state-store";
 
 const ACTIVE_REVIEW_STATUSES: AttemptStatus[] = ["queued", "reviewing", "stopping"];
 
@@ -66,6 +67,7 @@ export interface RuntimeDependencies {
 export class ReviewXRuntime {
   #state!: PersistentState;
   #viewRevision = 0;
+  #progress = new Map<string, ReviewProgress>();
   #fatalError: SafeErrorView | null = null;
   #removingProjects = new Set<string>();
   #refreshPromise: Promise<void> | null = null;
@@ -96,86 +98,18 @@ export class ReviewXRuntime {
   }
 
   snapshot(): AppStateView {
-    const projects: ProjectView[] = this.#state.registeredProjectIds.map((projectId) => {
-      const project = this.#state.projectsById[projectId];
-      if (!project) throw new Error(`Registered Project ${projectId} has no record.`);
-      const snapshot = this.#state.snapshotsByProjectId[projectId];
-      return {
-        id: project.id,
-        name: project.name,
-        webUrl: project.webUrl,
-        removing: this.#removingProjects.has(projectId),
-        refreshedAt: snapshot?.refreshedAt,
-        mergeRequests: (snapshot?.mergeRequests ?? []).map((mr) => this.#mrRow(mr)),
-      };
-    });
-    return {
-      revision: this.#viewRevision,
-      refreshOperation: structuredClone(this.#state.refreshOperation),
-      publicationBusy: this.#state.activePublishBatch !== null,
-      publicationProjectId: this.#state.activePublishBatch
-        ? this.#state.attemptsById[this.#state.activePublishBatch.attemptId]?.projectId
-        : undefined,
-      fatalError: this.#fatalError ? structuredClone(this.#fatalError) : null,
-      projects,
-      currentLogUrl: "/api/logs/current",
-    };
-  }
-
-  #mrRow(mr: MergeRequestSnapshot): MrRowView {
-    const ids = this.#state.attemptIdsByMr[mrKey(mr.projectId, mr.iid)] ?? [];
-    const latestId = ids.at(-1);
-    const latest = latestId ? this.#state.attemptsById[latestId] : undefined;
-    if (!latest) return { ...mr, status: "unreviewed", primaryAction: "start" };
-    const action = (["queued", "reviewing"] as AttemptStatus[]).includes(latest.status)
-      ? "stop"
-      : (["stopping", "publishing"] as AttemptStatus[]).includes(latest.status)
-        ? null
-        : "rereview";
-    const queueIndex = this.#state.reviewQueue.indexOf(latest.id);
-    return {
-      ...mr,
-      status: latest.status,
-      phase: latest.phase,
-      queuePosition: queueIndex >= 0 ? queueIndex + 1 : undefined,
-      latestAttemptId: latest.id,
-      latestAttemptUpdatedAt: latest.updatedAt,
-      reviewStartedAt: latest.startedAt,
-      reviewFinishedAt: latest.reviewFinishedAt,
-      primaryAction: action,
-      error: latest.error,
-    };
+    return projectAppState({ state: this.#state, revision: this.#viewRevision, removingProjects: this.#removingProjects, progress: this.#progress, fatalError: this.#fatalError });
   }
 
   async getMrDetail(projectId: string, mrIid: string): Promise<MrDetailView> {
     ensurePositiveId(projectId, "Project ID");
     ensurePositiveId(mrIid, "MR IID");
-    const project = this.#state.projectsById[projectId];
-    if (!project) throw notFoundError("找不到该 Project 的历史记录。");
-    const attempts = (this.#state.attemptIdsByMr[mrKey(projectId, mrIid)] ?? [])
-      .map((id) => this.#state.attemptsById[id])
-      .filter((attempt): attempt is ReviewAttempt => Boolean(attempt));
-    const current = this.#state.snapshotsByProjectId[projectId]?.mergeRequests.find((mr) => mr.iid === mrIid);
-    const latest = attempts.at(-1);
-    const mergeRequest = current ?? (latest?.updatedAt && latest.sourceBranch && latest.targetBranch ? {
-      projectId,
-      iid: mrIid,
-      title: latest.mrTitle,
-      state: "historical",
-      updatedAt: latest.updatedAt,
-      sourceBranch: latest.sourceBranch,
-      targetBranch: latest.targetBranch,
-    } : undefined);
-    if (!mergeRequest) throw notFoundError("找不到该 MR 的快照或 attempt 历史。");
-    const views: AttemptView[] = [...attempts].reverse().map((attempt) => {
-      const { reportPath, ...view } = structuredClone(attempt);
-      return { ...view, reportUrl: reportPath ? `/api/reports/${encodeURIComponent(attempt.id)}` : undefined };
-    });
-    return {
-      project: { id: project.id, name: project.name, registered: this.#state.registeredProjectIds.includes(projectId) },
-      mergeRequest: structuredClone(mergeRequest),
-      attempts: views,
-    };
+    const source = selectMrDetail(this.#state, projectId, mrIid);
+    const views = await Promise.all([...source.attempts].reverse().map(async (attempt) => {
+      const view = projectAttempt(attempt, this.#progress.get(attempt.id), undefined);
+      return { ...view, execution: attempt.reportPath ? await this.dependencies.reports.execution(attempt.reportPath) : undefined };
+    }));
+    return projectMrDetail(this.#state, source, views);
   }
 
   async readReport(attemptId: string): Promise<string> {
@@ -601,9 +535,10 @@ export class ReviewXRuntime {
     this.#info(this.#context(initialAttempt), "Preparing fixed source and target Git revisions.");
     this.#assertOperational();
     let prepared: PreparedReview | null = null;
-    let resultSaved = false;
+    let result: import("@/src/shared/types").ReviewerResult | undefined;
     try {
       prepared = await this.dependencies.git.prepare(project, first, signal);
+      const rules = await freezeReviewRules(this.dependencies.paths.root, initialAttempt.projectId, prepared.context.scope);
       await this.#phase(attemptId, "verifying_mr", (attempt) => {
         attempt.sourceSha = prepared!.sourceSha;
         attempt.targetSha = prepared!.targetSha;
@@ -627,7 +562,7 @@ export class ReviewXRuntime {
       await this.#phase(attemptId, "running_opencode");
       this.#info(this.#context(initialAttempt), "Running one read-only OpenCode review invocation.");
       this.#assertOperational();
-      const result = await this.dependencies.reviewer.review(initialAttempt.projectId, first, prepared, signal);
+      result = await this.dependencies.reviewer.review(initialAttempt.projectId, first, prepared, signal, { attemptId, rules, onProgress: (progress) => { this.#progress.set(attemptId, progress); this.#viewRevision += 1; } });
       if (signal.aborted) throw new AppError({
         code: "OPENCODE_CANCELLED",
         message: "OpenCode 检视已停止。",
@@ -636,37 +571,21 @@ export class ReviewXRuntime {
         nextStep: "如仍需检视，请手动重新检视。",
         technical: "Abort signal observed after OpenCode completion.",
       });
-      await this.#phase(attemptId, "saving_report");
-      const reportPath = await this.dependencies.reports.save(this.#state.attemptsById[attemptId], first, prepared, result);
-      await this.#mutate((draft) => {
-        const attempt = draft.attemptsById[attemptId];
-        if (!attempt) throw new Error(`Missing attempt ${attemptId}.`);
-        attempt.reportPath = reportPath;
-        attempt.result = result.findings.length === 0 ? "pass" : "findings";
-        attempt.findings = result.findings.map((finding, index) => ({
-          ordinal: index + 1,
-          severity: finding.severity,
-          body: finding.body,
-          status: "pending",
-        }));
-        attempt.phase = "cleaning_up";
-      });
-      resultSaved = true;
+      await this.#phase(attemptId, "cleaning_up");
     } finally {
       if (prepared) await prepared.cleanup();
     }
-    if (!resultSaved) return;
-    if (signal.aborted) throw new AppError({
-      code: "REVIEW_CANCELLED",
-      message: "检视在完成前被停止。",
-      reason: "清理阶段收到停止请求。",
-      impact: "已写入的报告不会作为可发布结果展示。",
-      nextStep: "如仍需检视，请手动重新检视。",
-      technical: "Abort signal observed before publishing review state.",
-    });
+    if (!result || !prepared) return;
+    if (signal.aborted) throw reviewError("REVIEW_CANCELLED", "保存前收到停止请求。");
+    await this.#phase(attemptId, "saving_report");
+    const reportPath = await this.dependencies.reports.save(this.#state.attemptsById[attemptId], first, prepared, result);
+    const accepted = result;
     await this.#mutate((draft) => {
       const attempt = draft.attemptsById[attemptId];
-      if (!attempt) throw new Error(`Missing attempt ${attemptId}.`);
+      if (!attempt || signal.aborted || attempt.status !== "reviewing") throw reviewError("REVIEW_CANCELLED", "登记结果前收到停止请求；孤立文件不可发布。");
+      attempt.reportPath = reportPath;
+      attempt.result = accepted.findings.length === 0 ? "pass" : "findings";
+      attempt.findings = accepted.findings.map((finding, index) => ({ ordinal: index + 1, severity: finding.severity, body: finding.body, status: "pending" }));
       attempt.status = attempt.findings.length === 0 ? "completed" : "awaiting_confirmation";
       attempt.phase = undefined;
       attempt.completedAt = this.#now().toISOString();
@@ -925,36 +844,4 @@ export class ReviewXRuntime {
       // Logger failure handler enters the runtime fatal state.
     }
   }
-}
-
-const runtimeSymbol = Symbol.for("reviewx.runtime.promise");
-type RuntimeGlobal = typeof globalThis & { [runtimeSymbol]?: Promise<ReviewXRuntime> };
-
-export async function initializeRuntime(paths: DataPaths, logger: Logger): Promise<ReviewXRuntime> {
-  const target = globalThis as RuntimeGlobal;
-  target[runtimeSymbol] ??= new ReviewXRuntime({
-    paths,
-    logger,
-    store: new StateStore(paths),
-    codeHub: new CodeHubClient(process.env),
-    git: new GitPreparer(paths, process.env),
-    reviewer: new OpenCodeReviewer(process.env),
-    reports: new ReportStore(paths),
-  }).initialize();
-  return target[runtimeSymbol];
-}
-
-export async function getRuntime(): Promise<ReviewXRuntime> {
-  const target = globalThis as RuntimeGlobal;
-  if (!target[runtimeSymbol]) {
-    const paths = resolveDataPaths();
-    ensureDataPaths(paths);
-    const logFile = process.env.REVIEWX_LOG_FILE || createLogFile(paths);
-    target[runtimeSymbol] = initializeRuntime(paths, new Logger(logFile, process.env));
-  }
-  return target[runtimeSymbol];
-}
-
-export function installRuntimeForTests(runtime: ReviewXRuntime): void {
-  (globalThis as RuntimeGlobal)[runtimeSymbol] = Promise.resolve(runtime);
 }

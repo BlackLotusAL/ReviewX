@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import type { SafeErrorView } from "@/src/shared/types";
-import { AppError } from "./errors";
+import { AppError } from "../errors";
 import type { DataPaths } from "./paths";
 import { escapeSingleLine, Redactor } from "./redaction";
 

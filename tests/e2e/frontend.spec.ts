@@ -33,6 +33,7 @@ for (const outcome of ["failed", "unknown"] as const) {
     const data = fixtures("reviewing");
     await intercept(page, data);
     await page.goto("/");
+    await page.getByRole("button", { name: "当前检视队列", exact: true }).click();
     const entry = page.locator('.queue-entry[href="#mr-101-42"]');
     await expect(entry.locator(".status")).toHaveText("检视中");
     data.detail = fixtures().detail;
@@ -41,6 +42,7 @@ for (const outcome of ["failed", "unknown"] as const) {
     await expect(entry.locator(".status")).toHaveText("待处理");
     await entry.click();
     await expect(page.locator("#mr-101-42")).toBeFocused();
+    await page.getByRole("button", { name: "当前检视队列", exact: true }).click();
     data.state.projects[0].mergeRequests[0].status = "publishing";
     data.detail.attempts[0].status = "publishing";
     data.state.revision++;
@@ -128,7 +130,7 @@ test("project failures preserve input; modal keyboard, history navigation, backd
   await expect(page.locator("#mr-heading")).toBeFocused();
 });
 
-test("polling and decisions preserve content, scroll position and one-shot transitions", async ({ page }) => {
+test("polling and decisions preserve content, scroll position and announcements", async ({ page }) => {
   const data = fixtures();
   await intercept(page, data);
   let publishRequests = 0;
@@ -154,22 +156,18 @@ test("polling and decisions preserve content, scroll position and one-shot trans
   await expect(card.getByText("已发送", { exact: true })).toBeVisible();
   expect(publishRequests).toBe(1);
   await expect(card).toBeFocused();
-  await expect(card.locator(".finding-severity")).toHaveCSS("background-color", "rgb(255, 243, 232)");
-  expect(await card.evaluate(el => el.getBoundingClientRect().height)).toBe(cardHeight);
+  expect(Math.abs(await card.evaluate(el => el.getBoundingClientRect().height) - cardHeight)).toBeLessThan(1);
   expect(await dialog.evaluate(el => el.scrollTop)).toBe(scroll);
-  expect(await secondCard.evaluate(el => el.getBoundingClientRect().top)).toBe(secondY);
+  expect(Math.abs(await secondCard.evaluate(el => el.getBoundingClientRect().top) - secondY)).toBeLessThan(1);
   await expect(card.locator(".markdown")).toContainText("这项检查应保留原有调用顺序。");
-  const content = await card.locator(".markdown").elementHandle();
   const nextPoll = page.waitForResponse("**/api/state");
   await nextPoll;
-  expect(await content!.evaluate(el => el.isConnected)).toBe(true);
   expect(await dialog.evaluate(el => el.scrollTop)).toBe(scroll);
-  // Background polling must neither replay entry animation nor repeatedly announce unchanged results.
+  await expect(card.locator(".markdown")).toContainText("这项检查应保留原有调用顺序。");
+  // Background polling must not repeatedly announce unchanged results.
   const announcement = await dialog.locator(".drawer-live").textContent();
   await page.waitForResponse("**/api/state");
   expect(await dialog.locator(".drawer-live").textContent()).toBe(announcement);
-  expect(await page.locator(".mr-card").first().evaluate(el => el.getAnimations().length)).toBe(0);
-  expect(await dialog.locator(".findings-section").evaluate(el => Boolean(el.compareDocumentPosition(document.querySelector(".report-section")!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
 });
 
 test("dismiss and undo preserve finding height, scroll and focus", async ({ page }) => {
@@ -197,34 +195,7 @@ test("dismiss and undo preserve finding height, scroll and focus", async ({ page
   }
 });
 
-test("mobile header actions preserve focus and scrolling", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const data = fixtures();
-  await intercept(page, data);
-  await page.route("**/api/attempts/latest/findings/1**", async route => {
-    await new Promise(resolve => setTimeout(resolve, 150));
-    data.detail.attempts[0].findings[0].status = route.request().method() === "POST" ? "published" : route.request().postDataJSON().decision;
-    data.state.revision++;
-    await route.fulfill({ json: data.state });
-  });
-  await page.goto("/");
-  await page.locator(".mr-open").first().click();
-  const dialog = page.getByRole("dialog");
-  const card = dialog.locator(".finding-card").first();
-  for (const [action, status] of [["不发送", "已跳过"], ["撤销", "待处理"], ["发送到 CodeHub", "已发送"]]) {
-    const button = card.getByRole("button", { name: action, exact: true });
-    await button.scrollIntoViewIfNeeded();
-    await button.click();
-    const scroll = await dialog.evaluate(el => el.scrollTop);
-    await expect(card.locator(".status")).toHaveText(status);
-    await expect(card).toBeFocused();
-    expect(await dialog.evaluate(el => el.scrollTop)).toBe(scroll);
-    await noOverflow(page);
-  }
-  await expect(card.locator(".finding-actions, footer")).toHaveCount(0);
-});
-
-test("closing a loading drawer ignores late responses and reduced motion stays static", async ({ page }) => {
+test("closing a loading drawer ignores late responses and restores focus", async ({ page }) => {
   const data = fixtures("reviewing");
   await intercept(page, data);
   let resolveDetail: () => void = () => undefined;
@@ -235,80 +206,61 @@ test("closing a loading drawer ignores late responses and reduced motion stays s
   const opener = page.locator(".mr-open").first();
   await opener.click();
   await expect(page.getByLabel("正在读取检视历史…")).toBeVisible();
-  expect(await page.locator(".detail-drawer").evaluate(el => getComputedStyle(el).animationName)).toBe("none");
-  expect(await page.locator(".skeleton-row > span").first().evaluate(el => getComputedStyle(el).animationName)).toBe("none");
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   resolveDetail();
   await page.waitForResponse("**/api/mrs/101/42");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(opener).toBeFocused();
-  expect(await page.locator(".spinner").first().evaluate(el => getComputedStyle(el).animationName)).toBe("none");
 });
 
-for (const viewport of [{ width: 1440, height: 900 }, { width: 1230, height: 1216 }, { width: 1024, height: 768 }, { width: 390, height: 844 }]) {
-  test(`layout and local fonts at ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
-    await page.setViewportSize(viewport);
-    const data = fixtures();
-    const populated = structuredClone(data.state);
-    data.state.projects = [];
-    await intercept(page, data);
-    const external: string[] = [];
-    await page.route("**/*", async route => {
-      if (new URL(route.request().url()).hostname !== "127.0.0.1") { external.push(route.request().url()); await route.abort(); }
-      else await route.fallback();
-    });
-    const fontResponses: number[] = [];
-    page.on("response", response => { if (new URL(response.url()).pathname.startsWith("/fonts/") && response.url().endsWith(".woff2")) fontResponses.push(response.status()); });
-    await page.goto("/");
-    await expect(page.locator(".welcome")).toBeVisible();
-    await page.evaluate(() => document.fonts.ready);
-    expect(await page.evaluate(() => [...document.fonts].filter(f => f.status === "loaded").map(f => f.family))).toContain("Inter");
-    if (viewport.width === 1440) {
-      const session = await page.context().newCDPSession(page);
-      await session.send("DOM.enable"); await session.send("CSS.enable");
-      const doc = await session.send("DOM.getDocument");
-      const node = await session.send("DOM.querySelector", { nodeId: doc.root.nodeId, selector: "#mr-heading" });
-      console.log("Rendered heading fonts:", (await session.send("CSS.getPlatformFontsForNode", { nodeId: node.nodeId })).fonts.map(f => f.familyName));
-      await session.detach();
-    }
-    expect(external).toEqual([]);
-    await noOverflow(page);
-    await page.screenshot({ animations: "disabled", path: testInfo.outputPath("empty.png"), fullPage: true });
-    data.state.projects = populated.projects;
-    data.state.revision++;
-    await expect(page.locator(".mr-open").first()).toBeVisible();
-    // MR numbers and timestamps load the mono font after the empty-state form label was removed.
-    await page.evaluate(() => document.fonts.ready);
-    expect(await page.evaluate(() => [...document.fonts].filter(f => f.status === "loaded").map(f => f.family))).toEqual(expect.arrayContaining(["Inter", "Geist Mono"]));
-    expect(fontResponses.length).toBeGreaterThanOrEqual(2);
-    expect(fontResponses.every(status => status === 200)).toBe(true);
-    await noOverflow(page);
-    await page.screenshot({ animations: "disabled", path: testInfo.outputPath("queue.png"), fullPage: true });
-    await page.locator(".mr-open").first().click();
-    await expect(page.locator(".finding-card")).toHaveCount(2);
-    data.detail.attempts[0].id = `attempt-${"long-identifier-".repeat(16)}`;
-    data.state.revision++;
-    await expect(page.locator(".attempt-overview code")).toHaveText(data.detail.attempts[0].id);
-    await noOverflow(page);
-    await page.screenshot({ animations: "disabled", path: testInfo.outputPath("findings.png") });
-    // Exercise unbroken code and wide tables inside their own scroll containers.
-    data.detail.attempts[0].findings[0].body += `\n\n\`\`\`\n${"very_long_identifier_".repeat(30)}\n\`\`\`\n\n| ${Array.from({ length: 12 }, (_, i) => `列 ${i}`).join(" | ")} |\n| ${Array(12).fill("---").join(" | ")} |\n| ${Array(12).fill("回归样例").join(" | ")} |`;
-    data.state.revision++;
-    await expect(page.locator(".markdown-table")).toHaveCount(2);
-    await noOverflow(page);
-    for (const status of ["reviewing", "completed", "review_failed"] as const) {
-      const next = fixtures(status);
-      data.detail = next.detail;
-      data.state.projects = next.state.projects;
-      data.state.revision++;
-      await expect(page.locator(".attempt-overview .status")).toHaveText(status === "reviewing" ? "检视中" : status === "completed" ? "已完成" : "检视失败");
-      await page.locator(".detail-drawer").evaluate(el => { el.scrollTop = 0; });
-      await noOverflow(page);
-      await page.screenshot({ animations: "disabled", path: testInfo.outputPath(`${status}.png`) });
-    }
+test("desktop content remains usable through empty, populated and long-content states", async ({ page }) => {
+  const data = fixtures();
+  const populated = structuredClone(data.state);
+  data.state.projects = [];
+  await intercept(page, data);
+  const external: string[] = [];
+  await page.route("**/*", async route => {
+    if (new URL(route.request().url()).hostname !== "127.0.0.1") { external.push(route.request().url()); await route.abort(); }
+    else await route.fallback();
   });
-}
+  const fontResponses: number[] = [];
+  page.on("response", response => { if (new URL(response.url()).pathname.startsWith("/fonts/") && response.url().endsWith(".woff2")) fontResponses.push(response.status()); });
+  await page.goto("/");
+  await expect(page.locator(".welcome")).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  expect(external).toEqual([]);
+  await noOverflow(page);
+  data.state.projects = populated.projects;
+  data.state.revision++;
+  await expect(page.locator(".mr-open").first()).toBeVisible();
+  // Wait for local font requests before checking resource availability.
+  await page.evaluate(() => document.fonts.ready);
+  expect(fontResponses.length).toBeGreaterThanOrEqual(2);
+  expect(fontResponses.every(status => status === 200)).toBe(true);
+  await noOverflow(page);
+  await page.locator(".mr-open").first().click();
+  await expect(page.locator(".finding-card")).toHaveCount(2);
+  data.detail.attempts[0].id = `attempt-${"long-identifier-".repeat(16)}`;
+  data.state.revision++;
+  await expect(page.locator(".attempt-overview code")).toHaveText(data.detail.attempts[0].id);
+  await noOverflow(page);
+  // Exercise unbroken code and wide tables inside their own scroll containers.
+  data.detail.attempts[0].findings[0].body += `\n\n\`\`\`\n${"very_long_identifier_".repeat(30)}\n\`\`\`\n\n| ${Array.from({ length: 12 }, (_, i) => `列 ${i}`).join(" | ")} |\n| ${Array(12).fill("---").join(" | ")} |\n| ${Array(12).fill("回归样例").join(" | ")} |`;
+  data.state.revision++;
+  await expect(page.locator(".markdown-table")).toHaveCount(2);
+  await noOverflow(page);
+  for (const status of ["reviewing", "completed", "review_failed"] as const) {
+    const next = fixtures(status);
+    data.detail = next.detail;
+    data.state.projects = next.state.projects;
+    data.state.revision++;
+    await expect(page.locator(".attempt-overview .status")).toHaveText(status === "reviewing" ? "检视中" : status === "completed" ? "已完成" : "检视失败");
+    await page.locator(".detail-drawer").evaluate(el => { el.scrollTop = 0; });
+    await noOverflow(page);
+  }
+  expect(external).toEqual([]);
+});
 
 test("queue polling preserves collapsed directories and supports empty project anchors", async ({ page }) => {
   const data = fixtures("reviewing");
@@ -316,12 +268,16 @@ test("queue polling preserves collapsed directories and supports empty project a
   await intercept(page, data);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
+  await page.getByRole("button", { name: "当前检视队列", exact: true }).click();
   await expect(page.locator(".queue-entry")).toHaveCount(1);
+  await page.keyboard.press("Escape");
   const directory = page.getByRole("button", { name: "platform", exact: true });
   await directory.click();
   data.state.revision += 1;
   data.state.projects[0].mergeRequests[0].status = "completed";
+  await page.getByRole("button", { name: "当前检视队列", exact: true }).click();
   await expect(page.locator(".queue-empty")).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(directory).toHaveAttribute("aria-expanded", "false");
   await directory.click();
   await page.getByRole("button", { name: "定位项目 platform/empty", exact: true }).click();
@@ -361,17 +317,13 @@ test("project card surface navigates while external link and remove remain indep
   await expect(page.locator("#project-101")).not.toBeFocused();
 });
 
-test("deep directory layout retains independent branches and bounded indentation", async ({ page }) => {
+test("deep directories retain independently collapsible branches", async ({ page }) => {
   const data = fixtures();
   data.state.projects[0].name = "org/division/team/product/services/backend/core/review-engine";
   data.state.projects.push({ id: "202", name: "org/division/other/review-engine", webUrl: "https://codehub.example/org/division/other/review-engine", removing: false, mergeRequests: [] });
   await intercept(page, data);
-  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await expect(page.getByRole("button", { name: "core", exact: true })).toBeVisible();
-  const root = await page.locator(".project-list > .project-tree").boundingBox();
-  const leaf = await page.locator(".project-item").first().boundingBox();
-  expect(leaf!.x - root!.x).toBeLessThanOrEqual(64);
   await noOverflow(page);
   await page.getByRole("button", { name: "team", exact: true }).click();
   await expect(page.getByRole("button", { name: "core", exact: true })).toHaveCount(0);

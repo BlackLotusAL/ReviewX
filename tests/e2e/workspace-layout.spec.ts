@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { createReviewPreviewData } from "@/src/preview/mr-fixtures";
+import { createReviewPreviewData } from "@/src/client/review-workspace/preview-data";
 
 async function belowToolbar(page: Page, selector: string) {
   const target = page.locator(selector);

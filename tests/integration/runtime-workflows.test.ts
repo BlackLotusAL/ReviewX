@@ -10,7 +10,7 @@ import {
   type RuntimeHarness,
 } from "../helpers/runtime";
 
-function reviewerResult(...bodies: string[]): ReviewerResult {
+function reviewerResult(...bodies: string[]): Pick<ReviewerResult, "findings"> {
   const severities = ["fatal", "major", "minor", "suggestion"] as const;
   return { findings: bodies.map((body, index) => ({ severity: severities[index % severities.length], body })) };
 }

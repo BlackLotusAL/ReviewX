@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { isOpenMrState, normalizeCommentBody, projectNameFromCloneUrl } from "@/src/server/codehub";
-import { extractOpenCodeFinalBody, parseReviewerBody } from "@/src/server/opencode";
-import { codeHubRepoSchema, codeHubMrSchema, reviewerResultSchema } from "@/src/server/schemas";
+import { isOpenMrState, normalizeCommentBody, projectNameFromCloneUrl } from "@/src/server/integrations/codehub";
+import { submissionSchema } from "@/src/server/review/schema";
+import { codeHubRepoSchema, codeHubMrSchema } from "@/src/server/integrations/codehub-schemas";
 import { safeMarkdownUrl } from "@/src/shared/markdown";
 import { assertSameOrigin, jsonBody } from "@/src/server/http";
 
@@ -39,19 +39,9 @@ describe("PRD boundary contracts", () => {
     expect(codeHubMrSchema.safeParse({ ...mr, web_url: "https://token@codehub.example/mr/7" }).success).toBe(false);
   });
 
-  test("OpenCode accepts one final JSON body and rejects prose or any invalid finding", () => {
-    const body = JSON.stringify({ findings: [
-      { severity: "major", body: "### 🟠 Major: Bug\n\nDetails" },
-      { severity: "suggestion", body: "### 🟢 Suggestion: Test\n\nDetails", extra: true },
-    ], extra: "minimum contract allows extra fields" });
-    const stream = [
-      JSON.stringify({ type: "step_start" }),
-      JSON.stringify({ type: "text", part: { type: "text", text: body } }),
-    ].join("\n");
-    expect(parseReviewerBody(extractOpenCodeFinalBody(stream)).findings).toHaveLength(2);
-    expect(() => parseReviewerBody("```json\n{\"findings\":[]}\n```")).toThrow(/JSON/u);
-    expect(reviewerResultSchema.safeParse({ findings: [{ severity: "major", body: "" }] }).success).toBe(false);
-    expect(() => extractOpenCodeFinalBody(`${JSON.stringify({ type: "error" })}\n`)).toThrow(/失败/u);
+  test("formal contract is strict and chat JSON is not a result", () => {
+    expect(submissionSchema.safeParse({ findings: [] }).success).toBe(false);
+    expect(submissionSchema.safeParse({ contractVersion: "reviewx-review/1", completion: "complete", blockers: [], findings: [] }).success).toBe(true);
   });
 
   test("untrusted Markdown URLs allow public HTTP(S) only", () => {

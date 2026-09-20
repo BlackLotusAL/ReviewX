@@ -13,7 +13,7 @@ ReviewX Web API 是本机单实例网页与 Node.js 服务之间的内部接口�
 - 客户端保存最近一次 `revision`；值变化时才重新读取当前打开的 MR 详情。
 - 页面关闭或组件卸载后停止轮询，服务和活动任务继续运行。
 - `GET /api/state` 和 `GET /api/mrs/...` 只读取 ReviewX 本地状态，不调用 CodeHub、Git、OpenCode 或评论接口。
-- 轮询不是 MR 刷新。只有用户点击“刷新 MR”触发 `POST /api/mrs/refresh` 时才调用 CodeHub。
+- 轮询不是 MR 刷新。只有用户点击“刷新 MR”触发 `POST /api/mrs/refresh` 时才重新获取 MR 列表；登记项目、执行检视和发送评论各自调用所需 CodeHub 命令。
 
 `GET /api/state` 返回的主要字段：
 
@@ -65,17 +65,27 @@ ReviewX Web API 是本机单实例网页与 Node.js 服务之间的内部接口�
 
 MR 列表项除 MR 快照外，还会包含页面状态 `status`、可选执行阶段 `phase`、可选队列位置 `queuePosition`、最近 attempt 引用、主操作 `primaryAction` 和已脱敏错误。
 
-列表项还提供可选的 `reviewStartedAt` 和 `reviewFinishedAt`（ISO 时间字符串），对应最近 attempt 的实际执行开始和检视结束时间。执行中由客户端每秒更新耗时，不增加接口请求。结束时间包含准备与清理，不包含排队、人工处理或评论发送；停止、失败同样记录结束时间。详情 attempt 的开始时间沿用 `startedAt`，新增可选 `reviewFinishedAt`；它不会随问题决策或发布更新，不能用可能被更新的 `completedAt` 替代。旧记录和异常退出后缺少可靠结束时间的记录不回填，页面显示“—”；未开始的任务不显示耗时。
+### 检视耗时
+
+列表项提供可选的 `reviewStartedAt` 和 `reviewFinishedAt`（ISO 时间字符串），对应最近 attempt 的实际执行开始和检视结束时间。执行中由客户端每秒更新耗时，不增加接口请求。耗时包含准备与清理，不包含排队、人工处理或评论发送；停止、失败同样记录结束时间。详情 attempt 使用 `startedAt` 和可选 `reviewFinishedAt`；后者不会随问题决策或发布更新，不能用可能被更新的 `completedAt` 替代。旧记录和异常退出后缺少可靠结束时间的记录不回填，页面显示“—”；未开始的任务不显示耗时。
+
+### 多轮进度与执行信息
+
+MR 行和 attempt 详情可选提供 `progress`：`toolCount`（已完成可信工具数）、`deliveredMaterials`、`requiredMaterials`、`limitations`。这里只计已交付材料，不表示模型理解百分比。进度变化推动视图 `revision`，不写历史状态。
+
+成功 attempt 详情可选提供 `execution`：`version=1`、`status=ACCEPTED`、`actualModel`（`providerID/modelID`）、`sessionID`、`durationMs`、`progress`、`opencodeVersion`。从关联独立文件读取；旧 attempt 缺少文件时省略，页面显示“执行信息不可用”。内部 scope、规则和证据不进入 CodeHub 评论。业务合同及接受条件见 [PRD](PRD.md#4-多轮检视)。
+
+### 文件读取与正文
 
 报告和日志接口会同时校验状态引用、规范路径和真实路径均位于 `%LOCALAPPDATA%\ReviewX` 数据目录；不能通过 URL 参数读取任意本地文件。
 
-## CodeHub 状态约定
+报告正文原文保留，只有 CodeHub 发送入口做 CRLF 规范化。未登记的孤立报告没有详情 URL，也不可通过 attempt 发布或读取。原生 HTTP/工具不属于公开 Web API，绑定 attempt/session 和随机 loopback 凭据。
+
+## CodeHub 状态与地址约定
 
 ReviewX 调用 MR 列表时固定传递 `--state open`，这是 CodeHub CLI 的筛选参数。`codehub mr view` JSON 返回值使用独立的数据词汇：`state` 为 `open` 或 `opened` 时均视为开放状态，比较时忽略首尾空白和大小写。其他状态不会被推断或纠正，并在 Git、OpenCode 启动前终止当前刷新或 attempt。
 
-每次新的 `mr view` 响应还必须包含 `web_url`，且值必须是无用户名、密码的 HTTPS URL。缺失或非法值以 `CODEHUB_INVALID_RESPONSE` 终止本次刷新，并提示升级兼容的 CodeHub CLI；既有旧状态仍可启动和读取。
-
-
+每次新的 `mr view` 响应必须包含 `web_url`，且值必须是无用户名、密码的 HTTPS URL。缺失或非法值以 `CODEHUB_INVALID_RESPONSE` 终止操作，并提示升级兼容的 CodeHub CLI。旧 v1 MR 快照可缺少 `webUrl`；这不豁免项目网页地址的必填要求。
 ### 项目网页链接
 
 `GET /api/state` 的 `projects[]` 必须包含字符串 `webUrl`，来源为 `codehub repo view` 的必填字符串 `web_url`。项目登记时原样保存并返回，不检查 URL 格式、协议或凭据；手动刷新与状态轮询均不补查项目地址。不提供缺失地址降级或旧项目数据迁移。

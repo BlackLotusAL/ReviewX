@@ -1,3 +1,5 @@
+import type { ReviewProgress, ReviewSubmission, ExecutionRecord } from "./review-contract";
+
 export const severityValues = ["fatal", "major", "minor", "suggestion"] as const;
 export type Severity = (typeof severityValues)[number];
 
@@ -168,6 +170,7 @@ export type MrDisplayStatus = "unreviewed" | AttemptStatus;
 export type MrPrimaryAction = "start" | "stop" | "rereview" | null;
 
 export interface MrRowView extends MergeRequestSnapshot {
+  progress?: ReviewProgress;
   status: MrDisplayStatus;
   phase?: ReviewPhase;
   queuePosition?: number;
@@ -200,6 +203,8 @@ export interface AppStateView {
 
 export interface AttemptView extends Omit<ReviewAttempt, "reportPath"> {
   reportUrl?: string;
+  progress?: ReviewProgress;
+  execution?: Pick<ExecutionRecord, "version" | "status" | "actualModel" | "sessionID" | "durationMs" | "progress" | "opencodeVersion">;
 }
 
 export interface MrDetailView {
@@ -215,4 +220,6 @@ export interface ReviewerFinding {
 
 export interface ReviewerResult {
   findings: ReviewerFinding[];
+  submission: ReviewSubmission;
+  execution: ExecutionRecord;
 }

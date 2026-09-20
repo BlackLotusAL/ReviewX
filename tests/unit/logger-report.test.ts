@@ -1,12 +1,13 @@
+import { fakeResult } from "../helpers/runtime";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import type { MergeRequestSnapshot, ReviewAttempt } from "@/src/shared/types";
 import { AppError } from "@/src/server/errors";
-import { createLogFile, localTimestamp, Logger } from "@/src/server/logger";
-import { ensureDataPaths, resolveDataPaths } from "@/src/server/paths";
-import { ReportStore } from "@/src/server/report-store";
+import { createLogFile, localTimestamp, Logger } from "@/src/server/platform/logger";
+import { ensureDataPaths, resolveDataPaths } from "@/src/server/platform/paths";
+import { ReportStore } from "@/src/server/storage/report-store";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -48,10 +49,10 @@ describe("permanent logs and immutable reports", () => {
     const store = new ReportStore(data);
     const attempt: ReviewAttempt = { id: "attempt-1", projectId: "1", mrIid: "2", mrTitle: "MR", requestedUpdatedAt: "v", status: "reviewing", createdAt: "now", findings: [], publishBatches: [] };
     const mr: MergeRequestSnapshot = { projectId: "1", iid: "2", title: "MR", state: "open", updatedAt: "v", sourceBranch: "feature", targetBranch: "main" };
-    const prepared = { rootDirectory: "x", sourceDirectory: "x", patchPath: "x", bundlePath: "x", sourceSha: "1".repeat(40), targetSha: "2".repeat(40), cleanup: async () => undefined };
-    const pathValue = await store.save(attempt, mr, prepared, { findings: [{ severity: "minor", body: "### 🟡 Minor: Issue\n\nBody" }] });
+    const prepared = { sourceSha: "1".repeat(40), targetSha: "2".repeat(40), baseSha: "3".repeat(40) };
+    const pathValue = await store.save(attempt, mr, prepared, fakeResult([{ severity: "minor", body: "### 🟡 Minor: Issue\n\nBody" }]));
     expect(await store.read(pathValue)).toContain("Attempt ID");
-    await expect(store.save(attempt, mr, prepared, { findings: [] })).rejects.toMatchObject({ code: "REPORT_WRITE_ERROR" });
+    await expect(store.save(attempt, mr, prepared, fakeResult([]))).rejects.toMatchObject({ code: "REPORT_WRITE_ERROR" });
     await expect(store.read("../outside.txt")).rejects.toMatchObject({ code: "UNSAFE_FILE_PATH" });
   });
 });

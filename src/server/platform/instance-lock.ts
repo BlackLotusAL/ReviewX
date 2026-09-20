@@ -1,5 +1,5 @@
 import { open, readFile, unlink, type FileHandle } from "node:fs/promises";
-import { AppError } from "./errors";
+import { AppError } from "../errors";
 
 interface InstanceInfo {
   pid: number;

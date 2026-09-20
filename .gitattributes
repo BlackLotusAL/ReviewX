@@ -1,0 +1,2 @@
+# Preserve captured Finding bodies byte-for-byte for evidence replay.
+tests/fixtures/opencode-probe/**/*.body.md -text

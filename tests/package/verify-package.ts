@@ -1,8 +1,10 @@
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, mkdir, copyFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import os from "node:os";
 import path from "node:path";
-import { resolveCommand } from "@/src/cli/resolve-command";
-import { runProcess, type ResolvedCommand } from "@/src/server/process";
+import { resolveCommand } from "@/src/server/platform/resolve-command";
+import { runProcess, type ResolvedCommand } from "@/src/server/platform/process";
 
 function requireSuccess(label: string, result: Awaited<ReturnType<typeof runProcess>>): void {
   if (result.exitCode !== 0 || result.timedOut || result.aborted || result.outputLimitExceeded) {
@@ -30,11 +32,12 @@ function serviceEnvironment(localAppData: string, browser: "fail" | "skip"): Nod
   };
 }
 
-async function startService(command: ResolvedCommand, environment: NodeJS.ProcessEnv, browserFailureExpected: boolean) {
+async function startService(command: ResolvedCommand, environment: NodeJS.ProcessEnv, browserFailureExpected: boolean, cwd: string) {
   const controller = new AbortController();
   let stdout = "";
   let stderr = "";
   const running = runProcess(command, [], {
+    cwd,
     timeoutMs: 180_000,
     signal: controller.signal,
     env: environment,
@@ -60,7 +63,8 @@ async function waitUntilClosed(url: string): Promise<void> {
 
 if (process.platform !== "win32") throw new Error("ReviewX package verification is Windows-only.");
 
-const root = await mkdtemp(path.join(os.tmpdir(), "reviewx-package-test-"));
+const root = await mkdtemp(path.join(os.tmpdir(), "reviewx package test "));
+const projectRoot = process.cwd();
 const packDirectory = path.join(root, "pack");
 const installDirectory = path.join(root, "install");
 const localAppData = path.join(root, "local-app-data");
@@ -89,7 +93,14 @@ try {
     stat(path.join(packageRoot, "dist", "reviewx.js")),
     stat(path.join(packageRoot, ".next", "BUILD_ID")),
     stat(path.join(packageRoot, "README.md")),
+    stat(path.join(packageRoot, "resources/review-rules/comments.md")),
   ]);
+  const engine = await import(pathToFileURL(path.join(packageRoot, "dist/review-engine.js")).href);
+  const rules = await engine.freezeReviewRules(path.join(root, "rules test"), "1", { changes: [{ newPath: "a.h" }, { newPath: "b.py" }] }, {});
+  if (rules.resources.map((r: { id: string }) => r.id).join(",") !== "general,comments,cpp,python") throw new Error("Installed default rules unavailable");
+  const artifacts = path.join(projectRoot, "artifacts"); await mkdir(artifacts, { recursive: true });
+  await copyFile(tarball, path.join(artifacts, tarballName));
+  await writeFile(path.join(artifacts, "package-verification.json"), JSON.stringify({ tarball: tarballName, sha256: createHash("sha256").update(await readFile(tarball)).digest("hex"), installedRules: rules.resources.map((r: { id: string; resourceHash: string }) => ({ id: r.id, hash: r.resourceHash })), platform: process.platform }, null, 2));
 
   const binDirectory = path.join(installDirectory, "node_modules", ".bin");
   const environment = {
@@ -101,7 +112,7 @@ try {
   const rejectedLegacy = await runProcess(reviewx, ["serve"], { timeoutMs: 30_000, env: environment });
   if (rejectedLegacy.exitCode !== 2 || !rejectedLegacy.stderr.includes("用法：reviewx")) throw new Error("Legacy ReviewX command was not rejected.");
 
-  first = await startService(reviewx, environment, true);
+  first = await startService(reviewx, environment, true, root);
   const parsed = new URL(first.url);
   if (parsed.hostname !== "127.0.0.1" || parsed.port === "3210" || !parsed.port) throw new Error(`Unexpected service address ${first.url}.`);
   const page = await fetch(first.url);
@@ -129,13 +140,20 @@ try {
   await waitUntilClosed(first.url);
   first = undefined;
 
-  third = await startService(reviewx, { ...environment, REVIEWX_TEST_BROWSER: "skip" }, false);
+  third = await startService(reviewx, { ...environment, REVIEWX_TEST_BROWSER: "skip" }, false, root);
   const restartedPage = await fetch(third.url);
   if (!restartedPage.ok) throw new Error("ReviewX could not restart after stale-lock recovery.");
   third.controller.abort();
   await third.running;
   await waitUntilClosed(third.url);
   third = undefined;
+
+  // Package acceptance includes the real model running the installed engine.
+  const ai = await runProcess({ name: "node", executable: process.execPath, prefixArgs: [] }, [path.join(projectRoot, "node_modules/tsx/dist/cli.mjs"), "--tsconfig", path.join(projectRoot, "tsconfig.json"), path.join(projectRoot, "tests/ai/real-opencode-smoke.ts")], {
+    cwd: root, timeoutMs: 61 * 60_000, env: { ...process.env, REVIEWX_ACCEPTANCE_ENGINE: path.join(packageRoot, "dist/review-engine.js") }, maxOutputBytes: 1024 * 1024,
+    onStdout: text => process.stdout.write(text),
+  });
+  requireSuccess("installed native OpenCode acceptance", ai);
 
   process.stdout.write(`Package verification passed for ${tarballName}.\n`);
 } finally {

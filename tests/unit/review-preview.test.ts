@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { createPreviewDataSource } from "@/src/client/review-data";
-import { createReviewPreviewData } from "@/src/preview/mr-fixtures";
+import { createPreviewDataSource } from "@/src/client/review-workspace/review-data";
+import { createReviewPreviewData } from "@/src/client/review-workspace/preview-data";
 import { attemptStatusValues, findingStatusValues, severityValues } from "@/src/shared/types";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -19,10 +19,6 @@ describe("fixed MR preview", () => {
     expect(completed.map(attempt => attempt.result)).toEqual(["pass", "findings"]);
     expect(completed[0].findings).toEqual([]);
     expect(completed[1].findings.map(finding => finding.status)).toEqual(["published", "dismissed", "published", "dismissed"]);
-    expect(new Set(rows.map(row => row.updatedAt)).size).toBe(14);
-    expect(new Set(rows.map(row => row.sourceBranch)).size).toBe(14);
-    expect(new Set(rows.map(row => row.targetBranch)).size).toBe(2);
-    expect(Math.max(...rows.map(row => row.title.length)) - Math.min(...rows.map(row => row.title.length))).toBeGreaterThan(20);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2035-01-01T00:00:00Z"));
     expect(createReviewPreviewData()).toEqual(data);

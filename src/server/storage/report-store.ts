@@ -1,9 +1,10 @@
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile, rename, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { MergeRequestSnapshot, ReviewerResult, ReviewAttempt } from "@/src/shared/types";
-import { AppError } from "./errors";
-import type { PreparedReview } from "./git";
-import type { DataPaths } from "./paths";
+import { AppError } from "../errors";
+import type { PreparedReview } from "../integrations/git";
+import type { DataPaths } from "../platform/paths";
 
 function inlineCode(value: string): string {
   const runs = value.match(/`+/gu) ?? [];
@@ -51,10 +52,12 @@ export class ReportStore {
   async save(
     attempt: ReviewAttempt,
     details: MergeRequestSnapshot,
-    prepared: PreparedReview,
+    prepared: Pick<PreparedReview, "sourceSha" | "targetSha" | "baseSha">,
     result: ReviewerResult,
   ): Promise<string> {
     const directory = resolve(this.paths.reports, attempt.id);
+    if (!/^[a-zA-Z0-9_-]+$/u.test(attempt.id)) throw new Error("Invalid attempt ID");
+    const staging = resolve(this.paths.reports, `.pending-${attempt.id}-${randomUUID()}`);
     const target = resolve(directory, "report.md");
     const lines = [
       "# ReviewX Report",
@@ -65,6 +68,7 @@ export class ReportStore {
       `- Updated at: ${inlineCode(details.updatedAt)}`,
       `- Source: ${inlineCode(details.sourceBranch)} (${inlineCode(prepared.sourceSha)})`,
       `- Target: ${inlineCode(details.targetBranch)} (${inlineCode(prepared.targetSha)})`,
+      `- Base: ${inlineCode(prepared.baseSha)}`,
       `- Result: **${result.findings.length === 0 ? "PASS" : "FINDINGS"}**`,
       "",
     ];
@@ -77,12 +81,18 @@ export class ReportStore {
       });
     }
     try {
-      await mkdir(directory, { recursive: false });
-      await writeFile(target, `${lines.join("\n").trimEnd()}\n`, { encoding: "utf8", flag: "wx" });
+      await mkdir(staging, { recursive: false });
+      await writeFile(resolve(staging, "report.md"), `${lines.join("\n")}\n`, { encoding: "utf8", flag: "wx" });
+      if (result.submission && result.execution) {
+        await writeFile(resolve(staging, "submission.v1.json"), JSON.stringify(result.submission, null, 2), { flag: "wx" });
+        await writeFile(resolve(staging, "execution.v1.json"), JSON.stringify(result.execution, null, 2), { flag: "wx" });
+      }
+      await rename(staging, directory);
       const fromRoot = relative(this.paths.root, target);
       if (!fromRoot || isAbsolute(fromRoot) || fromRoot === ".." || fromRoot.startsWith(`..${sep}`)) throw new Error("Report escaped data root.");
       return fromRoot.split(sep).join("/");
     } catch (error) {
+      await rm(staging, { recursive: true, force: true }).catch(() => undefined);
       throw new AppError({
         code: "REPORT_WRITE_ERROR",
         message: "ReviewX 无法保存 Markdown 报告。",
@@ -97,5 +107,14 @@ export class ReportStore {
 
   async read(relativePath: string): Promise<string> {
     return readContainedFile(this.paths.root, relativePath);
+  }
+
+  async execution(reportPath: string): Promise<import("@/src/shared/types").AttemptView["execution"]> {
+    try {
+      const record = JSON.parse(await readContainedFile(this.paths.root, reportPath.replace(/report\.md$/u, "execution.v1.json")));
+      if (record.version !== 1 || record.status !== "ACCEPTED") return undefined;
+      const { version, status, actualModel, sessionID, durationMs, progress, opencodeVersion } = record;
+      return { version, status, actualModel, sessionID, durationMs, progress, opencodeVersion };
+    } catch { return undefined; }
   }
 }

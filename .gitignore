@@ -17,16 +17,21 @@
 # production
 /build
 /dist
+/artifacts
+/*.tgz
 
 # local pnpm cache
 /.pnpm-store
 
 # misc
 .DS_Store
+Thumbs.db
+Desktop.ini
 *.pem
 
 # debug
 npm-debug.log*
+pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 

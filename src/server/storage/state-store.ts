@@ -10,13 +10,12 @@ import {
   type PersistentState,
   type SafeErrorView,
 } from "@/src/shared/types";
-import { AppError } from "./errors";
+import { AppError } from "../errors";
 import { withFileLock } from "./file-lock";
-import { settleFindingDecisions } from "./finding-state";
-import type { DataPaths } from "./paths";
-import { credentialFreeHttpsUrlSchema } from "./schemas";
+import { settleFindingDecisions } from "../review/finding-state";
+import type { DataPaths } from "../platform/paths";
+import { credentialFreeHttpsUrlSchema, positiveIdSchema } from "../validation";
 
-const positiveId = z.string().regex(/^[1-9]\d*$/u);
 const errorSchema = z.strictObject({
   code: z.string().min(1),
   message: z.string().min(1),
@@ -29,7 +28,7 @@ const errorSchema = z.strictObject({
 });
 const projectSchema = z.strictObject({
   webUrl: z.string(),
-  id: positiveId,
+  id: positiveIdSchema,
   name: z.string().min(1),
   cloneUrl: z.string().url().refine((value) => {
     const url = new URL(value);
@@ -39,8 +38,8 @@ const projectSchema = z.strictObject({
   updatedAt: z.string().min(1),
 });
 const mrSchema = z.strictObject({
-  projectId: positiveId,
-  iid: positiveId,
+  projectId: positiveIdSchema,
+  iid: positiveIdSchema,
   title: z.string().min(1),
   state: z.string().min(1),
   updatedAt: z.string().min(1),
@@ -74,8 +73,8 @@ const batchSchema = z.strictObject({
 });
 const attemptSchema = z.strictObject({
   id: z.string().min(1),
-  projectId: positiveId,
-  mrIid: positiveId,
+  projectId: positiveIdSchema,
+  mrIid: positiveIdSchema,
   mrTitle: z.string().min(1),
   requestedUpdatedAt: z.string().min(1),
   updatedAt: z.string().min(1).optional(),
@@ -102,7 +101,7 @@ const refreshSchema = z.strictObject({
   status: z.enum(["idle", "refreshing", "failed"]),
   startedAt: z.string().min(1).optional(),
   completedAt: z.string().min(1).optional(),
-  currentProjectId: positiveId.optional(),
+  currentProjectId: positiveIdSchema.optional(),
   error: errorSchema.optional(),
 });
 const diagnosticSchema = z.strictObject({
@@ -110,8 +109,8 @@ const diagnosticSchema = z.strictObject({
   at: z.string().min(1),
   operation: z.string().min(1),
   context: z.strictObject({
-    projectId: positiveId.optional(),
-    mrIid: positiveId.optional(),
+    projectId: positiveIdSchema.optional(),
+    mrIid: positiveIdSchema.optional(),
     attemptId: z.string().min(1).optional(),
     findingOrdinal: z.number().int().positive().optional(),
   }),
@@ -120,7 +119,7 @@ const diagnosticSchema = z.strictObject({
 const persistentStateSchema = z.strictObject({
   version: z.literal(1),
   revision: z.number().int().nonnegative(),
-  registeredProjectIds: z.array(positiveId),
+  registeredProjectIds: z.array(positiveIdSchema),
   projectsById: z.record(z.string(), projectSchema),
   snapshotsByProjectId: z.record(z.string(), snapshotSchema),
   attemptsById: z.record(z.string(), attemptSchema),

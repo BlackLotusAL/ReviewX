@@ -3,9 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import type { ReviewAttempt } from "@/src/shared/types";
-import { FileLock } from "@/src/server/file-lock";
-import { ensureDataPaths, resolveDataPaths } from "@/src/server/paths";
-import { StateStore } from "@/src/server/state-store";
+import { FileLock } from "@/src/server/storage/file-lock";
+import { ensureDataPaths, resolveDataPaths } from "@/src/server/platform/paths";
+import { StateStore } from "@/src/server/storage/state-store";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });

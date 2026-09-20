@@ -1,6 +1,6 @@
 import { mkdir, open, readFile, unlink, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
-import { AppError } from "./errors";
+import { AppError } from "../errors";
 
 function processAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;

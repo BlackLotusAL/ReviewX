@@ -3,7 +3,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { AppError } from "./errors";
+import { AppError } from "../errors";
 
 export interface ResolvedCommand {
   name: string;
@@ -13,6 +13,7 @@ export interface ResolvedCommand {
 }
 
 export interface ProcessResult {
+  stdoutBuffer?: Buffer;
   started: boolean;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -24,6 +25,7 @@ export interface ProcessResult {
 }
 
 export interface ProcessOptions {
+  binaryOutput?: boolean;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs: number;
@@ -262,6 +264,7 @@ export async function runProcess(
           exitCode,
           signal,
           stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+          ...(options.binaryOutput ? { stdoutBuffer: Buffer.concat(stdoutChunks) } : {}),
           stderr: Buffer.concat(stderrChunks).toString("utf8"),
           timedOut,
           aborted,

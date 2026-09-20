@@ -1,4 +1,4 @@
-import type { ProjectView } from "../shared/types";
+import type { ProjectView } from "@/src/shared/types";
 
 export type ProjectTreeNode =
   | { kind: "directory"; name: string; path: string; children: ProjectTreeNode[] }

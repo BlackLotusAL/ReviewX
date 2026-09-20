@@ -1,18 +1,6 @@
 import { z } from "zod";
+import { positiveIdSchema, credentialFreeHttpsUrlSchema } from "../validation";
 import { severityValues } from "@/src/shared/types";
-
-export const positiveIdSchema = z.string().regex(/^[1-9]\d*$/u);
-
-export function isCredentialFreeHttpsUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password;
-  } catch {
-    return false;
-  }
-}
-
-export const credentialFreeHttpsUrlSchema = z.string().url().refine(isCredentialFreeHttpsUrl, "URL must be credential-free HTTPS");
 
 export const codeHubRepoSchema = z.object({
   web_url: z.string(),
@@ -54,13 +42,6 @@ export const codeHubErrorSchema = z.object({
   code: z.string().min(1),
   message: z.string(),
   http_status: z.number().int().optional(),
-}).passthrough();
-
-export const reviewerResultSchema = z.object({
-  findings: z.array(z.object({
-    severity: z.enum(severityValues),
-    body: z.string().refine((value) => value.trim().length > 0 && !value.includes("\0"), "body must be non-empty safe text"),
-  }).passthrough()),
 }).passthrough();
 
 export type CodeHubRepo = z.infer<typeof codeHubRepoSchema>;

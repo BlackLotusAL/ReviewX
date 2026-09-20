@@ -1,4 +1,4 @@
-import type { ReviewPreviewData } from "@/src/client/review-data";
+import type { ReviewPreviewData } from "@/src/client/review-workspace/review-data";
 import type { AttemptStatus, AttemptView, FindingStatus, MergeRequestSnapshot, MrDisplayStatus, MrPrimaryAction, ReviewPhase, SafeErrorView, StoredFinding } from "@/src/shared/types";
 
 interface Example {

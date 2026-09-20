@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { AppError } from "../server/errors";
-import type { ResolvedCommand } from "../server/process";
+import { AppError } from "../errors";
+import type { ResolvedCommand } from "./process";
 
 async function exists(filePath: string): Promise<boolean> {
   try {

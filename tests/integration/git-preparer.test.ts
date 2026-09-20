@@ -1,12 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
-import { GitPreparer } from "@/src/server/git";
-import { ensureDataPaths, resolveDataPaths } from "@/src/server/paths";
+import { GitPreparer } from "@/src/server/integrations/git";
+import { ensureDataPaths, resolveDataPaths } from "@/src/server/platform/paths";
 import type { MergeRequestSnapshot, ProjectRecord } from "@/src/shared/types";
 
 const execute = promisify(execFile);
@@ -17,7 +17,7 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return (await execute("git", args, { cwd, encoding: "utf8", windowsHide: true })).stdout;
 }
 
-async function repositoryFixture(options: { secret?: boolean; sourceBranch?: string; environmentSecret?: string } = {}) {
+async function repositoryFixture(options: { secret?: boolean; sourceBranch?: string; environmentSecret?: string; supported?: boolean } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "reviewx-real-git-"));
   roots.push(root);
   const repository = path.join(root, "origin");
@@ -25,6 +25,9 @@ async function repositoryFixture(options: { secret?: boolean; sourceBranch?: str
   await git(repository, "config", "user.email", "reviewx@example.test");
   await git(repository, "config", "user.name", "ReviewX Test");
   await writeFile(path.join(repository, "base.txt"), "base\n", "utf8");
+  await writeFile(path.join(repository, "deleted.txt"), "delete me\n");
+  await writeFile(path.join(repository, "old.txt"), "rename me\n");
+  await writeFile(path.join(repository, "caller.txt"), "unchanged caller\n");
   await git(repository, "add", ".");
   await git(repository, "commit", "-m", "base");
   const sourceBranch = options.sourceBranch ?? "feature";
@@ -32,10 +35,16 @@ async function repositoryFixture(options: { secret?: boolean; sourceBranch?: str
   await writeFile(path.join(repository, "base.txt"), "base\nfeature line\n", "utf8");
   await writeFile(path.join(repository, "a.txt"), options.secret ? `${"ghp_"}${"abcdefghijklmnopqrstuvwxyz123456"}\n` : "alpha\n", "utf8");
   await writeFile(path.join(repository, "z.txt"), "zulu\n", "utf8");
-  await writeFile(path.join(repository, "large.txt"), "L".repeat(70 * 1024), "utf8");
-  await writeFile(path.join(repository, "invalid.bin"), Buffer.from([0xff, 0xfe, 0xfd, 0x00]));
+  await writeFile(path.join(repository, "large.txt"), options.supported ? "line\n".repeat(1000) : "L".repeat(70 * 1024), "utf8");
+  if (!options.supported) await writeFile(path.join(repository, "invalid.bin"), Buffer.from([0xff, 0xfe, 0xfd, 0x00]));
+  await git(repository, "rm", "deleted.txt");
+  await git(repository, "mv", "old.txt", "renamed.txt");
   await git(repository, "add", ".");
   await git(repository, "commit", "-m", "feature");
+
+  await git(repository, "switch", "main");
+  await writeFile(path.join(repository, "target.txt"), "target advances\n");
+  await git(repository, "add", "."); await git(repository, "commit", "-m", "target advanced");
 
   const dataRoot = path.join(root, "local-app-data");
   const paths = resolveDataPaths({ LOCALAPPDATA: dataRoot });
@@ -57,34 +66,76 @@ async function repositoryFixture(options: { secret?: boolean; sourceBranch?: str
     projectId: "101", iid: "7", title: "Feature", state: "open", updatedAt: "2026-09-02T00:00:00Z",
     sourceBranch, targetBranch: "main",
   };
-  return { paths, environment, project, details };
+  return { paths, environment, project, details, repository };
 }
 
 describe("Git review preparation", () => {
-  test("pins both revisions, writes an untruncated three-dot diff, and includes only bounded sorted UTF-8 snapshots", async () => {
+  test("fixed B differs from T, stable re-review, rename/deletion and large paged blobs", async () => {
+    const f = await repositoryFixture({ supported: true }); const signal = new AbortController().signal;
+    const first = await new GitPreparer(f.paths, f.environment).prepare(f.project, f.details, signal);
+    const second = await new GitPreparer(f.paths, f.environment).prepare(f.project, f.details, signal);
+    try {
+      expect(first.baseSha).not.toBe(first.targetSha);
+      expect(first.context.scope.scopeHash).toBe(second.context.scope.scopeHash);
+      const changes = first.context.scope.changes;
+      expect(changes.find(c => c.type === "D")?.oldPath).toBe("deleted.txt");
+      expect(changes.find(c => c.type === "R")).toMatchObject({ oldPath: "old.txt", newPath: "renamed.txt" });
+      expect(changes.some(c => c.newPath === "target.txt")).toBe(false);
+      expect((await first.context.read("source", "large.txt", signal))).toHaveLength(5);
+      expect(first.context.diff(changes.find(c => c.newPath === "large.txt")!.changeId).length).toBeGreaterThan(1);
+      expect((await first.context.read("source", "caller.txt", signal))[0].content).toContain("unchanged");
+      expect((await first.context.search("source", "unchanged", 0, signal)).matches).toEqual([{ path: "caller.txt", line: 1 }]);
+      await expect(first.context.read("source", "deleted.txt", signal)).rejects.toThrow();
+      expect((await first.context.read("base", "deleted.txt", signal))[0].content).toBe("delete me\n");
+    } finally { await first.cleanup(); await second.cleanup(); }
+  }, 30_000);
+
+  test("pins revisions and marks unreviewable binary and oversized lines", async () => {
     const fixture = await repositoryFixture();
     const prepared = await new GitPreparer(fixture.paths, fixture.environment).prepare(
       fixture.project,
       fixture.details,
       new AbortController().signal,
     );
-    const patch = await readFile(prepared.patchPath, "utf8");
-    const bundle = await readFile(prepared.bundlePath, "utf8");
     expect(prepared.sourceSha).toMatch(/^[0-9a-f]{40,64}$/u);
-    expect(prepared.targetSha).toMatch(/^[0-9a-f]{40,64}$/u);
-    expect(prepared.sourceSha).not.toBe(prepared.targetSha);
-    expect(patch).toContain("feature line");
-    expect(patch).toContain("diff --git");
-    expect(bundle).toContain(patch);
-    expect(bundle.indexOf('--- SOURCE FILE "a.txt" ---')).toBeLessThan(bundle.indexOf('--- SOURCE FILE "z.txt" ---'));
-    expect(bundle).toContain('--- OMITTED "large.txt": source context size limit ---');
-    expect(bundle).toContain('--- OMITTED "invalid.bin": binary content ---');
-    expect(bundle).not.toContain(".git/config");
+    const scope = prepared.context.scope;
+    expect(scope.changes.find(c => c.newPath === "large.txt")?.unsupported).toBeTruthy();
+    expect(scope.changes.find(c => c.newPath === "invalid.bin")?.unsupported).toBeTruthy();
+    const change = scope.changes.find(c => c.newPath === "base.txt")!;
+    expect(prepared.context.diff(change.changeId)[0].content).toContain("feature line");
+    expect((await prepared.context.read("base", "base.txt", new AbortController().signal))[0].content).toBe("base\n");
+    await expect(prepared.context.read("source", "../base.txt", new AbortController().signal)).rejects.toThrow();
 
     const temporaryRoot = prepared.rootDirectory;
     await prepared.cleanup();
     await prepared.cleanup();
     await expect(stat(temporaryRoot)).rejects.toThrow();
+  }, 30_000);
+
+  test("symlink and submodule changes are explicitly unreviewable", async () => {
+    const f = await repositoryFixture({ supported: true });
+    await git(f.repository, "switch", "feature");
+    const commit = (await git(f.repository, "rev-parse", "HEAD")).trim();
+    const blob = (await git(f.repository, "rev-parse", "HEAD:base.txt")).trim();
+    await git(f.repository, "update-index", "--add", "--cacheinfo", "120000," + blob + ",link");
+    await git(f.repository, "update-index", "--add", "--cacheinfo", "160000," + commit + ",submodule");
+    await git(f.repository, "commit", "-m", "special object modes");
+    const prepared = await new GitPreparer(f.paths, f.environment).prepare(f.project, f.details, new AbortController().signal);
+    try {
+      for (const path of ["link", "submodule"]) expect(prepared.context.scope.changes.find(c => c.newPath === path)?.unsupported).toBeTruthy();
+    } finally { await prepared.cleanup(); }
+  }, 30_000);
+
+  test("nonunique merge-base is rejected", async () => {
+    const f = await repositoryFixture({ supported: true });
+    const a = (await git(f.repository, "rev-parse", "feature")).trim();
+    const b = (await git(f.repository, "rev-parse", "main")).trim();
+    const tree = (await git(f.repository, "rev-parse", "feature^{tree}")).trim();
+    const x = (await git(f.repository, "commit-tree", tree, "-p", a, "-p", b, "-m", "merge one")).trim();
+    const y = (await git(f.repository, "commit-tree", tree, "-p", b, "-p", a, "-m", "merge two")).trim();
+    await git(f.repository, "update-ref", "refs/heads/feature", x);
+    await git(f.repository, "update-ref", "refs/heads/main", y);
+    await expect(new GitPreparer(f.paths, f.environment).prepare(f.project, f.details, new AbortController().signal)).rejects.toMatchObject({ code: "REVIEW_INCOMPLETE" });
   }, 30_000);
 
   test("rejects credentials before OpenCode input exists and cleans the temporary workspace", async () => {
