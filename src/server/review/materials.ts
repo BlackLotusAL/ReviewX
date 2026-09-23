@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { AppError } from "../errors";
+import { AppError, type AppErrorOptions } from "../errors";
 import type { TextPage } from "./types";
 
 export const REVIEW_LIMITS = Object.freeze({ pageLines: 200, pageBytes: 32 * 1024, contentBytes: 24 * 1024,
@@ -14,9 +14,9 @@ export function stable(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function reviewError(code: string, reason: string): AppError {
+export function reviewError(code: string, reason: string, details: Partial<Pick<AppErrorOptions, "technical" | "stderr" | "cause" | "classified">> = {}): AppError {
   return new AppError({ code, message: "ReviewX 多轮检视未完成。", reason, impact: "本次结果不可发布。",
-    nextStep: "检查检视限制、规则和原生 OpenCode 环境后手动重新检视。", technical: code });
+    nextStep: "检查检视限制、规则和原生 OpenCode 环境后手动重新检视。", technical: code, ...details });
 }
 
 export function safeRepositoryPath(value: string): boolean {

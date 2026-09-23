@@ -50,8 +50,11 @@ describe("permanent logs and immutable reports", () => {
     const attempt: ReviewAttempt = { id: "attempt-1", projectId: "1", mrIid: "2", mrTitle: "MR", requestedUpdatedAt: "v", status: "reviewing", createdAt: "now", findings: [], publishBatches: [] };
     const mr: MergeRequestSnapshot = { projectId: "1", iid: "2", title: "MR", state: "open", updatedAt: "v", sourceBranch: "feature", targetBranch: "main" };
     const prepared = { sourceSha: "1".repeat(40), targetSha: "2".repeat(40), baseSha: "3".repeat(40) };
-    const pathValue = await store.save(attempt, mr, prepared, fakeResult([{ severity: "minor", body: "### 🟡 Minor: Issue\n\nBody" }]));
+    const result = fakeResult([{ severity: "minor", body: "### 🟡 Minor: Issue\n\nBody" }]);
+    result.execution!.progress.limitations = ["跳过不支持变更：image.bin（二进制）。"];
+    const pathValue = await store.save(attempt, mr, prepared, result);
     expect(await store.read(pathValue)).toContain("Attempt ID");
+    expect(await store.read(pathValue)).toContain("跳过不支持变更：image.bin（二进制）。");
     await expect(store.save(attempt, mr, prepared, fakeResult([]))).rejects.toMatchObject({ code: "REPORT_WRITE_ERROR" });
     await expect(store.read("../outside.txt")).rejects.toMatchObject({ code: "UNSAFE_FILE_PATH" });
   });

@@ -72,6 +72,11 @@ export class ReportStore {
       `- Result: **${result.findings.length === 0 ? "PASS" : "FINDINGS"}**`,
       "",
     ];
+    const limitations = result.execution?.progress.limitations ?? [];
+    if (limitations.length) {
+      lines.push("## Review limitations", "", "Result applies only to the supported review scope.", "",
+        ...limitations.map(limitation => `- ${inlineCode(limitation)}`), "");
+    }
     if (result.findings.length === 0) {
       lines.push("No findings.", "");
     } else {

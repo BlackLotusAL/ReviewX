@@ -5,7 +5,7 @@ import type { FixedContext, NativeMessage } from "@/src/server/review/types";
 import type { ReviewSubmission } from "@/src/shared/review-contract";
 import { Redactor } from "@/src/server/platform/redaction";
 
-function fixture() {
+function fixture(unsupported = false) {
   const controller = new AbortController();
   const pages = textPages("line\n".repeat(401));
   const context: FixedContext = {
@@ -13,6 +13,7 @@ function fixture() {
     diff: () => textPages("diff\n"), read: async (_, path) => { if (!["a", "b", "caller"].includes(path)) throw new Error("Unknown"); return pages; },
     search: async () => ({ matches: [{ path: "caller", line: 1 }], nextOffset: null, limitations: [] }),
   };
+  if (unsupported) context.scope.changes.push({ changeId: "binary", type: "R", oldPath: "old.bin", newPath: "new.bin", diffHash: "", diffPages: 3, hunks: [], unsupported: "binary file" });
   const receiver = new ResultReceiver("session", context, { profileHash: "hash", resources: [{ id: "rule", version: "v1", body: "rules", resourceHash: digest("rules") }] }, controller.signal, new Redactor({}));
   const messages: NativeMessage[] = [{ info: { id: "message", sessionID: "session", role: "assistant", finish: "stop", time: { completed: 1 }, modelID: "default", providerID: "native" }, parts: [] }];
   let id = 0;
@@ -98,4 +99,33 @@ describe("production formal result boundary", () => {
     const f = fixture(); f.receiver.context.scope.changes[0].type = type;
     await f.prepare(); await expect(f.call("reviewx_submit", f.submission)).rejects.toMatchObject({ code: "REVIEW_INCOMPLETE" });
   });
+});
+
+
+test("unsupported changes are skipped without blocking supported findings", async () => {
+  const f = fixture(true); await f.prepare();
+  const index = JSON.parse(await f.call("reviewx_index", { page: 0 }));
+  expect(index.requiredBase).toEqual([]);
+  expect([...f.receiver.required].some(key => key.includes("binary") || key.includes("old.bin"))).toBe(false);
+  expect(JSON.parse(await f.call("reviewx_diff", { changeId: "binary", page: 0 }))).toMatchObject({ totalPages: 0, note: expect.stringContaining("binary file") });
+  expect(f.receiver.fatal).toBe(false);
+  expect(f.receiver.snapshot().limitations).toEqual(["跳过不支持变更：new.bin（binary file）。"]);
+  await f.call("reviewx_submit", f.submission);
+  expect(f.accept().submission).toEqual(f.submission);
+});
+
+test.each(["changeId", "source", "base"])("unsupported finding references are rejected: %s", async kind => {
+  const f = fixture(true); await f.prepare();
+  if (kind === "changeId") f.submission.findings[0].changeIds.push("binary");
+  else f.submission.findings[0].evidence.push({ revision: kind as "source" | "base", path: kind === "source" ? "new.bin" : "old.bin", startLine: 1, endLine: 1 });
+  await expect(f.call("reviewx_submit", f.submission)).rejects.toMatchObject({ code: "INVALID_REVIEW_SCOPE" });
+});
+
+test.each(["terminal", "message", "completion"])("terminal diagnostics identify %s", async branch => {
+  const f = fixture(); await f.prepare(); await f.call("reviewx_submit", f.submission);
+  f.receiver.closed = branch !== "terminal";
+  if (branch === "message") f.messages[0].info.sessionID = "foreign";
+  if (branch === "completion") f.messages[0].info.finish = "length";
+  try { f.receiver.accept(f.messages, { idle: true, error: false, disconnected: false }); throw new Error("Expected rejection"); }
+  catch (error) { expect(error).toMatchObject({ code: "OPENCODE_FAILED", technical: expect.stringContaining('"branch":"' + branch + '"') }); }
 });

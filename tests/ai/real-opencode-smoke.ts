@@ -17,6 +17,14 @@ const engine: typeof import("@/src/server/package-engine") = process.env.REVIEWX
 async function git(cwd: string, ...args: string[]) {
   return (await execute("git", args, { cwd, windowsHide: true, encoding: "utf8" })).stdout.trim();
 }
+async function checkoutCommit(cwd: string) {
+  try { return await git(cwd, "rev-parse", "HEAD"); }
+  catch (error) {
+    const failure = error as { code?: unknown; stderr?: string };
+    if (failure.code === 128 && /fatal: not a git repository/iu.test(failure.stderr ?? "")) return "unknown (not a Git checkout)";
+    throw error;
+  }
+}
 const root = await mkdtemp(path.join(os.tmpdir(), "reviewx production Qt "));
 let prepared: PreparedReview | undefined;
 const attemptId = new Date().toISOString().replace(/[:.]/gu, "-");
@@ -65,7 +73,7 @@ try {
     if (await readFile(path.join(evidence, file), "utf8") !== finding.body) throw new Error("Body changed");
     bodies.push({ file, hash: digest(finding.body), severity: finding.severity });
   }
-  await writeFile(path.join(evidence, "verification.json"), JSON.stringify({ technical: "passed", quality: "manual review required", installedEngine: !!process.env.REVIEWX_ACCEPTANCE_ENGINE, system: `${os.platform()} ${os.release()} ${os.arch()}`, node: process.version, commit: await git(projectRoot, "rev-parse", "HEAD"), bodies }, null, 2));
+  await writeFile(path.join(evidence, "verification.json"), JSON.stringify({ technical: "passed", quality: "manual review required", installedEngine: !!process.env.REVIEWX_ACCEPTANCE_ENGINE, system: `${os.platform()} ${os.release()} ${os.arch()}`, node: process.version, commit: await checkoutCommit(projectRoot), bodies }, null, 2));
   if (!result.findings.length) throw new Error("Quality failed: no Findings");
   process.stdout.write(`Production acceptance: ${evidence}\n`);
 } catch (error) {

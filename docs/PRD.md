@@ -4,7 +4,7 @@
 
 ReviewX 是面向 CodeHub Merge Request 的 Windows 本机单用户代码检视工具。用户登记 Project、手动刷新 open MR 并开始检视；系统按全局 FIFO 运行只读 OpenCode 多轮会话，保存独立报告，等待用户逐条发送或跳过 Finding。
 
-产品支持 Windows 10/11、Node.js 22 及以上版本，依赖本机 Git、CodeHub CLI 和已配置默认模型与认证的原版 OpenCode 1.18.30。支持环境不等于所有环境均已验证，验收必须注明实际平台和版本。
+产品支持 Windows 10/11、Node.js 22 及以上版本，依赖本机 Git、CodeHub CLI 和已配置默认模型与认证的原版 OpenCode（按运行时能力校验，不锁定版本）。支持环境不等于所有环境均已验证，验收必须注明实际平台和版本。
 
 - 本机运行，仅监听 `127.0.0.1`，使用本机 CLI 与原生认证，不在网页中管理凭据。
 - MR 发现、检视和评论发送由用户主动触发，不定时扫描、不自动检视、不自动评论。
@@ -143,7 +143,7 @@ MR `state` 去除首尾空白、忽略大小写后接受 `open` 或 `opened`，�
 
 范围必须使用 B→S，不能以 T 代替 B，也不模拟合入最新 target 的结果；merge-base 不唯一时失败。索引包含固定 SHA、changeId、变更类型、旧/新路径、diff 页与哈希、行号映射及不可审原因；scopeHash 使用稳定序列化，不包含临时路径、时间或哈希自身。
 
-只读 bare Git 树与 blob，不 checkout 或复制工作树，不执行 hooks、外部 diff、textconv、过滤器或子模块初始化。LFS 指针按 Git 文本处理，不下载实体。二进制、非法 UTF-8、symlink/submodule 或无法完整交付的变更阻断整次成功，不产生部分范围 PASS。
+只读 bare Git 树与 blob，不 checkout 或复制工作树，不执行 hooks、外部 diff、textconv、过滤器或子模块初始化。LFS 指针按 Git 文本处理，不下载实体。二进制、非法 UTF-8、symlink/submodule 或超大文件等标记为不支持的变更从可审范围排除并记入限制，不阻断其余变更的检视；Finding 不得引用这些变更，其余必需材料仍须完整交付。
 
 ### 4.2 受控工具与证据
 
@@ -272,9 +272,11 @@ HTTP 只监听 loopback，不启用 CORS；状态变更校验精确 Host、同�
 
 子进程通过参数数组调用，不拼接 shell。Windows PowerShell shim 使用 JSON 参数信封保留换行、引号和反斜杠，不拆分正文参数。
 
-OpenCode 仅使用 1.18.30 HTTP + Node fetch 接入，不指定 model/provider/variant，不使用 SDK 或聊天结果回退。保留原生认证、配置路径及必要企业网络环境，不重定向 HOME、不复制认证、不改写用户持久配置。
+会话等待 idle/error/disconnected，由 60 分钟总预算兜底。serve 使用 stdout/stderr 合计 16 KiB 的滚动缓冲，不因累计日志量终止；故障诊断包含最近 16 KiB 的 stdout/stderr 及进程退出状态。
 
-每个 attempt 使用可信任务目录、随机 loopback 凭据和绑定会话的工具桥接。除六个 ReviewX 工具外均禁止，包括 shell、编辑、任意网络与 CodeHub 写入。仓库指令、Skill、插件和配置仅是待检视数据，不自动执行；读取不触发仓库 LSP、formatter 或脚本。检测不兼容的额外配置、全局工具、启用的 MCP 或指令时，在交付材料前失败。
+OpenCode 使用 HTTP + Node fetch 接入，不指定 model/provider/variant，不使用 SDK 或聊天结果回退。保留原生认证、配置路径及必要企业网络环境，不重定向 HOME、不复制认证、不改写用户持久配置。
+
+每个 attempt 使用可信任务目录、随机 loopback 凭据和绑定会话的工具桥接。除六个 ReviewX 工具外均禁止，包括 shell、编辑、任意网络与 CodeHub 写入。仓库指令、Skill、插件和配置仅是待检视数据，不自动执行；读取不触发仓库 LSP、formatter 或脚本。允许用户级 AGENTS.md 存在，仍拒绝运行目录及祖先目录的 AGENTS.md；检测不兼容的额外配置、全局工具、启用的 MCP 或显式 instructions 时，在交付材料前失败。
 
 这些是应用层约束，不是 OS 沙箱，也不承诺阻断所有扩展初始化。OpenCode 原生会话可能留存交付材料，ReviewX 不删除其整个数据目录。默认日志和执行摘要不保存完整源码、工具正文、推理、用户配置或认证；正式 Finding 正文和冻结规则按结果契约保存。交付前执行敏感输入检查，诊断中的凭据必须脱敏。
 

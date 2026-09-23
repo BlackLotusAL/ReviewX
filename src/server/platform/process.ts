@@ -31,6 +31,7 @@ export interface ProcessOptions {
   timeoutMs: number;
   signal?: AbortSignal;
   maxOutputBytes?: number;
+  outputMode?: "full" | "tail";
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
   input?: string;
@@ -213,10 +214,13 @@ export async function runProcess(
   args: string[],
   options: ProcessOptions,
 ): Promise<ProcessResult> {
+  const tailMode = options.outputMode === "tail";
+  const maxOutputBytes = options.maxOutputBytes ?? 64 * 1024 * 1024;
+  if (tailMode && (options.binaryOutput || options.stdoutFile !== undefined)) throw new Error("Tail output cannot be combined with binaryOutput or stdoutFile.");
+  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) throw new Error("maxOutputBytes must be a positive safe integer.");
   const target = await prepareSpawnTarget(command, args);
   try {
     return await new Promise<ProcessResult>((resolve, reject) => {
-      const maxOutputBytes = options.maxOutputBytes ?? 64 * 1024 * 1024;
       let child: ReturnType<typeof spawn>;
       let stdoutFileDescriptor: number | undefined;
       try {
@@ -237,6 +241,8 @@ export async function runProcess(
       }
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
+      const tail: Array<{ stream: "stdout" | "stderr"; data: Buffer }> = [];
+      let tailBytes = 0;
       let stdoutBytes = 0;
       let stderrBytes = 0;
       let started = false;
@@ -263,9 +269,9 @@ export async function runProcess(
           started,
           exitCode,
           signal,
-          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+          stdout: Buffer.concat(tailMode ? tail.filter(c => c.stream === "stdout").map(c => c.data) : stdoutChunks).toString("utf8"),
           ...(options.binaryOutput ? { stdoutBuffer: Buffer.concat(stdoutChunks) } : {}),
-          stderr: Buffer.concat(stderrChunks).toString("utf8"),
+          stderr: Buffer.concat(tailMode ? tail.filter(c => c.stream === "stderr").map(c => c.data) : stderrChunks).toString("utf8"),
           timedOut,
           aborted,
           outputLimitExceeded,
@@ -277,6 +283,23 @@ export async function runProcess(
       };
 
       const append = (target: Buffer[], chunk: Buffer, stream: "stdout" | "stderr") => {
+        if (tailMode) {
+          const retained = chunk.subarray(Math.max(0, chunk.length - maxOutputBytes));
+          let discard = Math.max(0, tailBytes + retained.length - maxOutputBytes);
+          while (discard && tail.length) {
+            const first = tail[0];
+            const removed = Math.min(discard, first.data.length);
+            if (removed === first.data.length) tail.shift();
+            else first.data = Buffer.from(first.data.subarray(removed));
+            tailBytes -= removed;
+            discard -= removed;
+          }
+          tail.push({ stream, data: Buffer.from(retained) });
+          tailBytes += retained.length;
+          if (stream === "stdout") options.onStdout?.(chunk.toString("utf8"));
+          else options.onStderr?.(chunk.toString("utf8"));
+          return;
+        }
         if (stream === "stdout") stdoutBytes += chunk.length;
         else stderrBytes += chunk.length;
         if (stdoutBytes + stderrBytes > maxOutputBytes) {

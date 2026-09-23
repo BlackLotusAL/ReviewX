@@ -11,7 +11,7 @@ ReviewX 不会定时刷新、自动检视、自动评论，也不提供远程访
 - pnpm 11.19（源码开发）
 - Git，可在 `PATH` 中找到 `git.exe`
 - CodeHub CLI，可在 `PATH` 中找到 `codehub.exe` 或安全的 `codehub.ps1` npm shim
-- OpenCode 1.18.30 CLI，可在 `PATH` 中找到 `opencode.exe` 或安全的 `opencode.ps1` npm shim，并已配置默认模型及其认证
+- OpenCode CLI，可在 `PATH` 中找到 `opencode.exe` 或安全的 `opencode.ps1` npm shim，并已配置默认模型及其认证
 
 CodeHub 必须返回不含用户信息、查询参数或片段的 HTTPS clone URL，并在 `mr view` JSON 中返回不含凭据的 HTTPS `web_url`。缺少该字段表示 CLI 版本不兼容，刷新会失败并提示升级。`repo view` 的项目 `web_url` 是必填字符串，原样保存，不做 URL 校验或缺失降级。ReviewX 不提供凭据输入或认证管理；项目地址不具备 MR 地址的过滤保证。
 
@@ -108,7 +108,7 @@ pnpm test:package
 
 ## 多轮检视与外置规则
 
-生产流程为固定 T/S/B → 受控工具按需读取 → reviewx_submit → 正常整体终态 → 不可变报告。仅支持已验证的原版 OpenCode 1.18.30 HTTP；不指定模型、不复制认证、不重定向 HOME。其他版本或不可控的全局工具、MCP、指令、任务配置输入会在代码交付前拒绝。原生 OpenCode 会话可能保留源码；ReviewX 的默认执行摘要不保留源码或推理。
+生产流程为固定 T/S/B → 受控工具按需读取 → reviewx_submit → 正常整体终态 → 不可变报告。通过原版 OpenCode HTTP 接入，按运行时能力校验，不锁定版本；不指定模型、不复制认证、不重定向 HOME。不可控的全局工具、MCP、显式 instructions、任务配置输入会在代码交付前拒绝。允许用户级 AGENTS.md 存在；仍拒绝运行目录及其祖先目录的 AGENTS.md。会话等待 idle/error/disconnected，由 60 分钟总预算兜底；serve 使用 stdout/stderr 合计 16 KiB 的滚动缓冲，不因累计日志量终止，错误诊断保留最近 16 KiB 输出。原生 OpenCode 会话可能保留源码；ReviewX 的默认执行摘要不保留源码或推理。
 
 默认通用策略、中文评论骨架及 C++/Python 规则来自安装包 resources/review-rules，不依赖启动 cwd。可在 %LOCALAPPDATA%\ReviewX\rules\profile.json 显式配置项目框架和知识：
 
@@ -123,7 +123,7 @@ pnpm test:package
 
 team.md 相对 rules 目录。框架可分别选择；不根据仓库内容猜测绑定。不设置 profile 时使用默认规则；显式资源缺失、路径越界或链接/junction 会失败。规则仅为 UTF-8 文本，不执行脚本，不解析递归 include 或远程资源。每次 attempt 冻结资源内容、版本、顺序和哈希，修改只影响以后检视。
 
-页面最多 200 行/32 KiB（正文预算 24 KiB），blob 最大 16 MiB，完整 diff/累计交付各 64 MiB，提交最大 1 MiB/100 条，每条 body 最大 64 KiB。不可完整提供的变更不产生部分 PASS；未知文本语言沿用通用规则，.ui/.qrc 不做代码生成。
+页面最多 200 行/32 KiB（正文预算 24 KiB），blob 最大 16 MiB，完整 diff/累计交付各 64 MiB，提交最大 1 MiB/100 条，每条 body 最大 64 KiB。标记为不支持的变更从可审范围排除并记入限制，不阻断其余变更的检视；其余必需材料仍须完整交付；未知文本语言沿用通用规则，.ui/.qrc 不做代码生成。
 
 成功目录保存 report.md、submission.v1.json、execution.v1.json；state.json 保持 v1，发布字段不变。回滚只更换程序，保留当前 state.json 和发布记录，不能拿旧备份覆盖新增结果。旧版可忽略独立执行文件。
 
