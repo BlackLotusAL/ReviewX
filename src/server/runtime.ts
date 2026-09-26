@@ -106,8 +106,8 @@ export class ReviewXRuntime {
     ensurePositiveId(mrIid, "MR IID");
     const source = selectMrDetail(this.#state, projectId, mrIid);
     const views = await Promise.all([...source.attempts].reverse().map(async (attempt) => {
-      const view = projectAttempt(attempt, this.#progress.get(attempt.id), undefined);
-      return { ...view, execution: attempt.reportPath ? await this.dependencies.reports.execution(attempt.reportPath) : undefined };
+      const execution = attempt.reportPath ? await this.dependencies.reports.execution(attempt.reportPath) : undefined;
+      return projectAttempt(attempt, this.#progress.get(attempt.id), execution);
     }));
     return projectMrDetail(this.#state, source, views);
   }
@@ -584,7 +584,7 @@ export class ReviewXRuntime {
       const attempt = draft.attemptsById[attemptId];
       if (!attempt || signal.aborted || attempt.status !== "reviewing") throw reviewError("REVIEW_CANCELLED", "登记结果前收到停止请求；孤立文件不可发布。");
       attempt.reportPath = reportPath;
-      attempt.result = accepted.findings.length === 0 ? "pass" : "findings";
+      attempt.result = accepted.submission.completion === "incomplete" ? "partial" : accepted.findings.length === 0 ? "pass" : "findings";
       attempt.findings = accepted.findings.map((finding, index) => ({ ordinal: index + 1, severity: finding.severity, body: finding.body, status: "pending" }));
       attempt.status = attempt.findings.length === 0 ? "completed" : "awaiting_confirmation";
       attempt.phase = undefined;
@@ -592,7 +592,7 @@ export class ReviewXRuntime {
       attempt.reviewFinishedAt = attempt.completedAt;
     });
     const completed = this.#state.attemptsById[attemptId];
-    this.#info(this.#context(completed), completed.findings.length === 0
+    this.#info(this.#context(completed), completed.result === "partial" ? `Review partially completed with ${completed.findings.length} verified Findings; report saved.` : completed.findings.length === 0
       ? "Review completed with PASS; report saved and no comments created."
       : `Review completed with ${completed.findings.length} Finding${completed.findings.length === 1 ? "" : "s"}; awaiting explicit publication selection.`);
   }

@@ -91,3 +91,7 @@ ReviewX 调用 MR 列表时固定传递 `--state open`，这是 CodeHub CLI 的�
 `GET /api/state` 的 `projects[]` 必须包含字符串 `webUrl`，来源为 `codehub repo view` 的必填字符串 `web_url`。项目登记时原样保存并返回，不检查 URL 格式、协议或凭据；手动刷新与状态轮询均不补查项目地址。不提供缺失地址降级或旧项目数据迁移。
 
 项目卡片主体定位到本页项目 MR 分组；`#ID` 在新标签页打开 `webUrl`，移除按钮保持独立操作。预览中的示例外链不跳转。
+
+## 部分检视结果
+
+Attempt.result 和 MR 列表 result 支持 pass / findings / partial；字段缺失沿用历史行为。partial 独立于 status：有有效 Finding 时 awaiting_confirmation，处理完毕或无 Finding 时 completed，但始终表示部分完成。现有逐条发布 API 不变。详情 progress 可从 execution.progress 恢复当前简要限制。

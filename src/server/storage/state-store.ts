@@ -92,7 +92,7 @@ const attemptSchema = z.strictObject({
   archivedAt: z.string().min(1).optional(),
   archivedFromStatus: z.enum(attemptStatusValues).optional(),
   reportPath: z.string().min(1).optional(),
-  result: z.enum(["pass", "findings"]).optional(),
+  result: z.enum(["pass", "findings", "partial"]).optional(),
   findings: z.array(findingSchema),
   publishBatches: z.array(batchSchema),
   error: errorSchema.optional(),

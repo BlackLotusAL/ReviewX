@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { AppStateView, AttemptView, FindingStatus, MrDetailView, MrRowView, SafeErrorView } from "@/src/shared/types";
 import { createPreviewDataSource, liveReviewData, type ReviewPreviewData } from "@/src/client/review-workspace/review-data";
-import { statusLabels, phaseLabels, findingLabels, isBusy } from "./presentation";
+import { reviewStatusLabel, phaseLabels, findingLabels, isBusy } from "./presentation";
 
 interface Selection { projectId: string; mrIid: string; title: string; trigger: HTMLElement }
 interface ActionError { key: string; scope: "project" | "page" | "finding"; error: SafeErrorView }
@@ -65,10 +65,10 @@ export function useWorkspaceController(previewData?: ReviewPreviewData) {
       const messages: string[] = [];
       for (const project of next.projects) for (const mr of project.mergeRequests) {
         const key = `${project.id}/${mr.iid}`;
-        const value = `${mr.latestAttemptId}/${mr.status}/${mr.phase}/${mr.queuePosition}`;
+        const value = `${mr.latestAttemptId}/${mr.status}/${mr.result}/${mr.phase}/${mr.queuePosition}`;
         transitions.set(key, value);
         if (mrTransitions.current.has(key) && mrTransitions.current.get(key) !== value) {
-          messages.push(`MR !${mr.iid} ${statusLabels[mr.status]}${mr.phase && isBusy(mr.status) ? `，${phaseLabels[mr.phase]}` : ""}`);
+          messages.push(`MR !${mr.iid} ${reviewStatusLabel(mr.status, mr.result)}${mr.phase && isBusy(mr.status) ? `，${phaseLabels[mr.phase]}` : ""}`);
         }
       }
       mrTransitions.current = transitions;

@@ -1,5 +1,5 @@
 import { fakeResult } from "../helpers/runtime";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -55,6 +55,15 @@ describe("permanent logs and immutable reports", () => {
     const pathValue = await store.save(attempt, mr, prepared, result);
     expect(await store.read(pathValue)).toContain("Attempt ID");
     expect(await store.read(pathValue)).toContain("跳过不支持变更：image.bin（二进制）。");
+    expect(await store.save(attempt, mr, prepared, result)).toBe(pathValue);
+    expect(await Promise.all([store.save({ ...attempt, id: "race" }, mr, prepared, result), store.save({ ...attempt, id: "race" }, mr, prepared, result)])).toEqual(["reports/race/report.md", "reports/race/report.md"]);
+    const partial = fakeResult([]); partial.submission.completion = "incomplete";
+    const partialPath = await store.save({ ...attempt, id: "partial" }, mr, prepared, partial);
+    expect(await store.read(partialPath)).toContain("**PARTIAL**");
+    expect(await store.read(partialPath)).not.toContain("**PASS**");
+    await mkdir(path.join(data.reports, "broken"));
+    await writeFile(path.join(data.reports, "broken/report.md"), "incomplete");
+    await expect(store.save({ ...attempt, id: "broken" }, mr, prepared, result)).rejects.toMatchObject({ code: "REPORT_WRITE_ERROR" });
     await expect(store.save(attempt, mr, prepared, fakeResult([]))).rejects.toMatchObject({ code: "REPORT_WRITE_ERROR" });
     await expect(store.read("../outside.txt")).rejects.toMatchObject({ code: "UNSAFE_FILE_PATH" });
   });

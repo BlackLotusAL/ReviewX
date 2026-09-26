@@ -14,7 +14,8 @@ export const findingLabels: Record<FindingStatus, string> = {
 };
 export const severityLabels: Record<Severity, string> = { fatal: "Fatal", major: "Major", minor: "Minor", suggestion: "Suggestion" };
 
-export function statusTone(status: string): "neutral" | "active" | "success" | "error" {
+export function statusTone(status: string, result?: string): "neutral" | "active" | "success" | "error" {
+  if (result === "partial") return "neutral";
   if (["review_failed", "publish_failed", "failed", "unknown", "not_attempted"].includes(status)) return "error";
   if (["completed", "published"].includes(status)) return "success";
   if (["reviewing", "publishing", "awaiting_confirmation", "pending"].includes(status)) return "active";
@@ -32,4 +33,8 @@ export function MrWebLink({ mr, className = "iid", readOnly = false }: { mr: Mer
   return <a className={`${className} mr-web-link`} href={readOnly ? "#" : mr.webUrl} target="_blank" rel="noreferrer noopener"
     onClick={readOnly ? event => event.preventDefault() : undefined} onAuxClick={readOnly ? event => event.preventDefault() : undefined}
     aria-label={readOnly ? `示例 MR !${mr.iid}` : `在 CodeHub 打开 MR !${mr.iid}`}>!{mr.iid}<Icon name="external" /></a>;
+}
+
+export function reviewStatusLabel(status: keyof typeof statusLabels, result?: string): string {
+  return result === "partial" ? `部分完成 · ${statusLabels[status]}` : statusLabels[status];
 }

@@ -28,6 +28,23 @@ async function noOverflow(page: Page) {
   }
 }
 
+for (const status of ["completed", "awaiting_confirmation"] as const) {
+  test(`partial review remains distinct from PASS while ${status}`, async ({ page }) => {
+    const data = fixtures(status);
+    data.state.projects[0].mergeRequests[0].result = "partial";
+    data.detail.attempts[0].result = "partial";
+    data.detail.attempts[0].progress = { toolCount: 10, deliveredMaterials: 8, requiredMaterials: 10, limitations: ["缺失必需材料：2 项。"] };
+    await intercept(page, data); await page.goto("/");
+    await expect(page.locator("#mr-101-42")).toContainText("部分完成");
+    await page.locator("#mr-101-42 .mr-open").click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading", { name: "部分完成", exact: true })).toBeVisible();
+    await expect(dialog).toContainText("缺失必需材料：2 项。");
+    await expect(dialog.getByText("未发现问题。", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "发送到 CodeHub" })).toHaveCount(status === "awaiting_confirmation" ? 2 : 0);
+  });
+}
+
 for (const outcome of ["failed", "unknown"] as const) {
   test(`queue retains publishing and ${outcome} findings after review`, async ({ page }) => {
     const data = fixtures("reviewing");

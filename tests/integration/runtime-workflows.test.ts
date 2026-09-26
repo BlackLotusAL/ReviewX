@@ -1,6 +1,9 @@
 import { mkdir, rm } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { AppError } from "@/src/server/errors";
+import { ReviewXRuntime } from "@/src/server/runtime";
+import { resolveDataPaths } from "@/src/server/platform/paths";
+import { ReportStore } from "@/src/server/storage/report-store";
 import type { AttemptView, ReviewerResult } from "@/src/shared/types";
 import {
   configureMr,
@@ -37,6 +40,41 @@ async function latest(harness: RuntimeHarness, projectId: string, mrIid: string)
 }
 
 describe("ReviewX runtime workflows", () => {
+  it.each([0, 2])("keeps partial outcome through publication and persistence (%i findings)", async count => {
+    const harness = await createRuntimeHarness();
+    try {
+      configureMr(harness, "101", "1"); await registerAndRefresh(harness, ["101"]);
+      harness.reviewer.results.set("1", reviewerResult(...Array.from({ length: count }, (_, i) => `Verified ${i}`)));
+      const review = harness.reviewer.review.bind(harness.reviewer);
+      harness.reviewer.review = async (...args) => {
+        const result = await review(...args); result.submission.completion = "incomplete";
+        result.submission.blockers = ["Missing context"]; result.execution.progress.limitations = ["阻塞原因：Missing context"];
+        return result;
+      };
+      await harness.runtime.createReview("101", "1"); await harness.runtime.waitForIdle();
+      const first = await latest(harness, "101", "1");
+      expect(first.result).toBe("partial");
+      expect(first.progress?.limitations).toContain("阻塞原因：Missing context");
+      if (count) {
+        await harness.runtime.decideFinding(first.id, 1, "dismissed");
+        await harness.runtime.publishFinding(first.id, 2);
+      }
+      expect((await latest(harness, "101", "1"))).toMatchObject({ result: "partial", status: "completed" });
+      expect((await harness.store.read()).attemptsById[first.id].result).toBe("partial");
+      expect(harness.runtime.snapshot().projects[0].mergeRequests[0].result).toBe("partial");
+      await harness.runtime.createReview("101", "1"); await harness.runtime.waitForIdle();
+      expect((await latest(harness, "101", "1")).id).not.toBe(first.id);
+      await harness.runtime.shutdown();
+      const paths = resolveDataPaths({ LOCALAPPDATA: harness.root });
+      const restarted = await new ReviewXRuntime({ paths, store: harness.store, logger: harness.logger, codeHub: harness.codeHub,
+        git: harness.git, reviewer: harness.reviewer, reports: new ReportStore(paths) }).initialize();
+      try {
+        const restored = (await restarted.getMrDetail("101", "1")).attempts[0];
+        expect(restored.result).toBe("partial");
+        expect(restored.progress?.limitations).toContain("阻塞原因：Missing context");
+      } finally { await restarted.shutdown(); }
+    } finally { await harness.cleanup(); }
+  });
   it("preserves review timing through decisions, publication, persistence and a fresh attempt", async () => {
     const harness = await createRuntimeHarness();
     try {

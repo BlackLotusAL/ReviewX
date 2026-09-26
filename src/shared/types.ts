@@ -131,7 +131,7 @@ export interface ReviewAttempt {
   archivedAt?: string;
   archivedFromStatus?: AttemptStatus;
   reportPath?: string;
-  result?: "pass" | "findings";
+  result?: "pass" | "findings" | "partial";
   findings: StoredFinding[];
   publishBatches: PublishBatch[];
   error?: SafeErrorView;
@@ -170,6 +170,7 @@ export type MrDisplayStatus = "unreviewed" | AttemptStatus;
 export type MrPrimaryAction = "start" | "stop" | "rereview" | null;
 
 export interface MrRowView extends MergeRequestSnapshot {
+  result?: ReviewAttempt["result"];
   progress?: ReviewProgress;
   status: MrDisplayStatus;
   phase?: ReviewPhase;

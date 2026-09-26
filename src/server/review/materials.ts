@@ -31,7 +31,7 @@ export function textPages(text: string): TextPage[] {
     const startLine = i + 1;
     let content = "";
     while (i < lines.length && i < startLine - 1 + REVIEW_LIMITS.pageLines) {
-      if (Buffer.byteLength(lines[i]) > REVIEW_LIMITS.contentBytes) throw reviewError("REVIEW_INCOMPLETE", "单行超过页面上限，不能截断后作为完整证据。");
+      if (Buffer.byteLength(lines[i]) > REVIEW_LIMITS.contentBytes) throw reviewError("REVIEW_INCOMPLETE", `单行 ${Buffer.byteLength(lines[i])} 字节超过页面上限 ${REVIEW_LIMITS.contentBytes} 字节，不能截断后作为完整证据。`);
       if (Buffer.byteLength(content + lines[i]) > REVIEW_LIMITS.contentBytes) break;
       content += lines[i++];
     }

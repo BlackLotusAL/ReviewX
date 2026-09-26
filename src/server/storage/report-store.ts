@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath, writeFile, rename, rm } from "node:fs/promises";
+import { mkdir, readFile, realpath, lstat, writeFile, rename, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { MergeRequestSnapshot, ReviewerResult, ReviewAttempt } from "@/src/shared/types";
@@ -59,6 +59,10 @@ export class ReportStore {
     if (!/^[a-zA-Z0-9_-]+$/u.test(attempt.id)) throw new Error("Invalid attempt ID");
     const staging = resolve(this.paths.reports, `.pending-${attempt.id}-${randomUUID()}`);
     const target = resolve(directory, "report.md");
+    const fromRoot = relative(this.paths.root, target);
+    if (!fromRoot || isAbsolute(fromRoot) || fromRoot === ".." || fromRoot.startsWith(`..${sep}`)) throw new Error("Report escaped data root.");
+    await assertContained(this.paths.root, this.paths.reports);
+    const relativeTarget = fromRoot.split(sep).join("/");
     const lines = [
       "# ReviewX Report",
       "",
@@ -69,7 +73,7 @@ export class ReportStore {
       `- Source: ${inlineCode(details.sourceBranch)} (${inlineCode(prepared.sourceSha)})`,
       `- Target: ${inlineCode(details.targetBranch)} (${inlineCode(prepared.targetSha)})`,
       `- Base: ${inlineCode(prepared.baseSha)}`,
-      `- Result: **${result.findings.length === 0 ? "PASS" : "FINDINGS"}**`,
+      `- Result: **${result.submission.completion === "incomplete" ? "PARTIAL" : result.findings.length === 0 ? "PASS" : "FINDINGS"}**`,
       "",
     ];
     const limitations = result.execution?.progress.limitations ?? [];
@@ -85,17 +89,33 @@ export class ReportStore {
         lines.push(`## ${index + 1}. ${finding.severity}`, "", finding.body, "");
       });
     }
-    try {
-      await mkdir(staging, { recursive: false });
-      await writeFile(resolve(staging, "report.md"), `${lines.join("\n")}\n`, { encoding: "utf8", flag: "wx" });
-      if (result.submission && result.execution) {
-        await writeFile(resolve(staging, "submission.v1.json"), JSON.stringify(result.submission, null, 2), { flag: "wx" });
-        await writeFile(resolve(staging, "execution.v1.json"), JSON.stringify(result.execution, null, 2), { flag: "wx" });
+    const files: Record<string, string> = {
+      "report.md": `${lines.join("\n")}\n`,
+      "submission.v1.json": JSON.stringify(result.submission, null, 2),
+      "execution.v1.json": JSON.stringify(result.execution, null, 2),
+    };
+    const existingMatches = async () => {
+      const entry = await lstat(directory).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+      if (!entry) return false;
+      if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("Invalid existing report directory");
+      for (const [file, content] of Object.entries(files)) {
+        const filePath = resolve(directory, file);
+        const fileEntry = await lstat(filePath);
+        if (!fileEntry.isFile() || fileEntry.isSymbolicLink()) throw new Error("Invalid existing report file");
+        if (await readFile(await assertContained(this.paths.root, filePath), "utf8") !== content) throw new Error("Existing immutable report differs from this result");
       }
-      await rename(staging, directory);
-      const fromRoot = relative(this.paths.root, target);
-      if (!fromRoot || isAbsolute(fromRoot) || fromRoot === ".." || fromRoot.startsWith(`..${sep}`)) throw new Error("Report escaped data root.");
-      return fromRoot.split(sep).join("/");
+      return true;
+    };
+    try {
+      if (await existingMatches()) return relativeTarget;
+      await mkdir(staging, { recursive: false });
+      for (const [file, content] of Object.entries(files)) await writeFile(resolve(staging, file), content, { encoding: "utf8", flag: "wx" });
+      try { await rename(staging, directory); }
+      catch (error) {
+        if (!(await existingMatches())) throw error;
+        await rm(staging, { recursive: true, force: true });
+      }
+      return relativeTarget;
     } catch (error) {
       await rm(staging, { recursive: true, force: true }).catch(() => undefined);
       throw new AppError({

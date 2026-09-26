@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { digest, safeRepositoryPath, textPages } from "@/src/server/review/materials";
+import { digest, reviewError, safeRepositoryPath, textPages } from "@/src/server/review/materials";
 import { ResultReceiver } from "@/src/server/review/result-receiver";
 import type { FixedContext, NativeMessage } from "@/src/server/review/types";
 import type { ReviewSubmission } from "@/src/shared/review-contract";
@@ -19,7 +19,7 @@ function fixture(unsupported = false) {
   let id = 0;
   async function call(tool: string, input: unknown, callID = String(++id)) {
     const output = await receiver.call(tool, input, { sessionID: "session", messageID: "message", callID });
-    messages[0].parts.push({ type: "tool", tool, callID, sessionID: "session", messageID: "message", state: { status: "completed", input, output } });
+    messages[0].parts.push({ type: "tool", tool, callID, sessionID: "session", messageID: "message", state: { status: "completed", input: structuredClone(input), output } });
     return output;
   }
   async function prepare() {
@@ -42,10 +42,10 @@ describe("production formal result boundary", () => {
     expect(f.accept().submission).toEqual(f.submission);
   });
   test("empty findings require complete material", async () => {
-    const f = fixture(); f.submission.findings = []; await expect(f.call("reviewx_submit", f.submission)).rejects.toThrow();
+    const f = fixture(); f.submission.findings = []; expect(JSON.parse(await f.call("reviewx_submit", f.submission)).status).toBe("REJECTED");
     const g = fixture(); await g.prepare(); g.submission.findings = []; await g.call("reviewx_submit", g.submission); expect(g.accept().submission.findings).toEqual([]);
   });
-  test.each(["unknown change", "wrong path", "wrong revision", "unread line", "empty body", "extra field", "incomplete"])("rejects entire second finding: %s", async (kind) => {
+  test.each(["unknown change", "wrong path", "wrong revision", "unread line", "empty body", "extra field"])("drops invalid second finding: %s", async (kind) => {
     const f = fixture(); await f.prepare(); const second = f.submission.findings[1];
     if (kind === "unknown change") second.changeIds = ["unknown"];
     if (kind === "wrong path") second.evidence[0].path = "a";
@@ -53,8 +53,7 @@ describe("production formal result boundary", () => {
     if (kind === "unread line") second.evidence[0].endLine = 401;
     if (kind === "empty body") second.body = " ";
     if (kind === "extra field") Object.assign(second, { extra: true });
-    if (kind === "incomplete") f.submission.completion = "incomplete";
-    await expect(f.call("reviewx_submit", f.submission)).rejects.toThrow(); expect(() => f.accept()).toThrow();
+    await f.call("reviewx_submit", f.submission); expect(f.accept().submission).toMatchObject({ completion: "incomplete", findings: [f.submission.findings[0]] });
   });
   test.each(["error", "cancel", "disconnect", "busy", "unknown finish", "missing receipt", "wrong session", "tool output changed"])("submission is insufficient after %s", async (kind) => {
     const f = fixture(); await f.prepare(); await f.call("reviewx_submit", f.submission); f.receiver.closed = true;
@@ -69,10 +68,10 @@ describe("production formal result boundary", () => {
     const f = fixture(); await f.prepare(); expect(() => f.accept()).toThrow();
     await expect(f.receiver.call("reviewx_submit", f.submission, { sessionID: "other", messageID: "m", callID: "c" })).rejects.toThrow();
   });
-  test("duplicate event deduplicates; distinct submits conflict", async () => {
+  test("duplicate events and identical new submits are idempotent", async () => {
     const f = fixture(); await f.prepare(); await f.call("reviewx_submit", f.submission, "submit"); const count = f.receiver.receipts.length;
     await f.call("reviewx_submit", f.submission, "submit"); expect(f.receiver.receipts).toHaveLength(count); expect(f.accept().submission).toEqual(f.submission);
-    const g = fixture(); await g.prepare(); await g.call("reviewx_submit", g.submission); await expect(g.call("reviewx_submit", g.submission)).rejects.toThrow();
+    const g = fixture(); await g.prepare(); await g.call("reviewx_submit", g.submission); expect(JSON.parse(await g.call("reviewx_submit", g.submission)).duplicate).toBe(true);
   });
   test("no shell tool and no model regex", async () => {
     const f = fixture(); await expect(f.call("bash", { command: "dir" })).rejects.toThrow();
@@ -89,7 +88,7 @@ describe("production formal result boundary", () => {
     if (kind === "body") f.submission.findings[0].body = "x".repeat(65537);
     if (kind === "count") f.submission.findings = Array.from({ length: 101 }, () => f.submission.findings[0]);
     if (kind === "submission") f.submission.findings = Array.from({ length: 20 }, () => ({ ...f.submission.findings[0], body: "x".repeat(60000) }));
-    await expect(f.call("reviewx_submit", f.submission)).rejects.toThrow();
+    expect(JSON.parse(await f.call("reviewx_submit", f.submission)).status).toBe(kind === "body" ? "SUBMITTED" : "REJECTED");
   });
   test("frozen rule hash is checked before any delivery", async () => {
     const f = fixture(); f.receiver.rules.resources[0].body = "changed";
@@ -97,7 +96,7 @@ describe("production formal result boundary", () => {
   });
   test.each(["D", "R"])("required baseline pages for %s cannot be omitted", async type => {
     const f = fixture(); f.receiver.context.scope.changes[0].type = type;
-    await f.prepare(); await expect(f.call("reviewx_submit", f.submission)).rejects.toMatchObject({ code: "REVIEW_INCOMPLETE" });
+    await f.prepare(); expect(JSON.parse(await f.call("reviewx_submit", f.submission)).status).toBe("REJECTED");
   });
 });
 
@@ -118,7 +117,7 @@ test.each(["changeId", "source", "base"])("unsupported finding references are re
   const f = fixture(true); await f.prepare();
   if (kind === "changeId") f.submission.findings[0].changeIds.push("binary");
   else f.submission.findings[0].evidence.push({ revision: kind as "source" | "base", path: kind === "source" ? "new.bin" : "old.bin", startLine: 1, endLine: 1 });
-  await expect(f.call("reviewx_submit", f.submission)).rejects.toMatchObject({ code: "INVALID_REVIEW_SCOPE" });
+  await f.call("reviewx_submit", f.submission); expect(f.accept().submission).toMatchObject({ completion: "incomplete", findings: [f.submission.findings[1]] });
 });
 
 test.each(["terminal", "message", "completion"])("terminal diagnostics identify %s", async branch => {
@@ -127,5 +126,46 @@ test.each(["terminal", "message", "completion"])("terminal diagnostics identify 
   if (branch === "message") f.messages[0].info.sessionID = "foreign";
   if (branch === "completion") f.messages[0].info.finish = "length";
   try { f.receiver.accept(f.messages, { idle: true, error: false, disconnected: false }); throw new Error("Expected rejection"); }
-  catch (error) { expect(error).toMatchObject({ code: "OPENCODE_FAILED", technical: expect.stringContaining('"branch":"' + branch + '"') }); }
+  catch (error) { expect(error).toMatchObject({ code: "OPENCODE_FAILED", technical: expect.stringContaining("branch: " + branch) }); }
+});
+
+
+test("incomplete with no findings and missing materials is partial, not pass", async () => {
+  const f = fixture(); f.submission = { ...f.submission, completion: "incomplete", blockers: ["Needs context"], findings: [] };
+  await f.call("reviewx_submit", f.submission);
+  expect(f.accept().submission.completion).toBe("incomplete");
+  expect(f.receiver.snapshot().limitations.join(" ")).toContain("缺失必需材料");
+});
+test("rejected replacement preserves valid candidate; valid replacement does not merge findings", async () => {
+  const f = fixture(); await f.prepare(); await f.call("reviewx_submit", f.submission);
+  expect(JSON.parse(await f.call("reviewx_submit", { broken: true })).status).toBe("REJECTED");
+  expect(f.receiver.candidate).toEqual(f.submission);
+  const next = { ...f.submission, findings: [f.submission.findings[1]] };
+  await f.call("reviewx_submit", next);
+  expect(f.accept().submission).toEqual(next);
+});
+test("reading missing evidence then resubmitting identical content restores completeness", async () => {
+  const f = fixture(); await f.prepare();
+  const next = { ...f.submission, findings: [{ ...f.submission.findings[0], evidence: [{ revision: "source" as const, path: "a", startLine: 401, endLine: 401 }] }] };
+  await f.call("reviewx_submit", next);
+  expect(f.receiver.candidate).toMatchObject({ completion: "incomplete", findings: [] });
+  await f.call("reviewx_read", { revision: "source", path: "a", page: 2 });
+  expect(JSON.parse(await f.call("reviewx_submit", next)).duplicate).toBe(false);
+  expect(f.accept().submission).toEqual(next);
+  expect(f.receiver.snapshot().limitations).toEqual([]);
+  expect(f.receiver.diagnostics.some(d => d.code === "FINDING_DROPPED")).toBe(true);
+});
+test("known unreadable material and invalid parameters recover; unknown internal errors remain fatal", async () => {
+  const f = fixture(); await f.prepare();
+  f.receiver.context.read = async () => { throw reviewError("REVIEW_INCOMPLETE", "Cannot paginate"); };
+  expect(JSON.parse(await f.call("reviewx_read", { revision: "source", path: "a", page: 0 })).status).toBe("ERROR");
+  expect(JSON.parse(await f.call("reviewx_index", { page: 99 })).status).toBe("ERROR");
+  expect(f.receiver.fatal).toBe(false);
+  f.receiver.context.read = async () => { throw new Error("Unexpected disk failure"); };
+  await expect(f.call("reviewx_read", { revision: "source", path: "a", page: 0 })).rejects.toThrow();
+  expect(f.receiver.fatal).toBe(true);
+});
+test("same call ID with altered parameters is fatal", async () => {
+  const f = fixture(); await f.call("reviewx_index", { page: 0 }, "same");
+  await expect(f.call("reviewx_index", { page: 1 }, "same")).rejects.toMatchObject({ code: "REVIEW_CONFLICT" });
 });

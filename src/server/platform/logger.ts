@@ -73,7 +73,7 @@ export class Logger {
       `    Cause: ${this.sanitize(diagnostic.cause)}`,
       `    Impact: ${this.sanitize(diagnostic.impact)}`,
       `    Next step: ${this.sanitize(diagnostic.nextStep)}`,
-      `    Technical details: ${this.sanitize(diagnostic.technicalDetails)}`,
+      "    Technical details:", ...diagnostic.technicalDetails.split(/\r?\n/gu).map(line => `      ${this.sanitize(line)}`),
     ];
     if (diagnostic.stderr) {
       lines.push("    Stderr:", ...this.redactor.redact(diagnostic.stderr).split(/\r?\n/gu).map((line) => `      ${escapeSingleLine(line)}`));

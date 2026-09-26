@@ -20,3 +20,6 @@ export type SubmissionContractMatchesSchema = Assert<
     ? ReviewSubmission extends z.infer<typeof submissionSchema> ? true : false
     : false
 >;
+
+export const findingSchema = submissionSchema.shape.findings.element;
+export const submissionEnvelopeSchema = submissionSchema.extend({ findings: z.array(z.unknown()).max(REVIEW_LIMITS.findings) });

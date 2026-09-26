@@ -116,7 +116,7 @@ MR `state` 去除首尾空白、忽略大小写后接受 `open` 或 `opened`，�
 | not_attempted | 兼容旧多条批次中未执行的后续项，新单条发布不产生 |
 | archived | 被新 attempt 取代的未处理意见 |
 
-发送失败或结果未知只终结目标 Finding，不阻断其他 pending 项。发布结束或用户决策后统一归并：有 pending 为待处理；无 pending 且全部 published/dismissed 为已完成；无 pending 且有 failed/unknown/not_attempted 为发布失败。空 Findings 的成功检视为 PASS，直接已完成。
+发送失败或结果未知只终结目标 Finding，不阻断其他 pending 项。发布结束或用户决策后统一归并：有 pending 为待处理；无 pending 且全部 published/dismissed 为已完成；无 pending 且有 failed/unknown/not_attempted 为发布失败。完整检视的空 Findings 为 PASS；incomplete 或最终丢弃无效 Finding 时为 partial，零条有效 Finding 也不得显示 PASS。
 
 失败、未知和未执行项不提供网页重发，用户应到 CodeHub 核对，再处理其他意见或重新检视。
 
@@ -154,7 +154,7 @@ MR `state` 去除首尾空白、忽略大小写后接受 `open` 或 `opened`，�
 | `reviewx_read` | 分页读取 source=S 或 base=B 的文件与行范围 |
 | `reviewx_search` | 在固定树内进行字面搜索，定位未修改调用方 |
 | `reviewx_rules` | 分页读取冻结规则 |
-| `reviewx_submit` | 提交唯一正式业务候选 |
+| `reviewx_submit` | 提交或替换正式业务候选 |
 
 页码和搜索 offset 从 0 开始。必需材料包括所有索引、diff、规则页及删除/重命名旧路径的 base 文件页。每条 Finding 至少关联一个有效 changeId，每个关联变更须有对应 source 新路径或 base 旧路径证据；还可引用未修改调用方。
 
@@ -172,9 +172,9 @@ MR `state` 去除首尾空白、忽略大小写后接受 `open` 或 `opened`，�
 
 ### 4.4 接受条件与限制
 
-专用工具提交只产生 `SUBMITTED` 候选。只有完整材料与规则齐备、合同和证据有效、唯一候选归属正确、所有工具交付可核对、会话正常完成、进程退出与桥接关闭、无取消或错误时，才可最终 `ACCEPTED`。HTTP 200、退出码 0、idle 或单个工具完成均不能单独代表成功。
+专用工具提交只产生 `SUBMITTED` 候选。只有候选合同与有效 Finding 证据可核实、候选归属正确、所有工具交付可核对、会话正常完成、进程退出与桥接关闭、无取消或错误时，才可最终 `ACCEPTED`。HTTP 200、退出码 0、idle 或单个工具完成均不能单独代表成功。
 
-同一 message/call 的相同调用去重；重复标识参数变化或不同调用再次提交判为冲突。非法条目拒绝整个对象，不裁剪、丢弃坏条目、读取聊天 JSON 或另开格式修复会话。请求接收状态不确定时不盲目重发。
+同一 message/call 的相同调用去重，参数变化仍致命冲突。新调用按当前已读证据重新校验：外层结构或 complete 声明不合法返回 REJECTED，保留最近有效候选；单条 Finding 逐项校验，丢弃无效项并反馈原因。最新有效提交整体替换候选，不合并历史结果；重新提交修正成功可恢复完整结果。所有可恢复反馈都记录收据，仍须核对原生交付；不读取聊天 JSON，不另开修复会话，也不盲目重发请求。
 
 | 限制 | 上限 |
 | --- | --- |
@@ -207,7 +207,7 @@ MR `state` 去除首尾空白、忽略大小写后接受 `open` 或 `opened`，�
 }
 ```
 
-completion 接受 complete/incomplete，但成功必须 complete 且 blockers 为空；合法空 findings 才是 PASS。severity 为 fatal/major/minor/suggestion。额外字段、非法枚举、范围、数量或大小均拒绝；body 必须非空白且不含 NUL，保留解码后的全部字符，不 trim 或改写。
+completion 接受 complete/incomplete；complete 必须材料齐备且 blockers 为空。incomplete 或存在被丢弃 Finding 的最终提交作为部分结果接受，可逐条发布有效 Finding；只有完整检视的合法空 findings 才是 PASS。severity 为 fatal/major/minor/suggestion。外层额外字段、数量或提交大小超限拒绝该次提交；Finding 内非法结构、枚举或证据逐项丢弃；body 必须非空白且不含 NUL，保留解码后的全部字符，不 trim 或改写。
 
 ### 5.2 评论规范与正文保真
 
@@ -256,13 +256,13 @@ completion 接受 complete/incomplete，但成功必须 complete 且 blockers �
 数据位于 `%LOCALAPPDATA%/ReviewX`，使用文件持久化及短时锁、原子替换，不引入数据库。
 
 - `state.json` v1 保存项目顺序、MR 快照、队列、全部 attempt、Finding 决策、发布批次和诊断。损坏或未知版本不得初始化为空。
-- `reports/<attemptId>/report.md` 保存 attempt/Project/MR 标识、版本与分支、固定 SHA、PASS/FINDINGS 和按序完整正文。
+- `reports/<attemptId>/report.md` 保存 attempt/Project/MR 标识、版本与分支、固定 SHA、PASS/FINDINGS/PARTIAL、简要限制和按序完整正文。
 - 同目录的 `submission.v1.json` 保存正式合同；`execution.v1.json` 保存范围、规则快照、实际模型、会话、收据哈希、权限摘要及终态。独立文件不要求迁移 state.json。
 - `logs/` 保存每次服务日志；`workspaces/` 保存临时 Git 对象和可信任务目录，执行结束清理。
 
 每次成功 attempt 有独立不可变报告，即使 MR 版本相同也不覆盖。文件写入后必须成功登记状态引用；登记失败是不可发布的孤立产物，不自动恢复为成功。报告与日志读取校验受控引用、规范路径和真实路径，禁止任意文件访问。
 
-兼容旧单/多条发布记录，保留 ordinal、commentId、决策和正文；缺少独立执行文件的历史 attempt 仍可读取，显示执行信息不可用。回滚不得用旧状态备份覆盖新增发布记录。兼容范围不意味着所有缺字段的 v1 文件均可启动，项目地址要求见 3.1。
+兼容旧单/多条发布记录，保留 ordinal、commentId、决策和正文；缺少独立执行文件的历史 attempt 仍可读取，显示执行信息不可用。新状态 result 支持 partial，旧程序不能直接读取该结果；回滚不得用旧状态备份覆盖新增发布记录。兼容范围不意味着所有缺字段的 v1 文件均可启动，项目地址要求见 3.1。
 
 ## 6. 安全、日志与故障
 
@@ -274,9 +274,9 @@ HTTP 只监听 loopback，不启用 CORS；状态变更校验精确 Host、同�
 
 会话等待 idle/error/disconnected，由 60 分钟总预算兜底。serve 使用 stdout/stderr 合计 16 KiB 的滚动缓冲，不因累计日志量终止；故障诊断包含最近 16 KiB 的 stdout/stderr 及进程退出状态。
 
-OpenCode 使用 HTTP + Node fetch 接入，不指定 model/provider/variant，不使用 SDK 或聊天结果回退。保留原生认证、配置路径及必要企业网络环境，不重定向 HOME、不复制认证、不改写用户持久配置。
+OpenCode 使用 HTTP + Node http.request 接入，不指定 model/provider/variant，不使用 SDK 或聊天结果回退。保留原生认证、配置路径及必要企业网络环境，不重定向 HOME、不复制认证、不改写用户持久配置。
 
-每个 attempt 使用可信任务目录、随机 loopback 凭据和绑定会话的工具桥接。除六个 ReviewX 工具外均禁止，包括 shell、编辑、任意网络与 CodeHub 写入。仓库指令、Skill、插件和配置仅是待检视数据，不自动执行；读取不触发仓库 LSP、formatter 或脚本。允许用户级 AGENTS.md 存在，仍拒绝运行目录及祖先目录的 AGENTS.md；检测不兼容的额外配置、全局工具、启用的 MCP 或显式 instructions 时，在交付材料前失败。
+每个 attempt 使用可信任务目录、随机 loopback 凭据和绑定会话的工具桥接。除六个 ReviewX 工具外均禁止，包括 shell、编辑、任意网络与 CodeHub 写入。仓库指令、Skill、插件和配置仅是待检视数据，不自动执行；读取不触发仓库 LSP、formatter 或脚本。允许用户级 AGENTS.md 存在，仍拒绝运行目录及祖先目录的 AGENTS.md；检测不兼容的额外配置、全局工具、启用的 MCP 或用户级全局 AGENTS.md 以外的显式 instructions 时，在交付材料前失败。
 
 这些是应用层约束，不是 OS 沙箱，也不承诺阻断所有扩展初始化。OpenCode 原生会话可能留存交付材料，ReviewX 不删除其整个数据目录。默认日志和执行摘要不保存完整源码、工具正文、推理、用户配置或认证；正式 Finding 正文和冻结规则按结果契约保存。交付前执行敏感输入检查，诊断中的凭据必须脱敏。
 
@@ -315,3 +315,11 @@ OpenCode 使用 HTTP + Node fetch 接入，不指定 model/provider/variant，�
 验收使用合成仓库，不向真实 CodeHub 发布测试评论。协议、状态和竞态采用确定性测试；桌面浏览器保护业务、键盘、焦点、滚动与导航，不以手机或精确视觉矩阵为门槛。真实模型与 Windows 环境验证分别记录，不能外推所有版本、模型或缺陷召回率。
 
 每轮改动执行完整质量检查及源码/安装包真实模型验收，命令与产物入口统一见 [README](../README.md#源码开发)。记录环境、命令、结果、失败或未执行原因、证据位置及正文复核结论；历史通过不能替代当前验证，任一步未通过不得宣称整体验收通过。
+
+### 长时检视与恢复边界补充
+
+OpenCode JSON 与 SSE 由统一原生 HTTP 传输管理，响应有界、信号取消、监听器释放；终态采用事件等待，不使用五分钟响应头超时或固定短轮询窗口。进程输出保留 stdout/stderr 合计 16 KiB 尾部，不因累计日志量退出。
+
+参数、页码及已知不可分页材料返回可恢复反馈；越界、敏感内容、禁止工具、归属错误、篡改、全局预算和未知内部错误仍终止。只有正常会话终态可接受部分结果。
+
+result=partial 与发布工作流状态独立，列表、队列、历史详情、播报和报告均显示部分完成；发布或跳过全部 Finding 不改变该结论。当前结果限制写入 progress.limitations，过程事件写入可选 diagnostics。历史记录无新增字段时按原行为读取。报告通过 staging 原子发布，重复保存仅在三份结果文件完整且内容一致时幂等成功。

@@ -52,6 +52,7 @@ export function projectMrRow(input: ViewInput, mr: MergeRequestSnapshot): MrRowV
   return {
     ...mr,
     status: latest.status,
+    result: latest.result,
     phase: latest.phase,
     progress: input.progress.get(latest.id),
     queuePosition: queueIndex >= 0 ? queueIndex + 1 : undefined,
@@ -87,7 +88,7 @@ export function selectMrDetail(state: PersistentState, projectId: string, mrIid:
 
 export function projectAttempt(attempt: ReviewAttempt, progress: ReviewProgress | undefined, execution: AttemptView["execution"]): AttemptView {
   const { reportPath, ...view } = structuredClone(attempt);
-  return { ...view, progress, execution, reportUrl: reportPath ? `/api/reports/${encodeURIComponent(attempt.id)}` : undefined };
+  return { ...view, progress: progress ?? execution?.progress, execution, reportUrl: reportPath ? `/api/reports/${encodeURIComponent(attempt.id)}` : undefined };
 }
 
 export function projectMrDetail(state: PersistentState, source: ReturnType<typeof selectMrDetail>, attempts: AttemptView[]): MrDetailView {

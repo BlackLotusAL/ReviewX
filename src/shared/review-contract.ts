@@ -7,9 +7,10 @@ export type FrozenRules = { profileHash: string; resources: RuleResource[] };
 export type ReviewProgress = { toolCount: number; deliveredMaterials: number; requiredMaterials: number; limitations: string[] };
 export type Receipt = { sessionID: string; messageID: string; callID: string; tool: string; inputHash: string; outputHash: string;
   material?: string; evidence?: { revision: Revision; sha: string; path: string; startLine: number; endLine: number } };
+export type ReviewDiagnostic = { code: string; message: string; tool?: string; callID?: string; findingIndex?: number };
 export type ExecutionRecord = { version: 1; attemptId: string; sessionID: string; protocol: string; toolVersion: string; opencodeVersion: string;
   actualModel: { providerID: string; modelID: string }; scope: ReviewScope; rules: FrozenRules; submittedPromptHash: string;
-  receipts: Receipt[]; progress: ReviewProgress; durationMs: number; status: "ACCEPTED";
+  diagnostics?: ReviewDiagnostic[]; receipts: Receipt[]; progress: ReviewProgress; durationMs: number; status: "ACCEPTED";
   terminal: { finalMessageID: string; finish: "stop"; completedAt: number; idle: true; processExited: true; bridgeClosed: true };
   allowedTools: string[]; permissionHash: string };
 

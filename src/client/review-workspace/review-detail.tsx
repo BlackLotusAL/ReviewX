@@ -3,7 +3,7 @@
 import type { WorkspaceController } from "./use-workspace-controller";
 import { Button, DetailDialog, Diagnostic, Icon, Skeleton, StatusBadge } from "@/app/components/ui";
 import { Markdown } from "@/app/components/markdown";
-import { MrWebLink, formatDate, statusLabels, phaseLabels, findingLabels, severityLabels, statusTone, isBusy } from "./presentation";
+import { MrWebLink, formatDate, reviewStatusLabel, phaseLabels, findingLabels, severityLabels, statusTone, isBusy } from "./presentation";
 
 export function ReviewDetail({ selected, beginClose, dismissDrawer, announcement, detail, dataSource, state, pollError, detailError, loadDetail, activeAttempt, setOpenAttemptId, latestAttempt, pending, disabled, actionError, decideFinding, loadReport, reportLoading, reportErrors, reports }: Pick<WorkspaceController, "selected" | "beginClose" | "dismissDrawer" | "announcement" | "detail" | "dataSource" | "state" | "pollError" | "detailError" | "loadDetail" | "activeAttempt" | "setOpenAttemptId" | "latestAttempt" | "pending" | "disabled" | "actionError" | "decideFinding" | "loadReport" | "reportLoading" | "reportErrors" | "reports">) {
   return <>    {selected && <DetailDialog returnFocus={selected.trigger} onBeginClose={beginClose} onDismiss={dismissDrawer}>
@@ -25,11 +25,11 @@ export function ReviewDetail({ selected, beginClose, dismissDrawer, announcement
               const next = detail.attempts[nextIndex];
               setOpenAttemptId(next.id);
               document.getElementById(`attempt-tab-${next.id}`)?.focus({ preventScroll: true });
-            }}><span>{index === 0 ? "最新检视" : `历史 ${detail.attempts.length - index}`}</span><strong>{statusLabels[attempt.status]}</strong><time className="mono">{formatDate(attempt.createdAt)}</time></button>)}
+            }}><span>{index === 0 ? "最新检视" : `历史 ${detail.attempts.length - index}`}</span><strong>{reviewStatusLabel(attempt.status, attempt.result)}</strong><time className="mono">{formatDate(attempt.createdAt)}</time></button>)}
           </div>
           {activeAttempt && <section className="attempt-detail" id="attempt-panel" role="tabpanel" aria-labelledby={`attempt-tab-${activeAttempt.id}`}>
             <div className="attempt-overview">
-              <div><span className="field-label">当前状态</span><StatusBadge value={activeAttempt.status} tone={statusTone(activeAttempt.status)} busy={isBusy(activeAttempt.status)}>{statusLabels[activeAttempt.status]}</StatusBadge></div>
+              <div><span className="field-label">当前状态</span><StatusBadge value={activeAttempt.status} tone={statusTone(activeAttempt.status, activeAttempt.result)} busy={isBusy(activeAttempt.status)}>{reviewStatusLabel(activeAttempt.status, activeAttempt.result)}</StatusBadge></div>
               <div className="attempt-phase"><span className="field-label">{isBusy(activeAttempt.status) ? "执行阶段" : "最后阶段"}</span><strong key={activeAttempt.phase}>{activeAttempt.phase ? phaseLabels[activeAttempt.phase] : "—"}</strong></div>
               <div><span className="field-label">MR 版本</span><time className="mono">{formatDate(activeAttempt.updatedAt ?? activeAttempt.requestedUpdatedAt)}</time></div>
               <div><span className="field-label">Attempt</span><code>{activeAttempt.id}</code></div>
@@ -40,6 +40,7 @@ export function ReviewDetail({ selected, beginClose, dismissDrawer, announcement
 
             {activeAttempt.id !== latestAttempt?.id && <p className="history-note"><Icon name="clock" />只读</p>}
             {activeAttempt.error && <Diagnostic error={activeAttempt.error} />}
+            {activeAttempt.result === "partial" && <div role="status"><h3>部分完成</h3><p>仅保留已核实的问题；未完整覆盖检视范围，不能视为通过。</p></div>}
             {activeAttempt.result === "pass" && <div className="review-pass"><Icon name="check" /><div><h3>检视完成</h3><p>未发现问题。</p></div></div>}
             {activeAttempt.findings.length > 0 && <section className="findings-section"><h3 className="section-heading">检视问题</h3>
               {activeAttempt.findings.map((finding) => {

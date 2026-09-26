@@ -5,7 +5,7 @@ import type { ReviewPreviewData } from "@/src/client/review-workspace/review-dat
 import { Button, Diagnostic, Icon, Skeleton, StatusBadge } from "@/app/components/ui";
 import { reviewQueue, projectShortName, mrAnchor, navigateTo, nextPendingMr } from "@/src/client/review-workspace/workspace-navigation";
 import { QueuePopover } from "@/app/components/queue-popover";
-import { statusLabels, phaseLabels, statusTone, isBusy } from "./presentation";
+import { reviewStatusLabel, phaseLabels, statusTone, isBusy } from "./presentation";
 import { useWorkspaceController } from "./use-workspace-controller";
 import { useWorkspaceLayout } from "./use-workspace-layout";
 import { ProjectNavigation } from "./project-navigation";
@@ -31,7 +31,7 @@ export default function ReviewWorkspace({ previewData }: { previewData?: ReviewP
         {queue.length ? <ul className="queue-list">{queue.map(({ project, mr }) => <li key={`${project.id}/${mr.iid}`}>
           <a className="queue-entry" href={`#${mrAnchor(project.id, mr.iid)}`} onClick={event => { event.preventDefault(); closeQueue(); navigateTo(mrAnchor(project.id, mr.iid)); }}>
             <span className="queue-copy"><span className="queue-project" title={project.name}>{projectShortName(project.name)} <span className="mono">!{mr.iid}</span></span><strong title={mr.title}>{mr.title}</strong></span>
-            <span className="queue-state"><StatusBadge value={mr.status} tone={statusTone(mr.status)} busy={isBusy(mr.status)}>{statusLabels[mr.status]}</StatusBadge><span>{mr.status === "queued" ? `队列第 ${mr.queuePosition ?? "—"} 位` : mr.phase ? phaseLabels[mr.phase] : ""}</span></span>
+            <span className="queue-state"><StatusBadge value={mr.status} tone={statusTone(mr.status, mr.result)} busy={isBusy(mr.status)}>{reviewStatusLabel(mr.status, mr.result)}</StatusBadge><span>{mr.status === "queued" ? `队列第 ${mr.queuePosition ?? "—"} 位` : mr.phase ? phaseLabels[mr.phase] : ""}</span></span>
           </a>
         </li>)}</ul> : <p className="queue-empty">当前没有排队、执行中或待处理的检视</p>}
       </section>
