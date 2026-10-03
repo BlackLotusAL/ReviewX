@@ -25,9 +25,70 @@ ReviewX 管理项目、MR 快照、FIFO、取消、报告和人工发送。OpenC
 ## 输出合同
 
 共享 ReviewDocument 与 StructuredFinding 是唯一内容合同。顶层 schemaVersion=1、summary、completion、limitations、findings。
-Finding 包括 severity、title、tags、description、locations、impact、solutions、preventions。位置包含 path/revision/startLine/endLine 和可选 snippet；impact 包括 direct/scope/trigger；方案包含 description 和可选 example。片段包含 language/code。
-severity 为 fatal/major/minor/suggestion。位置、方案、预防措施至少一项；tags 可空。文本为纯文本，代码片段可选。
+Finding 包括 severity、title、tags、description、locations、impact、solutions、preventions。位置包含 path/revision/startLine/endLine、可选 snippet 和 annotations（line/text）；impact 包括 direct/scope/trigger；方案包含 description、kind、steps 和备用方案的 applicability。步骤包含 description、可选 path/example；提供代码时 path 必填。片段包含 language/code。既有字段与 schemaVersion=1 保留，方案级 example 仅用于历史兼容；新增字段在历史合同中可选，在新生成合同中按下述规则校验。
+severity 为 fatal/major/minor/suggestion。位置、方案、预防措施至少一项；tags 可空。文本为纯文本。
+
+新生成 Finding 的 description 是单段、1–2 句、最多 120 字符的简述，仅说明成因与核心后果；详细证据、调用路径、范围和触发条件归入 locations/impact。超长或多段简述进入现有一次修复与逐项隔离流程，不直接截断。新输出标签只能选用以下中文分类并去重：功能回归、逻辑错误、边界条件、异常处理、并发安全、资源管理、数据一致性、输入校验、安全风险、性能问题、规则违反、接口契约、单位换算、兼容性；空标签展示“无”。历史持久化合同继续接受长描述和自由标签，旧正文与报告不重新生成。
+
+路径纠正后、保存结果前，宿主按 source/base 固定版本及标注行号提取源码，覆盖模型片段。每处最多展示 40 行，省略说明放在围栏外；语言按扩展名选择，未知为 text。读取仅限固定版本工作区内的普通 UTF-8 文件，不跟随链接；文件最多 8 MiB、片段最多 64 Ki 字符。不可读、非文本、行号越界或过大的片段仅记录执行警告并保留文字位置，不单独导致 PARTIAL。
+
+每处新位置必须包含非空 annotations；line 是原始一基行号，必须在 startLine..min(endLine,startLine+39) 内，text 是单段、最多 120 字符的中文说明。更远的问题行另列位置。宿主将标注插入代码块内、对应问题行之前，保留源码缩进，标识为“检视注释·问题行 L行号”。C/C++/JS/TS 等使用 //，Python/Shell/YAML 等使用 #，SQL 使用 --；JSON 及其他没有明确单行注释映射的格式使用 text 围栏。标注行不占 40 行源码额度；snippet 始终保存未附加检视注释的真实源码，源码不可读时在 text 代码块内展示原始行号和标注，只记录警告。
+标注、简述和影响只陈述经过源码核实的事实，条件性后果明确写出条件；说明中的路径使用仓库相对路径。纯规则违反且仅有常量定义、没有调用方证据时，明确实际运行时影响无法确认，不推断请求、连接或线程行为；规则违反仍可报告，调用方不存在本身不导致 PARTIAL。
+每条意见恰好一个 kind=recommended 的完整策略并放在 solutions 首位，必要的跨文件、跨语言修改统一放在该方案的非空 steps 中。仅确有能够替代推荐策略的方案时增加 kind=alternative，applicability 必须说明适用条件和取舍。不得按原数组顺序猜测替代关系，也不强制备用方案。
+具体代码修改优先提供 solutions[].steps[].example 和目标仓库相对 path：使用仓库已有语言、函数及接口，每个文件给出最小完整的修复后源码片段，不输出统一 diff、伪代码、省略号或检视标注。纯文档问题或无法可靠提供代码时使用可执行的文字步骤。
 脚本固定生成中文 Markdown 标题、严重级别、标签、问题描述、问题位置、影响分析、解决方案、预防措施。普通文本转义，代码围栏长度适应片段；入库后正文冻结，展示与发送共用，不在发送时调用模型。
+
+### 6.3 MR 评论规范
+
+标题信号灯及展示等级与 severity 一致：fatal → 🔴 Fatal、major → 🟠 Major、minor → 🟡 Minor、suggestion → 🟢 Suggestion。脚本固定映射 JSON 字段到以下骨架，模型不编排 Markdown：
+
+````markdown
+### 🟠 Major: <问题标题>
+
+**问题描述**：
+
+- 严重级别：Major
+- 标签：`#功能回归` `#单位换算`
+- 简述：<1–2 句、最多 120 字符的成因与核心后果>
+
+**问题位置**：`path/to/file:startLine-endLine`（当前版本）
+
+带检视标注的源码：
+
+```python
+    # 【检视注释·问题行 L2】<该行的问题及后果>
+    return seconds
+```
+
+**影响分析**：
+
+- **直接后果**：<直接后果>
+- **影响范围**：<影响范围>
+- **触发条件**：<触发条件>
+
+**解决方案**：
+
+**推荐方案**：<完整修复策略>
+
+1. `path/to/file`：<该文件的修改步骤>
+
+   ```python
+   def delay(seconds):
+       return seconds * 1000
+   ```
+
+**备用方案**：<仅在确有替代策略时展示>
+
+适用条件与取舍：<该策略何时可以替代推荐方案及其代价>
+
+1. <该备用策略中的必要步骤>
+
+**预防措施**：
+
+- <与当前问题直接相关的预防措施>
+````
+
+多个位置按“路径＋修订版本”分点，同一文件同一修订的多个范围归入同一条目；source/base 分别标注“当前版本”/“基线版本”。每处代码块内标注紧邻对应源码行，所有标注使用原始行号。多个备用方案独立编号，每个方案内部步骤重新编号。修复代码不附加检视注释，无法可靠提供修复代码时保留文字步骤。严格生成合同与历史持久化合同分开，历史结构继续接受旧字段，历史正文与报告不重新生成。
 
 只对完整 JSON 或单个完整 JSON 代码块解析，不从聊天截取 JSON 碎片。结构错误最多在无工具的新会话中修复一次；已有有效意见不交给修复器改写。无效项隔离、原文保留并标 PARTIAL。complete 且零问题才为 PASS。复核未完成不能标 PASS。
 
@@ -70,3 +131,51 @@ severity 为 fatal/major/minor/suggestion。位置、方案、预防措施至少
 验收期间发现并修复了“说明性限制被宿主强制判为 partial”和“意见路径误带工作区前缀”问题，均有确定性回归测试。结构修复在真实输出中实际触发并成功；有效结果未因前置说明文本被整体丢弃。已人工核对源码与安装包结果的代码位置、缺陷依据、解决方案和固定章节。
 
 这些结果支持新流程可以正常工作、异常隔离和容错符合设计；尚未进行长期生产错误率对照或不同模型/版本兼容矩阵，不能据此承诺零异常或具体稳定性提升百分比。真实 CodeHub 评论发布未在此次合成验收中执行。
+
+## 评论输出调整验收（2026-10-04，Asia/Hong_Kong）
+
+环境：Windows 10.0.26300 x64、Node.js 24.14.1、OpenCode 1.18.30、deepseek/deepseek-flash。验收针对当前未提交工作区，输出工作流版本为 native-review/2 和 balanced-review/2，JSON schemaVersion 仍为 1。
+
+- build、lint（含依赖边界）、typecheck、test、test:coverage 通过。完整测试使用 `--maxWorkers=2 --testTimeout=20000`：156 通过、1 跳过（默认关闭的 300 秒 HTTP 延迟测试）；覆盖率运行的行覆盖率为 67.11%。首次并行构建与覆盖率时既有 Git 测试触发默认 5 秒超时及清理占用，降低并发、延长单项时限后完整复跑通过。
+- 浏览器端 30 项通过，包含固定模板的中文标签、简述和问题/修复代码块，以及原有发送、历史、折叠与 Markdown 安全交互。
+- 确定性测试覆盖 120 字边界、最多两句、单段、中文分类及去重、无效意见局部修复、有效意见保留、旧长描述/自由标签重启、原文保存与发送一致；源码覆盖 source/base、逐行提取、模型片段替换、40 行省略、越界、非文本及工作区内外链接拒绝。
+
+真实模型六组均 complete，通过自动检查并人工核对意见、固定源码及修复方案；每组证据目录为 `test-results/acceptance/<下表标识>`。两组换算回归均将三处修改合并成一个根因，修复例子同时覆盖 C++ 与 Python；规则用例只报告根目录违规，scoped 目录遵循更近规则；两组注释对照均零问题。四条意见简述分别为 45、73、57、45 字符，均为一句且标签全为固定中文分类，源码与标注行号一致。
+
+| 流程 | 场景 | 证据标识 |
+| --- | --- | --- |
+| native-review/2 | defects | 2026-10-03T16-36-03-000Z |
+| native-review/2 | rules-defects | 2026-10-03T16-37-20-268Z |
+| native-review/2 | clean | 2026-10-03T16-38-31-019Z |
+| balanced-review/2 | defects | 2026-10-03T16-39-26-328Z |
+| balanced-review/2 | rules-defects | 2026-10-03T16-40-20-674Z |
+| balanced-review/2 | clean | 2026-10-03T16-41-13-409Z |
+
+真实模型矩阵之后串行执行 test:package，通过构建、tarball、隔离安装、随机 loopback 端口、浏览器失败降级、字体与许可、单实例、重启及安装后引擎真实调用。安装后证据为 `test-results/acceptance/2026-10-03T16-44-20-597Z`，已人工核对简述、标签、位置源码和 C++/Python 修复例子。产物为 `artifacts/reviewx-1.0.0.tgz`，SHA-256 为 `4c7cbb55bcf0ae935ca4965d0b03be744d63ad2d17b9dfec3bbb568a8f723c95`。
+
+上述结果覆盖当前版本与模型的合成验收；真实 CodeHub 评论创建未执行，正文一致性由集成测试验证。
+
+## 代码块内标注与方案分组验收（2026-10-04，Asia/Hong_Kong）
+
+环境仍为 Windows 10.0.26300 x64、Node.js 24.14.1、OpenCode 1.18.30、deepseek/deepseek-flash；针对当前未提交工作区。新输出使用 native-review/3、balanced-review/3，JSON schemaVersion 保持 1，历史新增字段可选，旧正文与报告不改写。
+
+- build、lint（含依赖边界）、typecheck、完整回归与覆盖率通过；最终回归 177 通过、1 默认跳过（300 秒 HTTP 延迟测试），使用 `--maxWorkers=2 --testTimeout=20000`。覆盖率行指标 67.81%。
+- 浏览器 30 项通过，已查看截图核对代码块内注释与原始行号。测试同时确认多文件代码块正确嵌入列表、方案步骤代码可读、原始源码未修改，以及报告、详情、持久化和模拟发送共用冻结正文。截图位于 `test-results/e2e/reviewx-card-level-decisio-eaf27-history-and-Markdown-safety/annotated-finding.png`。
+- 确定性检查覆盖 C++/Python/SQL 原生单行注释、JSON/未知语言文本围栏、缩进、多问题行、反引号、40 行源码省略、source/base 分组、缺失源码时块内标注、推荐策略与协调步骤、真实替代策略及适用条件、局部修复、新旧结构重启兼容。
+
+真实模型六类场景最终通过自动检查并逐项核对源码、标注及修复分组；证据目录为 `test-results/acceptance/<下表标识>`。两组缺陷均将 C++、PyQt、PySide 三个文件修复归入一个推荐方案的三个步骤；两组规则仅报告根目录上限违反，明确没有调用方证据时实际运行时影响无法确认；两组干净对照 complete 且零问题。四条意见简述为 62、69、58、66 字符，标注均为单段、最多 120 字符，标签统一固定中文分类。
+
+| 流程 | 场景 | 最终证据标识 |
+| --- | --- | --- |
+| native-review/3 | defects | 2026-10-03T17-31-08-084Z |
+| native-review/3 | rules-defects | 2026-10-03T17-38-25-638Z |
+| native-review/3 | clean | 2026-10-03T17-33-29-893Z |
+| balanced-review/3 | defects | 2026-10-03T17-34-30-030Z |
+| balanced-review/3 | rules-defects | 2026-10-03T17-39-37-200Z |
+| balanced-review/3 | clean | 2026-10-03T17-36-40-597Z |
+
+首次 balanced 规则输出（17-35-30-529Z）通过结构检查，但逐项核对发现无调用方情况下推断连接/线程占用时间；已收紧两条工作流的证据提示，并串行复验规则用例，上表使用复验结果。核对记录为 `test-results/acceptance/annotation-strategy-inspection.json`。部分原生输出带 JSON 之外的前言，已有一次格式修复成功保留有效内容。
+
+上述模型验收和规则复验之后串行执行 test:package，通过构建、打包、隔离安装、随机端口、浏览器失败降级、字体与许可、单实例、重启及安装后引擎真实调用。安装后证据为 `test-results/acceptance/2026-10-03T17-43-35-298Z`，已核对三文件行内标注、原始源码及同一推荐方案中的三个修复步骤。产物为 `artifacts/reviewx-1.0.0.tgz`，SHA-256 为 `d47cd60f785e617d2e69e016e2820210cf8c4b9c2d33cea799dcf6f706129fbb`。
+
+真实 CodeHub 评论未创建；发送正文一致性由集成测试验证。

@@ -8,6 +8,7 @@ import { resolveCommand } from "../platform/resolve-command";
 import { runProcess } from "../platform/process";
 import { reviewError, REVIEW_LIMITS } from "../review/materials";
 import { parseReviewOutput, outputSchema } from "../review/schema";
+import { populateSourceSnippets } from "../review/source-snippets";
 import { productionPrompt, reviewerPrompt, verifierPrompt, repairPrompt, WORKFLOW_VERSION, BALANCED_WORKFLOW_VERSION, discoveryPrompt, batchVerifierPrompt } from "../review/prompt";
 import { runBalanced } from "../review/balanced";
 import { ReviewTrace } from "../review/trace";
@@ -232,15 +233,22 @@ export class OpenCodeReviewer implements ReviewerPort {
       if (!parsed.envelopeValid || parsed.errors.length || message.info?.error || prepared.limitations.length) document.completion = "incomplete";
       // Correct a workspace prefix only when the real repository path is unambiguous.
       // A repository is itself allowed to contain a directory named source or base.
-      for (const finding of document.findings) for (const location of finding.locations) {
-        const prefix = location.revision + "/";
-        if (!location.path.startsWith(prefix)) continue;
-        const root = path.join(prepared.rootDirectory, location.revision);
-        const original = await lstat(path.join(root, location.path)).catch(() => undefined);
-        const relativePath = location.path.slice(prefix.length);
+      const correctPath = async (filePath: string, revision: "source" | "base") => {
+        const prefix = revision + "/";
+        if (!filePath.startsWith(prefix)) return filePath;
+        const root = path.join(prepared.rootDirectory, revision);
+        const original = await lstat(path.join(root, filePath)).catch(() => undefined);
+        const relativePath = filePath.slice(prefix.length);
         const corrected = await lstat(path.join(root, relativePath)).catch(() => undefined);
-        if (!original && corrected?.isFile()) location.path = relativePath;
+        return !original && corrected?.isFile() ? relativePath : filePath;
+      };
+      for (const finding of document.findings) {
+        for (const location of finding.locations) location.path = await correctPath(location.path, location.revision);
+        for (const solution of finding.solutions) for (const step of solution.steps ?? []) {
+          if (step.path) step.path = await correctPath(step.path, "source");
+        }
       }
+      warnings.push(...await populateSourceSnippets(prepared.rootDirectory, document.findings, signal));
       result = {
         findings: document.findings.map(structured => ({ severity: structured.severity, body: renderFinding(structured), structured })),
         submission: document, rawOutput: raw, repairOutput: repairRaw,

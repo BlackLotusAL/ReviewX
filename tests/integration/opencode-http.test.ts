@@ -6,7 +6,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { OpenCodeReviewer, nativeConfig } from "@/src/server/integrations/opencode";
 import type { PreparedReview } from "@/src/server/integrations/git";
 import type { ProcessOptions } from "@/src/server/platform/process";
-import { structuredFinding } from "../helpers/runtime";
+import { generatedFinding as structuredFinding } from "../helpers/runtime";
 import { ReviewTrace } from "@/src/server/review/trace";
 
 const state = vi.hoisted(() => ({ url: "" }));
@@ -22,14 +22,29 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-test.each(["normal", "disconnect", "lost-response", "repair", "bad-repair", "post-error", "new-version", "informational-note", "prefixed-location", "real-prefix-directory"])("native adapter: %s", async kind => {
+test.each(["normal", "disconnect", "lost-response", "repair", "bad-repair", "long-brief", "english-tag", "missing-annotation", "bad-annotation", "misgrouped-solution", "missing-source", "post-error", "new-version", "informational-note", "prefixed-location", "real-prefix-directory"])("native adapter: %s", async kind => {
   const root = await mkdtemp(join(tmpdir(), "native-review-")); roots.push(root);
   const prepared: PreparedReview = { rootDirectory: root, sourceSha: "s", targetSha: "t", baseSha: "b",
     scope: { sourceSha: "s", targetSha: "t", baseSha: "b", changedPaths: [] }, repositoryRules: [], limitations: [], gitCommands: [], cleanup: async () => {} };
   let events: ServerResponse | undefined, sessions = 0, generations = 0;
   const input = { schemaVersion: 1, summary: "完成", completion: "complete", limitations: kind === "informational-note" ? ["仓库没有额外规则文件，代码检视已完成"] : [], findings: [structuredFinding()] };
+  input.findings[0].tags = ["逻辑错误", "逻辑错误"];
+  if (kind !== "missing-source") {
+    await mkdir(join(root, "source"));
+    await writeFile(join(root, "source", "fixture.ts"), "const value = 1;\n");
+  }
+  if (kind === "long-brief") input.findings.push(structuredFinding("字".repeat(121)));
+  if (kind === "english-tag") { const invalid = structuredFinding("标签待修复"); invalid.tags = ["bug"]; input.findings.push(invalid); }
+  if (["missing-annotation", "bad-annotation", "misgrouped-solution"].includes(kind)) {
+    const invalid = structuredFinding("结构待修复");
+    if (kind === "missing-annotation") delete invalid.locations[0].annotations;
+    if (kind === "bad-annotation") invalid.locations[0].annotations![0].line = 2;
+    if (kind === "misgrouped-solution") invalid.solutions[0] = { description: "缺少明确分组。", example: { language: "ts", code: "repair();" } };
+    input.findings.push(invalid);
+  }
   if (["prefixed-location", "real-prefix-directory"].includes(kind)) {
     input.findings[0].locations[0].path = "source/fixture.ts";
+    input.findings[0].solutions[0].steps![0].path = "source/fixture.ts";
     await mkdir(join(root, "source", "source"), { recursive: true });
     await writeFile(join(root, "source", "fixture.ts"), "code");
     if (kind === "real-prefix-directory") await writeFile(join(root, "source", "source", "fixture.ts"), "other code");
@@ -67,9 +82,20 @@ test.each(["normal", "disconnect", "lost-response", "repair", "bad-repair", "pos
   expect(result.findings.length).toBeGreaterThan(0);
   expect(result.findings[0].body).toContain("### 🟠 Major");
   if (kind === "prefixed-location") expect(result.submission.findings[0].locations[0].path).toBe("fixture.ts");
+  if (kind === "prefixed-location") expect(result.submission.findings[0].solutions[0].steps![0].path).toBe("fixture.ts");
   if (kind === "real-prefix-directory") expect(result.submission.findings[0].locations[0].path).toBe("source/fixture.ts");
-  expect(generations).toBe(["repair", "bad-repair"].includes(kind) ? 2 : 1);
+  if (kind === "real-prefix-directory") expect(result.submission.findings[0].solutions[0].steps![0].path).toBe("source/fixture.ts");
+  expect(generations).toBe(["repair", "bad-repair", "long-brief", "english-tag", "missing-annotation", "bad-annotation", "misgrouped-solution"].includes(kind) ? 2 : 1);
   expect(result.submission.completion).toBe(["bad-repair", "post-error"].includes(kind) ? "incomplete" : "complete");
+  expect(result.findings[0].structured!.tags).toEqual(["逻辑错误"]);
+  if (kind === "normal") {
+    expect(result.findings[0].body).toContain("```typescript\n// 【检视注释·问题行 L1】此处逻辑导致调用结果错误。\nconst value = 1;\n```");
+    expect(result.submission.findings[0].locations[0].snippet?.code).toBe("const value = 1;");
+    expect(result.findings[0].body).toContain("**推荐方案**");
+    expect(result.execution.warnings).toEqual([]);
+  }
+  if (kind === "missing-source") { expect(result.execution.warnings.some(w => w.includes("无法展示源码"))).toBe(true); expect(result.submission.findings[0].locations[0].snippet).toBeUndefined(); }
+  if (["long-brief", "english-tag", "missing-annotation", "bad-annotation", "misgrouped-solution"].includes(kind)) { expect(result.findings).toHaveLength(2); expect(result.submission.findings[0].description).toBe("发现问题"); }
   events?.destroy();
 });
 test("permissions deny editing and scripts for every child, format agent has no tools", () => {
@@ -86,6 +112,7 @@ test.each(["normal", "lost-response", "sse-lost"])("balanced HTTP workflow: %s",
   const root = await mkdtemp(join(tmpdir(), "balanced-http-")); roots.push(root);
   const prepared: PreparedReview = { rootDirectory: root, sourceSha: "s", targetSha: "t", baseSha: "b",
     scope: { sourceSha: "s", targetSha: "t", baseSha: "b", changedPaths: ["fixture.ts"] }, repositoryRules: [], limitations: [], gitCommands: [], cleanup: async () => {} };
+  await mkdir(join(root, "source")); await writeFile(join(root, "source", "fixture.ts"), "const actual = true;\n");
   let session = 0, posts = 0;
   const messages = new Map<string, object>();
   const server = createServer(async (req, res) => {
@@ -126,7 +153,8 @@ test.each(["normal", "lost-response", "sse-lost"])("balanced HTTP workflow: %s",
     { projectId: "1", iid: "1", title: "MR", state: "open", updatedAt: "now", sourceBranch: "f", targetBranch: "m" }, prepared,
     new AbortController().signal, { attemptId: "test", rules: { profileHash: "", resources: [] }, trace: new ReviewTrace("test", traceFile) });
   expect(posts).toBe(3); expect(result.findings).toHaveLength(5); expect(result.submission.completion).toBe("complete");
-  expect(result.execution.workflowVersion).toBe("balanced-review/1");
+  expect(result.submission.findings.every(f => f.locations[0].snippet?.code === "const actual = true;")).toBe(true);
+  expect(result.execution.workflowVersion).toBe("balanced-review/3");
   expect(result.execution.performance?.observedModelSteps).toBe(3);
   expect(result.execution.performance?.tokens.input).toBe(30);
   expect(result.execution.performance?.reconciliationFailed).toBe(false);

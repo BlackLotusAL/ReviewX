@@ -2,8 +2,31 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { Markdown } from "@/app/components/markdown";
+import { renderFinding } from "@/src/shared/finding-markdown";
+import { generatedFinding } from "../helpers/runtime";
 
 afterEach(cleanup);
+
+test("annotated file groups and solution steps remain readable nested Markdown blocks", () => {
+  const finding = generatedFinding();
+  finding.locations = [{ path: "delay.py", revision: "source", startLine: 2, endLine: 2,
+    snippet: { language: "python", code: "    return seconds" }, annotations: [{ line: 2, text: "缺少换算，包含 ``` 和 <script>。" }] },
+  { path: "data.json", revision: "source", startLine: 1, endLine: 1,
+    snippet: { language: "json", code: '{"delay": 0}' }, annotations: [{ line: 1, text: "延迟值错误。" }] }];
+  finding.solutions[0].steps = [{ description: "恢复换算。", path: "delay.py", example: { language: "python", code: "def delay(seconds):\n    return seconds * 1000" } }];
+  finding.solutions.push({ kind: "alternative", description: "迁移调用契约。", applicability: "全部调用方可同步迁移时适用。", steps: [{ description: "同步修改调用方。" }] });
+  const view = render(<Markdown>{renderFinding(finding)}</Markdown>);
+  const blocks = view.container.querySelectorAll("pre code");
+  expect(blocks).toHaveLength(3);
+  expect(blocks[0].textContent).toBe("    # 【检视注释·问题行 L2】缺少换算，包含 ``` 和 <script>。\n    return seconds\n");
+  expect(blocks[0].querySelector(".hljs-comment")).not.toBeNull();
+  expect(blocks[1].textContent).toBe('【检视注释·问题行 L1】延迟值错误。\n{"delay": 0}\n');
+  expect(blocks[1].querySelector("span")).toBeNull();
+  expect(blocks[2].textContent).toBe("def delay(seconds):\n    return seconds * 1000\n");
+  expect([...blocks].every(block => block.closest("li"))).toBe(true);
+  expect(view.container.querySelector("script")).toBeNull();
+  expect(view.container.textContent).toContain("推荐方案"); expect(view.container.textContent).toContain("备用方案");
+});
 
 test("highlights labeled TypeScript while preserving code, whitespace and literal HTML", () => {
   const source = '// Keep this comment\nfunction check(value: number) {\n  if (value === 42) return "<script>alert(1)</script>";\n}\n';

@@ -122,6 +122,13 @@ export function structuredFinding(body = "发现问题"): import("@/src/shared/r
     locations: [{ path: "fixture.ts", revision: "source", startLine: 1, endLine: 1 }],
     impact: { direct: "结果错误", scope: "调用者", trigger: "调用函数" }, solutions: [{ description: "修复逻辑" }], preventions: ["添加边界测试"] };
 }
+/** New-generation fixture; the old helper remains useful for historical compatibility. */
+export function generatedFinding(body = "发现问题"): import("@/src/shared/review-contract").StructuredFinding {
+  const finding = structuredFinding(body);
+  finding.locations[0].annotations = [{ line: 1, text: "此处逻辑导致调用结果错误。" }];
+  finding.solutions = [{ kind: "recommended", description: "修复逻辑", steps: [{ description: "修正调用结果。", path: "fixture.ts" }] }];
+  return finding;
+}
 export function fakeResult(findings: ReviewerResult["findings"]): ReviewerResult {
   return { findings, submission: { schemaVersion: 1, summary: "检视完成", completion: "complete", limitations: [], findings: findings.map(f => ({ ...structuredFinding(f.body), severity: f.severity })) },
     execution: { version: 2, attemptId: "fixture", sessionID: "fixture", opencodeVersion: "test", actualModel: { providerID: "test", modelID: "test" },

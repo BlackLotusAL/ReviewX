@@ -11,6 +11,8 @@ import { digest } from "@/src/server/review/materials";
 import { ensureDataPaths, resolveDataPaths } from "@/src/server/platform/paths";
 import { ReviewTrace } from "@/src/server/review/trace";
 import { runOneshotBaseline } from "./oneshot-baseline";
+import { FINDING_TAGS, SOURCE_SNIPPET_LINE_LIMIT } from "@/src/shared/review-output-policy";
+import { generatedFindingSchema } from "@/src/server/review/schema";
 
 const execute = promisify(execFile);
 const engine: typeof import("@/src/server/package-engine") = process.env.REVIEWX_ACCEPTANCE_ENGINE
@@ -132,11 +134,34 @@ try {
     bodies.push({ file, hash: digest(finding.body), severity: finding.severity });
   }
   if (result.submission.completion !== "complete") throw new Error("Quality failed: fixture review incomplete");
+  // The benchmark-only no-tool baseline does not use production source extraction.
+  if (process.env.REVIEWX_BENCHMARK_BASELINE !== "oneshot") for (const finding of result.submission.findings) {
+    if (!generatedFindingSchema.safeParse(finding).success) throw new Error("Quality failed: brief, tags, annotations or solution strategy contract");
+    if (new Set(finding.tags).size !== finding.tags.length || finding.tags.some(tag => !FINDING_TAGS.some(allowed => allowed === tag))) throw new Error("Quality failed: tag normalization");
+    for (const location of finding.locations) {
+      const text = location.revision === "source" ? source[location.path] : baseline[location.path];
+      if (text === undefined) throw new Error("Quality failed: location not in fixture");
+      const lines = text.split(/\r\n|\r|\n/u); if (/[\r\n]$/u.test(text)) lines.pop();
+      const expected = lines.slice(location.startLine - 1, Math.min(location.endLine, location.startLine + SOURCE_SNIPPET_LINE_LIMIT - 1)).join("\n");
+      if (location.endLine > lines.length || !expected || location.snippet?.code !== expected) throw new Error("Quality failed: source snippet differs from the fixed revision and line range");
+    }
+    const body = result.findings.find(f => f.structured === finding)?.body ?? result.findings[result.submission.findings.indexOf(finding)]?.body ?? "";
+    for (const location of finding.locations) for (const annotation of location.annotations ?? []) {
+      if (!body.includes(`【检视注释·问题行 L${annotation.line}】${annotation.text}`)) throw new Error("Quality failed: missing in-code annotation");
+    }
+    if (!body.includes("**推荐方案**")) throw new Error("Quality failed: missing recommended strategy");
+    if (!finding.solutions.some(solution => solution.steps?.some(step => step.path && step.example?.code.trim()))) throw new Error("Quality failed: concrete fixture defect lacks file-specific corrected source code");
+  }
   if (scenario.endsWith("clean") && result.findings.length) throw new Error("Quality failed: false positive on comment-only fixture");
   if (scenario === "defects") {
-    for (const file of ["delay.h", "pyqt_delay.py", "pyside_delay.py"]) {      if (!result.submission.findings.some(f => f.locations.some(e => e.path === file) && /毫秒|millisecond|1000/iu.test(JSON.stringify(f)))) throw new Error(`Quality failed: missing conversion defect in ${file}`);
+    for (const file of ["delay.h", "pyqt_delay.py", "pyside_delay.py"]) {
+      if (!result.submission.findings.some(f => f.locations.some(e => e.path === file) && /毫秒|millisecond|1000/iu.test(JSON.stringify(f)))) throw new Error(`Quality failed: missing conversion defect in ${file}`);
     }
   }
+  if (scenario === "defects" && process.env.REVIEWX_BENCHMARK_BASELINE !== "oneshot" && !result.submission.findings.some(f => {
+    const recommended = f.solutions.find(s => s.kind === "recommended");
+    return ["delay.h", "pyqt_delay.py", "pyside_delay.py"].every(file => recommended?.steps?.some(step => step.path === file && /1000/u.test(step.example?.code ?? "")));
+  })) throw new Error("Quality failed: coordinated C++ and Python repairs must share one recommended strategy with file-specific code");
   if (scenario === "lifetime-defects" || scenario === "async-defects") {
     const file = changedFiles[0];
     const terms = scenario.startsWith("lifetime") ? /悬垂|释放|销毁|dangling|生命周期/iu : /await|协程|coroutine/iu;
@@ -147,6 +172,10 @@ try {
     if (!result.submission.findings.some(f => f.locations.some(l => l.path === "loader.py") && terms.test(JSON.stringify(f)))) throw new Error("Quality failed: missing " + scenario);
   }
   if (scenario.startsWith("rules") && result.submission.findings.some(f => f.locations.some(l => l.path === "scoped/loader.py"))) throw new Error("Quality failed: ignored nearer scoped rule");
+  if (scenario.startsWith("rules") && result.submission.findings.some(f => {
+    const impact = JSON.stringify(f.impact);
+    return !/未发现|未见|未提供|没有|暂无|无法确认|未知|尚无/u.test(impact) || !/调用|运行|引用|使用/u.test(impact);
+  })) throw new Error("Quality failed: rules-only fixture has no callers; unsupported runtime impact must not be asserted");
   await writeFile(path.join(evidence, "verification.json"), JSON.stringify({ technical: "passed", quality: "automated fixture checks passed; manual review required", scenario, genericRules: process.env.REVIEWX_GENERIC_RULES ?? "without", benchmarkGroup: process.env.REVIEWX_BENCHMARK_GROUP, prepareMs, modelMs: result.execution.durationMs, installedEngine: !!process.env.REVIEWX_ACCEPTANCE_ENGINE, system: `${os.platform()} ${os.release()} ${os.arch()}`, node: process.version, commit: await checkoutCommit(projectRoot), bodies }, null, 2));
   process.stdout.write(`Production acceptance: ${evidence}\n`);
 } catch (error) {

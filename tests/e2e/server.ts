@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
 import next from "next";
 import { installRuntimeForTests } from "@/src/server/bootstrap";
-import { configureMr, createRuntimeHarness } from "../helpers/runtime";
+import { configureMr, createRuntimeHarness, generatedFinding } from "../helpers/runtime";
+import { renderFinding } from "@/src/shared/finding-markdown";
 
 const host = "127.0.0.1";
 const port = 3210;
@@ -13,6 +14,16 @@ configureMr(harness, "101", "1", "Security-sensitive parser update");
 configureMr(harness, "101", "2", "Queue worker tests");
 // Leave time for browser actions and the dev server's first stop-route compilation.
 harness.reviewer.delayMs = 3_000;
+const correctedFinding = generatedFinding("单位换算缺失导致重试提前触发。");
+correctedFinding.title = "恢复延迟单位换算"; correctedFinding.tags = ["功能回归", "单位换算"];
+correctedFinding.locations[0].snippet = { language: "typescript", code: "return seconds;" };
+correctedFinding.locations[0].annotations = [{ line: 1, text: "缺少秒到毫秒换算，导致重试提前。" }];
+correctedFinding.locations.push({ path: "delay.py", revision: "source", startLine: 2, endLine: 2,
+  snippet: { language: "python", code: "    return seconds" }, annotations: [{ line: 2, text: "Python 实现同样缺少毫秒换算。" }] });
+correctedFinding.solutions[0] = { kind: "recommended", description: "恢复两个实现的秒到毫秒换算。", steps: [
+  { description: "修复 TypeScript 实现。", path: "fixture.ts", example: { language: "typescript", code: "return seconds * 1000;" } },
+  { description: "修复 Python 实现。", path: "delay.py", example: { language: "python", code: "def delay(seconds):\n    return seconds * 1000" } },
+] };
 harness.reviewer.results.set("1", {
   findings: [
     {
@@ -34,7 +45,7 @@ harness.reviewer.results.set("1", {
         "[Public documentation](https://example.com/docs)",
       ].join("\n"),
     },
-    { severity: "suggestion", body: "### 🟢 Suggestion: Add a regression test\n\nKeep the parser behavior covered." },
+    { severity: "suggestion", body: renderFinding({ ...correctedFinding, severity: "suggestion" }) },
   ],
 });
 harness.reviewer.results.set("2", { findings: [] });

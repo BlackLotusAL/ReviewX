@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ReviewDocument, StructuredFinding } from "@/src/shared/review-contract";
-import { findingSchema, outputSchema, parseReviewOutput } from "./schema";
+import { generatedFindingSchema, outputSchema, parseReviewOutput } from "./schema";
 import type { ReviewTrace } from "./trace";
 import { digest as digestEvidence } from "./materials";
 
@@ -9,7 +9,7 @@ export const VERIFY_CONCURRENCY = 2;
 export interface Candidate { id: string; finding: StructuredFinding; sourceOrdinals: number[] }
 const verdictSchema = z.object({
   id: z.string().min(1), status: z.enum(["confirmed", "rejected", "unverified"]),
-  evidence: z.string().trim().min(1).max(64 * 1024), finding: findingSchema.optional(), duplicateOf: z.string().optional(),
+  evidence: z.string().trim().min(1).max(64 * 1024), finding: generatedFindingSchema.optional(), duplicateOf: z.string().optional(),
 }).refine(v => v.status !== "confirmed" || !!v.finding, "Confirmed verdict requires a complete finding")
   .refine(v => !v.duplicateOf || v.status === "confirmed", "Only confirmed verdicts may be duplicates");
 export type Verdict = z.infer<typeof verdictSchema>;
@@ -43,7 +43,10 @@ function parseVerdicts(raw: string, expected: Candidate[]): Map<string, Verdict>
     for (const item of envelope.verdicts) {
       if (typeof item?.id === "string") counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
       const parsed = verdictSchema.safeParse(item);
-      if (parsed.success && expected.some(c => c.id === parsed.data.id)) result.set(parsed.data.id, parsed.data);
+      if (parsed.success && expected.some(c => c.id === parsed.data.id)) {
+        if (parsed.data.finding) parsed.data.finding.tags = [...new Set(parsed.data.finding.tags)];
+        result.set(parsed.data.id, parsed.data);
+      }
     }
     for (const [id, count] of counts) if (count !== 1) result.delete(id);
     for (const [id, verdict] of result) {
@@ -100,8 +103,10 @@ export async function runBalanced(options: BalancedOptions): Promise<{ document:
     try {
       const response = await generate("reviewx-batch-verify", "Independently verify these candidates. Schema:\n" + JSON.stringify(verificationJsonSchema) +
         "\nCandidates:\n" + JSON.stringify(batch.map(({ id, finding }) => ({ id, finding: { ...finding,
-          locations: finding.locations.map(({ path, revision, startLine, endLine }) => ({ path, revision, startLine, endLine })),
-          solutions: finding.solutions.map(({ description }) => ({ description })),
+          locations: finding.locations.map(({ path, revision, startLine, endLine, annotations }) => ({ path, revision, startLine, endLine, annotations })),
+          solutions: finding.solutions.map(({ kind, description, applicability, steps }) => ({ kind, description, applicability,
+            steps: steps?.map(({ description, path }) => ({ description, path })),
+          })),
         } }))));
       end(response.failed ? "failed" : "complete");
       return response.failed ? new Map() : parseVerdicts(response.text, batch);

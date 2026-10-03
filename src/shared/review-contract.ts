@@ -1,14 +1,29 @@
 export type Revision = "source" | "base";
 export type Severity = "fatal" | "major" | "minor" | "suggestion";
 export interface CodeExample { language: string; code: string }
+export interface ReviewAnnotation { line: number; text: string }
+export interface ReviewLocation {
+  path: string; revision: Revision; startLine: number; endLine: number;
+  snippet?: CodeExample;
+  annotations?: ReviewAnnotation[];
+}
+export interface SolutionStep { description: string; path?: string; example?: CodeExample }
+export interface ReviewSolution {
+  description: string;
+  /** Retained for historical findings; new examples belong to individual steps. */
+  example?: CodeExample;
+  kind?: "recommended" | "alternative";
+  steps?: SolutionStep[];
+  applicability?: string;
+}
 export interface StructuredFinding {
   severity: Severity;
   title: string;
   tags: string[];
   description: string;
-  locations: Array<{ path: string; revision: Revision; startLine: number; endLine: number; snippet?: CodeExample }>;
+  locations: ReviewLocation[];
   impact: { direct: string; scope: string; trigger: string };
-  solutions: Array<{ description: string; example?: CodeExample }>;
+  solutions: ReviewSolution[];
   preventions: string[];
 }
 export interface ReviewDocument {

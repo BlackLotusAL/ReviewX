@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { ReportStore } from "@/src/server/storage/report-store";
-import { configureMr, createRuntimeHarness, fakeResult, registerAndRefresh, waitUntil } from "../helpers/runtime";
+import { configureMr, createRuntimeHarness, fakeResult, registerAndRefresh, generatedFinding, waitUntil } from "../helpers/runtime";
+import { renderFinding } from "@/src/shared/finding-markdown";
 
 test("cancel after atomic save leaves an unregistered non-publishable artifact", async () => {
   const h = await createRuntimeHarness();
@@ -55,5 +56,29 @@ test("tool progress increments only view revision and is visible in row/detail",
     });
     await h.runtime.createReview("1", "1"); await h.runtime.waitForIdle();
     expect((await h.runtime.getMrDetail("1", "1")).attempts[0].status).toBe("completed");
+  } finally { await h.cleanup(); }
+});
+
+test("the fixed comment body is saved, displayed and published unchanged", async () => {
+  const h = await createRuntimeHarness();
+  try {
+    configureMr(h, "1", "1"); await registerAndRefresh(h, ["1"]);
+    const f = generatedFinding("单位换算缺失导致计时过短。"); f.tags = ["单位换算"];
+    f.locations[0].snippet = { language: "typescript", code: "return seconds;" };
+    f.solutions[0].steps![0].example = { language: "typescript", code: "return seconds * 1000;" };
+    const body = renderFinding(f);
+    const result = fakeResult([{ severity: f.severity, body, structured: f }]); result.submission.findings = [f];
+    vi.spyOn(h.reviewer, "review").mockResolvedValue(result);
+    await h.runtime.createReview("1", "1"); await h.runtime.waitForIdle();
+    const displayed = (await h.runtime.getMrDetail("1", "1")).attempts[0];
+    expect(displayed.findings[0].body).toBe(body);
+    expect(await h.runtime.readReport(displayed.id)).toContain(body);
+    await h.runtime.publishFinding(displayed.id, 1);
+    expect(h.codeHub.comments[0].body).toBe(body);
+    expect((await h.store.read()).attemptsById[displayed.id].findings[0].body).toBe(body);
+    expect((await h.store.read()).attemptsById[displayed.id].findings[0].structured).toEqual(f);
+    expect(displayed.findings[0].body).toContain("// 【检视注释·问题行 L1】");
+    expect(displayed.findings[0].body).toContain("**推荐方案**");
+    expect(displayed.findings[0].structured!.locations[0].snippet!.code).toBe("return seconds;");
   } finally { await h.cleanup(); }
 });

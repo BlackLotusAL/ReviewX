@@ -6,6 +6,7 @@ import type { ReviewAttempt } from "@/src/shared/types";
 import { FileLock } from "@/src/server/storage/file-lock";
 import { ensureDataPaths, resolveDataPaths } from "@/src/server/platform/paths";
 import { StateStore } from "@/src/server/storage/state-store";
+import { structuredFinding, generatedFinding } from "../helpers/runtime";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -36,6 +37,26 @@ function attempt(id: string, status: ReviewAttempt["status"]): ReviewAttempt {
 }
 
 describe("atomic persistent state", () => {
+  test("new annotations and strategy steps survive restart alongside legacy examples", async () => {
+    const { paths, store } = await setup();
+    const modern = generatedFinding();
+    modern.locations[0].snippet = { language: "typescript", code: "return seconds;" };
+    modern.solutions[0].steps![0].example = { language: "typescript", code: "return seconds * 1000;" };
+    modern.solutions.push({ kind: "alternative", description: "迁移接口。", applicability: "全部调用方可同步迁移时适用。", steps: [{ description: "同步调整调用方。" }] });
+    const old = structuredFinding(); old.solutions[0].example = { language: "ts", code: "oldFix();" };
+    await store.mutate(draft => { const record = attempt("mixed", "completed"); record.findings = [modern, old].map((structured, i) => ({ ordinal: i + 1, severity: "major", body: `frozen-${i}`, structured, status: "pending" })); draft.attemptsById.mixed = record; });
+    const restarted = await new StateStore(paths).initialize("later");
+    expect(restarted.attemptsById.mixed.findings.map(f => f.structured)).toEqual([modern, old]);
+    expect(restarted.attemptsById.mixed.findings.map(f => f.body)).toEqual(["frozen-0", "frozen-1"]);
+  });
+  test("historical long descriptions, freeform tags and frozen bodies survive restart", async () => {
+    const { paths, store } = await setup();
+    const structured = structuredFinding(Array(200).fill("历史详细说明").join("\n")); structured.tags = ["functional-regression", "历史分类"];
+    const body = "历史原文\r\n\n```ts\nold();\n```\n \t\n";
+    await store.mutate(draft => { const historical = attempt("historical", "completed"); historical.findings = [{ ordinal: 1, severity: "major", body, structured, status: "published" }]; draft.attemptsById.historical = historical; });
+    const restarted = await new StateStore(paths).initialize("later");
+    expect(restarted.attemptsById.historical.findings[0]).toMatchObject({ body, structured });
+  });
   test("writes valid indented JSON atomically and fails immediately under a live lock", async () => {
     const { paths, store } = await setup();
     await store.mutate((draft) => { draft.registeredProjectIds.push("1"); draft.projectsById["1"] = {
