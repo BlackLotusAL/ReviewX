@@ -1,5 +1,5 @@
 import { apiError } from "@/src/server/http";
-import { getRuntime } from "@/src/server/runtime";
+import { getRuntime } from "@/src/server/bootstrap";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

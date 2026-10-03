@@ -1,3 +1,5 @@
+import type { ReviewProgress, ReviewSubmission, ExecutionRecord, StructuredFinding, FrozenRules } from "./review-contract";
+
 export const severityValues = ["fatal", "major", "minor", "suggestion"] as const;
 export type Severity = (typeof severityValues)[number];
 
@@ -71,6 +73,7 @@ export interface ProjectRecord {
 }
 
 export interface MergeRequestSnapshot {
+  description?: string;
   projectId: string;
   iid: string;
   title: string;
@@ -87,6 +90,7 @@ export interface ProjectSnapshot {
 }
 
 export interface StoredFinding {
+  structured?: StructuredFinding;
   ordinal: number;
   severity: Severity;
   body: string;
@@ -109,6 +113,8 @@ export interface PublishBatch {
 }
 
 export interface ReviewAttempt {
+  rules?: FrozenRules;
+  warnings?: string[];
   id: string;
   projectId: string;
   mrIid: string;
@@ -129,7 +135,7 @@ export interface ReviewAttempt {
   archivedAt?: string;
   archivedFromStatus?: AttemptStatus;
   reportPath?: string;
-  result?: "pass" | "findings";
+  result?: "pass" | "findings" | "partial";
   findings: StoredFinding[];
   publishBatches: PublishBatch[];
   error?: SafeErrorView;
@@ -150,7 +156,8 @@ export interface ActivePublishBatchRef {
 }
 
 export interface PersistentState {
-  version: 1;
+  version: 2;
+  queuePaused?: SafeErrorView;
   revision: number;
   registeredProjectIds: string[];
   projectsById: Record<string, ProjectRecord>;
@@ -168,6 +175,8 @@ export type MrDisplayStatus = "unreviewed" | AttemptStatus;
 export type MrPrimaryAction = "start" | "stop" | "rereview" | null;
 
 export interface MrRowView extends MergeRequestSnapshot {
+  result?: ReviewAttempt["result"];
+  progress?: ReviewProgress;
   status: MrDisplayStatus;
   phase?: ReviewPhase;
   queuePosition?: number;
@@ -189,6 +198,8 @@ export interface ProjectView {
 }
 
 export interface AppStateView {
+  queuePaused?: SafeErrorView;
+  warnings?: string[];
   revision: number;
   refreshOperation: RefreshOperation;
   publicationBusy: boolean;
@@ -200,6 +211,8 @@ export interface AppStateView {
 
 export interface AttemptView extends Omit<ReviewAttempt, "reportPath"> {
   reportUrl?: string;
+  progress?: ReviewProgress;
+  execution?: Pick<ExecutionRecord, "version" | "status" | "actualModel" | "sessionID" | "durationMs" | "progress" | "opencodeVersion">;
 }
 
 export interface MrDetailView {
@@ -209,10 +222,16 @@ export interface MrDetailView {
 }
 
 export interface ReviewerFinding {
+  structured?: StructuredFinding;
   severity: Severity;
   body: string;
 }
 
 export interface ReviewerResult {
+  rawOutput?: string;
+  repairOutput?: string;
+  cleanupPending?: boolean;
   findings: ReviewerFinding[];
+  submission: ReviewSubmission;
+  execution: ExecutionRecord;
 }

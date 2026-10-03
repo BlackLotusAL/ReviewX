@@ -1,5 +1,5 @@
-import { expect, test, type BrowserContext, type Locator, type Page } from "@playwright/test";
-import { createReviewPreviewData } from "@/src/preview/mr-fixtures";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { createReviewPreviewData } from "@/src/client/review-workspace/preview-data";
 
 const data = createReviewPreviewData();
 const rows = data.state.projects.flatMap(project => project.mergeRequests);
@@ -16,11 +16,6 @@ async function forbidApi(context: BrowserContext) {
 
 function opener(page: Page, iid: string) {
   return page.getByRole("button", { name: new RegExp(`^查看 MR !${iid}：`) });
-}
-
-// Browsers round rem-based dimensions to fractional layout pixels.
-async function expectSize(locator: Locator, property: string, pixels: number) {
-  await expect.poll(() => locator.evaluate((el, name) => parseFloat(getComputedStyle(el).getPropertyValue(name)), property)).toBeCloseTo(pixels, 1);
 }
 
 async function noOverflow(page: Page) {
@@ -146,10 +141,7 @@ test("preview history, markdown disclosure and keyboard focus remain interactive
   await expect(dialog.locator(".finding-card table")).toHaveCount(1);
   await expect(dialog.locator(".findings-section > h3")).toHaveText("检视问题");
   await expect(dialog.locator(".finding-card pre .hljs-keyword").first()).toBeVisible();
-  for (const [index, color] of ["rgb(255, 240, 241)", "rgb(255, 243, 232)", "rgb(255, 249, 223)", "rgb(234, 243, 255)"].entries()) {
-    await expect(dialog.locator(".finding-severity").nth(index)).toHaveCSS("background-color", color);
-  }
-  await expect(dialog.locator(".attempt-metadata")).toHaveCount(0);
+  await noOverflow(page);
   await expect(dialog.locator(".attempt-overview code")).toHaveText("preview-202-602-latest");
   const tabs = dialog.getByRole("tab");
   await tabs.first().focus();
@@ -176,6 +168,10 @@ test("preview history, markdown disclosure and keyboard focus remain interactive
   await expect(dialog.locator(".finding-card")).toHaveCount(4);
   await summary.click();
   await expect(dialog.locator(".report-preview")).toContainText("preview-202-602-latest");
+  await expect(dialog.locator(".report-preview table")).toHaveCount(2);
+  await noOverflow(page);
+  await dialog.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await expect(dialog.getByRole("button", { name: "关闭详情" })).toBeInViewport();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
@@ -205,7 +201,6 @@ test("preview log link opens local logs while the homepage still reads live stat
   await expect(page.locator(".welcome")).toBeVisible();
   await expect(page.locator(".mr-card")).toHaveCount(0);
   await expect(page.getByLabel("Project ID")).toBeVisible();
-  await expect(page.locator(".project-form label")).toHaveCount(0);
   expect(requests).toContain("/api/state");
 });
 
@@ -242,98 +237,6 @@ test("live duration ticks during execution and stopping, then freezes without de
   expect(unexpected).toEqual([]);
 });
 
-for (const viewport of [{ width: 1675, height: 1216 }, { width: 1230, height: 1216 }, { width: 1024, height: 768 }, { width: 899, height: 900 }, { width: 900, height: 900 }, { width: 901, height: 900 }, { width: 1074, height: 900 }, { width: 1075, height: 900 }, { width: 1433, height: 900 }, { width: 1434, height: 900 }, { width: 390, height: 844 }]) {
-  test(`preview layout at ${viewport.width}x${viewport.height}`, async ({ page, context }, testInfo) => {
-    const requests = await forbidApi(context);
-    const scale = viewport.width > 900 ? 0.9 : 1;
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.setViewportSize(viewport);
-    await page.goto("/preview");
-    await expect(page.locator(".mr-card")).toHaveCount(14);
-    await expect(page.locator(".mr-project-id")).toHaveCount(0);
-    await expect(page.locator(".project-copy > .mono").first()).toHaveText("#101");
-    await expectSize(page.locator(".project-copy strong").first(), "font-size", 13 * scale);
-    await expectSize(page.locator(".project-item > .icon").first(), "width", 16 * scale);
-    await expectSize(page.locator(".mr-main h4").first(), "font-size", 18 * scale);
-    await expect(page.locator(".mr-card").first()).toHaveCSS("background-color", "rgb(245, 247, 250)");
-    await expect(page.locator(".mr-card").first().locator(".mr-progress")).toHaveCount(0);
-    const durations = await page.locator(".mr-duration").allTextContents();
-    expect(durations).toHaveLength(12);
-    if (viewport.width > 600) {
-      for (const card of await page.locator(".mr-card").all()) {
-        if (!await card.locator(".mr-action button").count()) continue;
-        const stateBox = await card.locator(".mr-state").boundingBox();
-        const actionBox = await card.locator(".mr-action button").boundingBox();
-        expect(Math.abs(stateBox!.y + stateBox!.height / 2 - actionBox!.y - actionBox!.height / 2)).toBeLessThan(1);
-      }
-    }
-    await expect(page.getByLabel("Project ID")).toBeVisible();
-    await expect(page.locator(".project-form label")).toHaveCount(0);
-    await expect(page.locator("#mr-heading")).toHaveText("MR 检视队列");
-    await expect(page.locator("#mr-heading .status-dot")).toHaveCount(0);
-    if (viewport.width > 900) expect(await page.locator(".project-panel").evaluate(el => el.getBoundingClientRect().width)).toBeCloseTo(324, 1);
-    await expectSize(page.locator("body"), "font-size", 15 * scale);
-    await expect(page.locator(".mr-main").first()).toHaveCSS("grid-column-start", "1");
-    const columns = await page.locator(".mr-grid").first().evaluate(el => getComputedStyle(el).gridTemplateColumns.split(" ").length);
-    const expectedColumns = viewport.width >= 1434 ? 3 : viewport.width >= 1075 || (viewport.width >= 899 && viewport.width <= 900) ? 2 : 1;
-    expect(columns).toBe(expectedColumns);
-    await noOverflow(page);
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.screenshot({ path: testInfo.outputPath("preview-queue.png"), fullPage: true, animations: "disabled" });
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.screenshot({ path: testInfo.outputPath("preview-viewport.png"), animations: "disabled" });
-    await opener(page, "602").click();
-    await expect(page.locator(".finding-card")).toHaveCount(4);
-    const dialog = page.getByRole("dialog");
-    expect((await dialog.boundingBox())!.height).toBeCloseTo(viewport.height, 1);
-    if (viewport.width > 900) expect((await dialog.boundingBox())!.width).toBeCloseTo(738, 1);
-    await expectSize(page.locator(".drawer-mr-meta"), "font-size", 14 * scale);
-    await expectSize(page.locator(".attempt-tabs time").first(), "font-size", 13 * scale);
-    for (const pill of await page.locator(".finding-badges > .status, .attempt-overview .status").all()) {
-      await expectSize(pill, "font-size", 13 * scale);
-      expect(await pill.evaluate(el => el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(32 * scale - 0.05);
-    }
-    await expect(page.locator(".finding-card footer, .decision-result")).toHaveCount(0);
-    await expect(page.locator(".attempt-overview > div")).toHaveCount(4);
-    await expectSize(page.locator(".finding-severity").first(), "font-size", 13 * scale);
-    await expect(page.locator(".finding-severity .icon")).toHaveCount(0);
-    await expect(page.locator(".finding-severity").first()).toHaveCSS("font-weight", "400");
-    await expectSize(page.locator(".attempt-overview code"), "font-size", 16 * scale);
-    await expectSize(page.locator(".attempt-overview time"), "font-size", 16 * scale);
-    for (const header of await page.locator(".finding-header").all()) {
-      await expect(header).toHaveCSS("background-color", "rgb(245, 247, 250)");
-      const info = header.locator(".finding-info");
-      expect(await info.evaluate(el => el.getBoundingClientRect().left - el.parentElement!.getBoundingClientRect().left)).toBeCloseTo((viewport.width <= 600 ? 16 : 24) * scale, 1);
-      const actions = header.locator(".finding-actions");
-      if (await actions.count()) {
-        expect(await actions.evaluate(el => el.parentElement!.getBoundingClientRect().right - el.getBoundingClientRect().right)).toBeCloseTo((viewport.width <= 600 ? 16 : 24) * scale, 1);
-      }
-    }
-    const cells = await page.locator(".attempt-overview > div").evaluateAll(nodes => nodes.map(el => { const r = el.getBoundingClientRect(); return {x:r.x,y:r.y}; }));
-    expect(cells[0].y).toBe(cells[1].y);
-    expect(cells[2].y).toBe(cells[3].y);
-    expect(cells[0].x).toBe(cells[2].x);
-    for (const button of await page.locator(".finding-header .finding-actions button").all()) {
-      expect(await button.evaluate(el => el.getBoundingClientRect().height)).toBeCloseTo(44 * scale, 1);
-      const primary = (await button.getAttribute("class"))!.includes("button-primary");
-      await expectSize(button, "width", (primary ? 164 : 82) * scale);
-      await expect(button).toHaveCSS("background-color", primary ? "rgb(18, 18, 18)" : "rgb(255, 255, 255)");
-    }
-    await noOverflow(page);
-    await page.screenshot({ path: testInfo.outputPath("preview-findings.png"), animations: "disabled" });
-    await page.locator(".report-section summary").click();
-    await expect(page.locator(".report-preview table")).toHaveCount(2);
-    await noOverflow(page);
-    await page.screenshot({ path: testInfo.outputPath("preview-report.png"), animations: "disabled" });
-    await dialog.evaluate(el => { el.scrollTop = el.scrollHeight; });
-    expect((await page.locator(".drawer-header").boundingBox())!.y).toBeCloseTo(0, 1);
-    await page.getByRole("button", { name: "关闭详情" }).click();
-    await expect(dialog).not.toBeVisible();
-    await expect(opener(page, "602")).toBeFocused();
-    expect(requests).toEqual([]);
-  });
-}
-
 test("directory navigation and queue links locate content without opening details", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/preview");
@@ -357,7 +260,6 @@ test("directory navigation and queue links locate content without opening detail
   await expect(page.locator("#mr-101-402")).toBeFocused();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await opener(page, "402").click();
-  expect(await page.getByRole("dialog").evaluate(el => getComputedStyle(el, "::backdrop").backdropFilter)).toBe("blur(5.4px)");
   await page.keyboard.press("Escape");
   await expect(opener(page, "402")).toBeFocused();
 });

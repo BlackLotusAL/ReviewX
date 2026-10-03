@@ -7,15 +7,15 @@ import type {
   ReviewerResult,
   Severity,
 } from "@/src/shared/types";
-import type { CodeHubMrListEntry } from "@/src/server/schemas";
-import type { CodeHubPort, CommentCreateResult } from "@/src/server/codehub";
-import type { GitPreparerPort, PreparedReview } from "@/src/server/git";
-import { createLogFile, Logger } from "@/src/server/logger";
-import type { ReviewerPort } from "@/src/server/opencode";
-import { ensureDataPaths, resolveDataPaths } from "@/src/server/paths";
-import { ReportStore } from "@/src/server/report-store";
+import type { CodeHubMrListEntry } from "@/src/server/integrations/codehub-schemas";
+import type { CodeHubPort, CommentCreateResult } from "@/src/server/integrations/codehub";
+import type { GitPreparerPort, PreparedReview } from "@/src/server/integrations/git";
+import { createLogFile, Logger } from "@/src/server/platform/logger";
+import type { ReviewerPort, ReviewOptions } from "@/src/server/integrations/opencode";
+import { ensureDataPaths, resolveDataPaths } from "@/src/server/platform/paths";
+import { ReportStore } from "@/src/server/storage/report-store";
 import { ReviewXRuntime } from "@/src/server/runtime";
-import { StateStore } from "@/src/server/state-store";
+import { StateStore } from "@/src/server/storage/state-store";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -107,9 +107,9 @@ export class FakeGit implements GitPreparerPort {
     await abortableDelay(this.delayMs, signal);
     return {
       rootDirectory: "C:\\reviewx-test\\review",
-      sourceDirectory: "C:\\reviewx-test\\review\\source",
-      patchPath: "C:\\reviewx-test\\review\\changes.patch",
-      bundlePath: "C:\\reviewx-test\\review\\review-bundle.txt",
+      baseSha: "3".repeat(40),
+      scope: { sourceSha: "1".repeat(40), targetSha: "2".repeat(40), baseSha: "3".repeat(40), changedPaths: [] },
+      repositoryRules: [], limitations: [], gitCommands: [],
       sourceSha: "1".repeat(40),
       targetSha: "2".repeat(40),
       cleanup: async () => { this.cleanupCount += 1; },
@@ -117,15 +117,26 @@ export class FakeGit implements GitPreparerPort {
   }
 }
 
+export function structuredFinding(body = "发现问题"): import("@/src/shared/review-contract").StructuredFinding {
+  return { severity: "major", title: "问题", tags: [], description: body,
+    locations: [{ path: "fixture.ts", revision: "source", startLine: 1, endLine: 1 }],
+    impact: { direct: "结果错误", scope: "调用者", trigger: "调用函数" }, solutions: [{ description: "修复逻辑" }], preventions: ["添加边界测试"] };
+}
+export function fakeResult(findings: ReviewerResult["findings"]): ReviewerResult {
+  return { findings, submission: { schemaVersion: 1, summary: "检视完成", completion: "complete", limitations: [], findings: findings.map(f => ({ ...structuredFinding(f.body), severity: f.severity })) },
+    execution: { version: 2, attemptId: "fixture", sessionID: "fixture", opencodeVersion: "test", actualModel: { providerID: "test", modelID: "test" },
+      scope: { sourceSha: "s", targetSha: "t", baseSha: "b", changedPaths: [] }, rules: { profileHash: "test", resources: [] },
+      workflowVersion: "native-review/1", progress: { activity: "检视完成", limitations: [] }, durationMs: 0, status: "ACCEPTED", warnings: [] } };
+}
 export class FakeReviewer implements ReviewerPort {
   readonly order: string[] = [];
-  readonly results = new Map<string, ReviewerResult>();
+  readonly results = new Map<string, Pick<ReviewerResult, "findings">>();
   readonly failures = new Map<string, Error>();
   delayMs = 0;
   active = 0;
   maximumActive = 0;
 
-  async review(_projectId: string, details: MergeRequestSnapshot, _prepared: PreparedReview, signal: AbortSignal): Promise<ReviewerResult> {
+  async review(_projectId: string, details: MergeRequestSnapshot, _prepared: PreparedReview, signal: AbortSignal, options: ReviewOptions): Promise<ReviewerResult> {
     this.order.push(details.iid);
     this.active += 1;
     this.maximumActive = Math.max(this.maximumActive, this.active);
@@ -133,7 +144,11 @@ export class FakeReviewer implements ReviewerPort {
       await abortableDelay(this.delayMs, signal);
       const failure = this.failures.get(details.iid);
       if (failure) throw failure;
-      return clone(this.results.get(details.iid) ?? { findings: [] });
+      const result = fakeResult(clone(this.results.get(details.iid)?.findings ?? []));
+      result.execution.attemptId = options.attemptId;
+      result.execution.rules = options.rules;
+      result.execution.scope = _prepared.scope;
+      return result;
     } finally {
       this.active -= 1;
     }
@@ -170,6 +185,7 @@ export async function createRuntimeHarness(): Promise<RuntimeHarness> {
     git,
     reviewer,
     reports: new ReportStore(paths),
+    rulesRoot: path.join(root, "user-rules"),
     now: () => new Date(clock++),
     id: () => `test-id-${++ids}`,
   }).initialize();

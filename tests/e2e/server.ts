@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import next from "next";
-import { installRuntimeForTests } from "@/src/server/runtime";
+import { installRuntimeForTests } from "@/src/server/bootstrap";
 import { configureMr, createRuntimeHarness } from "../helpers/runtime";
 
 const host = "127.0.0.1";

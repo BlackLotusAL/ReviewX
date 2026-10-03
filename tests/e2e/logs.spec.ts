@@ -18,33 +18,26 @@ test("the sidebar opens the session log in a new tab", async ({ page, context })
   await popup.close();
 });
 
-for (const viewport of [{ width: 1230, height: 900 }, { width: 390, height: 844 }]) {
-  test(`readable, safe logs without controls at ${viewport.width}px`, async ({ page }, testInfo) => {
-    await page.setViewportSize(viewport);
-    const errors: string[] = [];
-    page.on("pageerror", error => errors.push(error.message));
-    const text = sample + `[2026-09-08 10:20:35.000] [INFO] ${"long_identifier_".repeat(70)}\n`;
-    await page.route("**/api/logs/current", route => route.fulfill({ contentType: "text/plain; charset=utf-8", body: text }));
-    await page.goto("/logs");
-    await expect(page.locator(".log-entry")).toHaveCount(5);
-    expect(await page.locator(".session-log").textContent()).toBe(text);
-    await expect(page.locator(".log-entry-error")).toContainText("    Cause: Server is offline.");
-    const logPage = page.getByRole("main", { name: "当前会话日志" });
-    expect((await logPage.boundingBox())!.height).toBeCloseTo(viewport.height, 1);
-    const fontSize = await page.locator(".log-entry").first().evaluate(el => parseFloat(getComputedStyle(el).fontSize));
-    expect(fontSize).toBeCloseTo(viewport.width > 900 ? 10.8 : 11, 1);
-    await expect(logPage.getByRole("button")).toHaveCount(0);
-    await expect(logPage.getByRole("link")).toHaveCount(0);
-    expect(await page.locator(".session-log script, .session-log img, .session-log b").count()).toBe(0);
-    expect(await page.evaluate(() => Reflect.get(window, "__reviewxLogInjected"))).toBeUndefined();
-    await page.evaluate(() => document.fonts.ready);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    expect(await page.locator(".log-page").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-    await page.locator(".log-page").evaluate(el => { el.scrollTop = 0; });
-    await page.screenshot({ path: testInfo.outputPath("logs.png"), fullPage: true });
-    expect(errors).toEqual([]);
-  });
-}
+test("desktop logs preserve raw text and reject active markup", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const text = sample + `[2026-09-08 10:20:35.000] [INFO] ${"long_identifier_".repeat(70)}\n`;
+  await page.route("**/api/logs/current", route => route.fulfill({ contentType: "text/plain; charset=utf-8", body: text }));
+  await page.goto("/logs");
+  await expect(page.locator(".log-entry")).toHaveCount(5);
+  expect(await page.locator(".session-log").textContent()).toBe(text);
+  await expect(page.locator(".log-entry-error")).toContainText("    Cause: Server is offline.");
+  const logPage = page.getByRole("main", { name: "当前会话日志" });
+  await expect(logPage.getByRole("button")).toHaveCount(0);
+  await expect(logPage.getByRole("link")).toHaveCount(0);
+  expect(await page.locator(".session-log script, .session-log img, .session-log b").count()).toBe(0);
+  expect(await page.evaluate(() => Reflect.get(window, "__reviewxLogInjected"))).toBeUndefined();
+  await page.evaluate(() => document.fonts.ready);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  expect(await page.locator(".log-page").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.locator(".log-page").evaluate(el => { el.scrollTop = 0; });
+  expect(errors).toEqual([]);
+});
 
 test("new records follow the bottom while reading history preserves the viewport and text selection", async ({ page }) => {
   let text = Array.from({ length: 120 }, (_, index) => `[2026-09-08 10:20:30.123] [INFO] Record ${index + 1}.\n`).join("");

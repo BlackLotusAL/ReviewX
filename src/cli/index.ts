@@ -4,11 +4,12 @@ import path from "node:path";
 import { createServer, type RequestListener, type Server } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { AppError, isAppError, unexpectedError } from "../server/errors";
-import { InstanceLock } from "../server/instance-lock";
-import { createLogFile, Logger } from "../server/logger";
-import { ensureDataPaths, resolveDataPaths } from "../server/paths";
-import { runProcess, terminateAllChildProcesses, type ResolvedCommand } from "../server/process";
-import { initializeRuntime, type ReviewXRuntime } from "../server/runtime";
+import { InstanceLock } from "../server/platform/instance-lock";
+import { createLogFile, Logger } from "../server/platform/logger";
+import { ensureDataPaths, resolveDataPaths } from "../server/platform/paths";
+import { runProcess, terminateAllChildProcesses, type ResolvedCommand } from "../server/platform/process";
+import { initializeRuntime } from "../server/bootstrap";
+import { type ReviewXRuntime } from "../server/runtime";
 
 const HOST = "127.0.0.1";
 
@@ -86,6 +87,8 @@ async function cleanupStaleWorkspaces(root: string, logger: Logger): Promise<voi
   for (const entry of entries) {
     const target = path.resolve(root, entry);
     if (path.dirname(target) !== path.resolve(root) || target === path.resolve(root)) continue;
+    // Runtime checks persisted processes before queued work can resume.
+    if (await fsp.stat(path.join(target, "task", "opencode-process.json")).then(() => true, () => false)) continue;
     await fsp.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch((error) => {
       logger.error({}, new AppError({
         code: "WORKSPACE_CLEANUP_ERROR",

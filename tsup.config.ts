@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: { reviewx: "src/cli/index.ts" },
+  entry: { reviewx: "src/cli/index.ts", "review-engine": "src/server/package-engine.ts" },
   format: ["esm"],
   platform: "node",
   target: "node22",

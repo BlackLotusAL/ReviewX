@@ -1,4 +1,4 @@
-import ReviewWorkspace from "./components/review-workspace";
+import ReviewWorkspace from "../src/client/review-workspace/review-workspace";
 
 export default function Home() {
   return <ReviewWorkspace />;

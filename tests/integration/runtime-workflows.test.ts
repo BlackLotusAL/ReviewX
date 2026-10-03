@@ -1,16 +1,21 @@
-import { mkdir, rm } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import { AppError } from "@/src/server/errors";
+import { ReviewXRuntime } from "@/src/server/runtime";
+import { resolveDataPaths } from "@/src/server/platform/paths";
+import { ReportStore } from "@/src/server/storage/report-store";
 import type { AttemptView, ReviewerResult } from "@/src/shared/types";
 import {
   configureMr,
   createRuntimeHarness,
+  fakeResult,
   registerAndRefresh,
   waitUntil,
   type RuntimeHarness,
 } from "../helpers/runtime";
 
-function reviewerResult(...bodies: string[]): ReviewerResult {
+function reviewerResult(...bodies: string[]): Pick<ReviewerResult, "findings"> {
   const severities = ["fatal", "major", "minor", "suggestion"] as const;
   return { findings: bodies.map((body, index) => ({ severity: severities[index % severities.length], body })) };
 }
@@ -37,6 +42,173 @@ async function latest(harness: RuntimeHarness, projectId: string, mrIid: string)
 }
 
 describe("ReviewX runtime workflows", () => {
+  it("keeps saved findings when cleanup warning persistence fails, then resumes FIFO once", async () => {
+    const harness = await createRuntimeHarness();
+    try {
+      for (const iid of ["1", "2"]) configureMr(harness, "101", iid);
+      await registerAndRefresh(harness, ["101"]);
+      harness.reviewer.delayMs = 80;
+      harness.reviewer.results.set("1", reviewerResult("saved finding"));
+      const prepare = harness.git.prepare.bind(harness.git);
+      let writesFail = false;
+      const mutate = harness.store.mutate.bind(harness.store);
+      vi.spyOn(harness.store, "mutate").mockImplementation(async operation => {
+        if (writesFail) throw failure("STATE_WRITE_ERROR");
+        return mutate(operation);
+      });
+      vi.spyOn(harness.git, "prepare").mockImplementation(async (...args) => {
+        const prepared = await prepare(...args);
+        if (args[1].iid === "1") prepared.cleanup = async () => { writesFail = true; throw new Error("locked directory"); };
+        return prepared;
+      });
+      await harness.runtime.createReview("101", "1");
+      await harness.runtime.createReview("101", "2");
+      await harness.runtime.waitForIdle();
+      expect((await latest(harness, "101", "1")).status).toBe("awaiting_confirmation");
+      expect(await harness.runtime.readReport((await latest(harness, "101", "1")).id)).toContain("saved finding");
+      expect(harness.runtime.snapshot().queuePaused?.code).toBe("STATE_WRITE_ERROR");
+      expect((await latest(harness, "101", "2")).status).toBe("queued");
+      writesFail = false;
+      await harness.runtime.resumeQueue(); await harness.runtime.waitForIdle();
+      await harness.runtime.resumeQueue(); await harness.runtime.waitForIdle();
+      expect(harness.reviewer.order).toEqual(["1", "2"]);
+      expect((await latest(harness, "101", "1")).status).toBe("awaiting_confirmation");
+    } finally { await harness.cleanup(); }
+  });
+
+  it("saves partial output and pauses on uncertain process exit without replaying generation", async () => {
+    const harness = await createRuntimeHarness();
+    try {
+      for (const iid of ["1", "2"]) configureMr(harness, "101", iid);
+      await registerAndRefresh(harness, ["101"]);
+      const result = fakeResult([]);
+      result.cleanupPending = true;
+      result.submission.completion = "incomplete";
+      result.submission.limitations = ["缺少部分上下文"];
+      vi.spyOn(harness.reviewer, "review").mockResolvedValueOnce(result);
+      await harness.runtime.createReview("101", "1");
+      await harness.runtime.createReview("101", "2");
+      await harness.runtime.waitForIdle();
+      expect((await latest(harness, "101", "1"))).toMatchObject({ status: "completed", result: "partial" });
+      expect(harness.runtime.snapshot().queuePaused?.code).toBe("OPENCODE_CLEANUP_FAILED");
+      expect(harness.git.cleanupCount).toBe(0);
+      await harness.runtime.resumeQueue(); await harness.runtime.waitForIdle();
+      expect(harness.git.cleanupCount).toBe(2);
+      expect(harness.reviewer.review).toHaveBeenCalledTimes(2);
+      expect((await latest(harness, "101", "2")).status).toBe("completed");
+    } finally { await harness.cleanup(); }
+  });
+  it("rejects invalid guidance before archiving or enqueueing, without stopping other reviews", async () => {
+    const harness = await createRuntimeHarness();
+    let release!: () => void, held = false;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    try {
+      for (const iid of ["1", "2", "3"]) configureMr(harness, "101", iid);
+      await registerAndRefresh(harness, ["101"]);
+      await harness.runtime.createReview("101", "1"); await harness.runtime.waitForIdle();
+      const original = await latest(harness, "101", "1");
+      const review = harness.reviewer.review.bind(harness.reviewer);
+      harness.reviewer.review = async (...args) => {
+        if (args[1].iid === "2") { held = true; await gate; }
+        return review(...args);
+      };
+      await harness.runtime.createReview("101", "2"); await harness.runtime.createReview("101", "3");
+      await waitUntil(() => held);
+      await mkdir(join(harness.root, "user-rules"));
+      await writeFile(join(harness.root, "user-rules", "broken.md"), Buffer.from([0]));
+      const mrCalls = harness.codeHub.calls.length;
+      await expect(harness.runtime.createReview("101", "1")).rejects.toMatchObject({ code: "REVIEW_RULE_ERROR", httpStatus: 400 });
+      expect((await attempts(harness, "101", "1"))).toHaveLength(1);
+      expect(await latest(harness, "101", "1")).toMatchObject({ id: original.id, status: "completed" });
+      expect(harness.codeHub.calls.length).toBe(mrCalls);
+      release();
+      await harness.runtime.waitForIdle();
+      expect((await latest(harness, "101", "2")).status).toBe("completed");
+      expect((await latest(harness, "101", "3")).status).toBe("completed");
+    } finally { release(); await harness.cleanup(); }
+  });
+  it("freezes guidance at enqueue time, including queued tasks, and picks up edits only for new tasks", async () => {
+    const harness = await createRuntimeHarness();
+    try {
+      for (const iid of ["1", "2", "3"]) configureMr(harness, "101", iid);
+      await registerAndRefresh(harness, ["101"]);
+      await mkdir(join(harness.root, "user-rules"));
+      const file = join(harness.root, "user-rules", "business.md");
+      await writeFile(file, "Original business fact");
+      const seen: Record<string, string[]> = {}, review = harness.reviewer.review.bind(harness.reviewer);
+      harness.reviewer.review = async (...args) => {
+        seen[args[1].iid] = args[4].rules.resources.map(r => r.body);
+        return review(...args);
+      };
+      harness.reviewer.delayMs = 150;
+      await harness.runtime.createReview("101", "1"); await harness.runtime.createReview("101", "2");
+      await writeFile(file, "New business fact");
+      await harness.runtime.createReview("101", "3");
+      await rm(file);
+      await harness.runtime.waitForIdle();
+      expect(seen).toEqual({ "1": ["Original business fact"], "2": ["Original business fact"], "3": ["New business fact"] });
+    } finally { await harness.cleanup(); }
+  });
+  it("the whole-attempt deadline also interrupts Git preparation", async () => {
+    const harness = await createRuntimeHarness();
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    try {
+      configureMr(harness, "101", "1"); await registerAndRefresh(harness, ["101"]);
+      vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => timeout(ms === 60 * 60_000 ? 50 : ms));
+      harness.git.delayMs = 500;
+      await harness.runtime.createReview("101", "1"); await harness.runtime.waitForIdle();
+      expect((await latest(harness, "101", "1")).error?.code).toBe("REVIEW_TIMEOUT");
+      expect(harness.reviewer.order).toEqual([]);
+    } finally { vi.restoreAllMocks(); await harness.cleanup(); }
+  });
+  it("preserves the primary review error when workspace cleanup also fails", async () => {
+    const harness = await createRuntimeHarness();
+    try {
+      configureMr(harness, "101", "1"); await registerAndRefresh(harness, ["101"]);
+      const prepare = harness.git.prepare.bind(harness.git);
+      harness.git.prepare = async (...args) => ({ ...await prepare(...args), cleanup: async () => { throw new Error("cleanup unavailable"); } });
+      harness.reviewer.failures.set("1", failure("PRIMARY_REVIEW_FAILURE"));
+      await harness.runtime.createReview("101", "1"); await harness.runtime.waitForIdle();
+      const attempt = await latest(harness, "101", "1");
+      expect(attempt.error).toMatchObject({ code: "PRIMARY_REVIEW_FAILURE", technicalDetails: expect.stringContaining("cleanup unavailable") });
+      expect(attempt.reportUrl).toBeUndefined();
+    } finally { await harness.cleanup(); }
+  });
+  it.each([0, 2])("keeps partial outcome through publication and persistence (%i findings)", async count => {
+    const harness = await createRuntimeHarness();
+    try {
+      configureMr(harness, "101", "1"); await registerAndRefresh(harness, ["101"]);
+      harness.reviewer.results.set("1", reviewerResult(...Array.from({ length: count }, (_, i) => `Verified ${i}`)));
+      const review = harness.reviewer.review.bind(harness.reviewer);
+      harness.reviewer.review = async (...args) => {
+        const result = await review(...args); result.submission.completion = "incomplete";
+        result.submission.limitations = ["Missing context"]; result.execution.progress.limitations = ["阻塞原因：Missing context"];
+        return result;
+      };
+      await harness.runtime.createReview("101", "1"); await harness.runtime.waitForIdle();
+      const first = await latest(harness, "101", "1");
+      expect(first.result).toBe("partial");
+      expect(first.progress?.limitations).toContain("阻塞原因：Missing context");
+      if (count) {
+        await harness.runtime.decideFinding(first.id, 1, "dismissed");
+        await harness.runtime.publishFinding(first.id, 2);
+      }
+      expect((await latest(harness, "101", "1"))).toMatchObject({ result: "partial", status: "completed" });
+      expect((await harness.store.read()).attemptsById[first.id].result).toBe("partial");
+      expect(harness.runtime.snapshot().projects[0].mergeRequests[0].result).toBe("partial");
+      await harness.runtime.createReview("101", "1"); await harness.runtime.waitForIdle();
+      expect((await latest(harness, "101", "1")).id).not.toBe(first.id);
+      await harness.runtime.shutdown();
+      const paths = resolveDataPaths({ LOCALAPPDATA: harness.root });
+      const restarted = await new ReviewXRuntime({ paths, store: harness.store, logger: harness.logger, codeHub: harness.codeHub,
+        git: harness.git, reviewer: harness.reviewer, reports: new ReportStore(paths) }).initialize();
+      try {
+        const restored = (await restarted.getMrDetail("101", "1")).attempts[0];
+        expect(restored.result).toBe("partial");
+        expect(restored.progress?.limitations).toContain("阻塞原因：Missing context");
+      } finally { await restarted.shutdown(); }
+    } finally { await harness.cleanup(); }
+  });
   it("preserves review timing through decisions, publication, persistence and a fresh attempt", async () => {
     const harness = await createRuntimeHarness();
     try {
@@ -182,7 +354,7 @@ describe("ReviewX runtime workflows", () => {
     }
   });
 
-  it("marks a failed review and stops every queued attempt without auto-continuing", async () => {
+  it("marks a failed review and continues other queued attempts", async () => {
     const harness = await createRuntimeHarness();
     try {
       for (const iid of ["1", "2", "3"]) configureMr(harness, "101", iid);
@@ -196,9 +368,9 @@ describe("ReviewX runtime workflows", () => {
       await harness.runtime.waitForIdle();
 
       expect((await latest(harness, "101", "1")).status).toBe("review_failed");
-      expect((await latest(harness, "101", "2")).status).toBe("stopped");
-      expect((await latest(harness, "101", "3")).status).toBe("stopped");
-      expect(harness.reviewer.order).toEqual(["1"]);
+      expect((await latest(harness, "101", "2")).status).toBe("completed");
+      expect((await latest(harness, "101", "3")).status).toBe("completed");
+      expect(harness.reviewer.order).toEqual(["1", "2", "3"]);
       expect((await harness.store.read()).reviewQueue).toEqual([]);
       expect((await harness.store.read()).diagnostics.at(-1)).toMatchObject({ operation: "MR review", error: { code: "FAKE_REVIEW_FAILURE" } });
     } finally {
@@ -206,7 +378,7 @@ describe("ReviewX runtime workflows", () => {
     }
   });
 
-  it("rejects an MR that changes after Git preparation before OpenCode or report creation", async () => {
+  it("loads MR once and reviews the fixed snapshot without checking later metadata", async () => {
     const harness = await createRuntimeHarness();
     try {
       const original = configureMr(harness, "101", "1");
@@ -218,13 +390,14 @@ describe("ReviewX runtime workflows", () => {
       await harness.runtime.waitForIdle();
 
       const attempt = await latest(harness, "101", "1");
-      expect(attempt.status).toBe("review_failed");
-      expect(attempt.error?.code).toBe("MR_CHANGED_DURING_PREPARATION");
+      expect(attempt.status).toBe("completed");
+      expect(attempt.error).toBeUndefined();
+      expect(harness.codeHub.viewIndexes.get("101:1")).toBe(1);
       expect(attempt.reviewFinishedAt).toBeDefined();
       expect(attempt.reviewFinishedAt).toBe(attempt.completedAt);
       expect(harness.runtime.snapshot().projects[0].mergeRequests[0].reviewFinishedAt).toBe(attempt.reviewFinishedAt);
-      expect(attempt.reportUrl).toBeUndefined();
-      expect(harness.reviewer.order).toEqual([]);
+      expect(attempt.reportUrl).toBeDefined();
+      expect(harness.reviewer.order).toEqual(["1"]);
       expect(harness.git.cleanupCount).toBe(1);
     } finally {
       await harness.cleanup();
@@ -396,26 +569,16 @@ describe("ReviewX runtime workflows", () => {
     }
   });
 
-  it("enters a fatal state on log write failure before starting new external work, while still allowing removal", async () => {
+  it("log failure is a warning and does not prevent review", async () => {
     const harness = await createRuntimeHarness();
     try {
-      configureMr(harness, "101", "1");
-      await registerAndRefresh(harness, ["101"]);
-      await rm(harness.logger.filePath);
-      await mkdir(harness.logger.filePath);
-
-      await expect(harness.runtime.createReview("101", "1")).rejects.toMatchObject({ code: "LOG_WRITE_ERROR" });
-      expect(harness.runtime.snapshot().fatalError?.code).toBe("LOG_WRITE_ERROR");
-      expect(harness.reviewer.order).toEqual([]);
-      expect((await attempts(harness, "101", "1"))).toEqual([]);
-      await expect(harness.runtime.refreshMrs()).rejects.toMatchObject({ code: "LOG_WRITE_ERROR" });
-      await waitUntil(async () => (await harness.store.read()).diagnostics.some((record) => record.operation === "Session logging"));
-
-      await harness.runtime.removeProject("101");
-      expect(harness.runtime.snapshot().projects).toEqual([]);
-    } finally {
-      await harness.cleanup();
-    }
+      configureMr(harness, "101", "1"); await registerAndRefresh(harness, ["101"]);
+      await rm(harness.logger.filePath); await mkdir(harness.logger.filePath);
+      await harness.runtime.createReview("101", "1"); await harness.runtime.waitForIdle();
+      expect(harness.runtime.snapshot().fatalError).toBeNull();
+      expect(harness.runtime.snapshot().warnings?.length).toBeGreaterThan(0);
+      expect((await latest(harness, "101", "1")).status).toBe("completed");
+    } finally { await harness.cleanup(); }
   });
 });
 

@@ -13,7 +13,7 @@ ReviewX Web API 是本机单实例网页与 Node.js 服务之间的内部接口�
 - 客户端保存最近一次 `revision`；值变化时才重新读取当前打开的 MR 详情。
 - 页面关闭或组件卸载后停止轮询，服务和活动任务继续运行。
 - `GET /api/state` 和 `GET /api/mrs/...` 只读取 ReviewX 本地状态，不调用 CodeHub、Git、OpenCode 或评论接口。
-- 轮询不是 MR 刷新。只有用户点击“刷新 MR”触发 `POST /api/mrs/refresh` 时才调用 CodeHub。
+- 轮询不是 MR 刷新。只有用户点击“刷新 MR”触发 `POST /api/mrs/refresh` 时才重新获取 MR 列表；登记项目、执行检视和发送评论各自调用所需 CodeHub 命令。
 
 `GET /api/state` 返回的主要字段：
 
@@ -23,7 +23,7 @@ ReviewX Web API 是本机单实例网页与 Node.js 服务之间的内部接口�
 | `refreshOperation` | 对象 | MR 刷新的 `idle / refreshing / failed` 状态、时间、当前 Project 和错误 |
 | `publicationBusy` | 布尔值 | 是否已有一条评论正在全局发送 |
 | `publicationProjectId` | 字符串，可选 | 当前评论发送所属 Project |
-| `fatalError` | 错误对象或 `null` | 日志等致命运行错误 |
+| `fatalError` | 错误对象或 `null` | 状态持久化等致命运行错误；日志故障单独警告 |
 | `projects` | 数组 | 按登记顺序返回的 Project、最近成功 MR 快照、状态、阶段和队列位置 |
 | `currentLogUrl` | 字符串 | 当前会话日志读取地址，固定为 `/api/logs/current` |
 
@@ -60,24 +60,54 @@ ReviewX Web API 是本机单实例网页与 Node.js 服务之间的内部接口�
 `MrDetailView` 包含：
 
 - `project`：`id`、显示名称 `name` 和当前是否登记的 `registered`。
-- `mergeRequest`：Project ID、IID、标题、CodeHub 原始状态、`updatedAt`、源分支、目标分支和可选 `webUrl`。旧 v1 状态可无该字段；下一次成功刷新后补齐。
+- `mergeRequest`：Project ID、IID、标题、CodeHub 原始状态、`updatedAt`、源分支、目标分支和可选 `webUrl`。新一代数据不迁移旧状态。
 - `attempts`：完整 attempt 历史；报告路径只以受控 `reportUrl` 暴露，不返回磁盘路径。
 
 MR 列表项除 MR 快照外，还会包含页面状态 `status`、可选执行阶段 `phase`、可选队列位置 `queuePosition`、最近 attempt 引用、主操作 `primaryAction` 和已脱敏错误。
 
-列表项还提供可选的 `reviewStartedAt` 和 `reviewFinishedAt`（ISO 时间字符串），对应最近 attempt 的实际执行开始和检视结束时间。执行中由客户端每秒更新耗时，不增加接口请求。结束时间包含准备与清理，不包含排队、人工处理或评论发送；停止、失败同样记录结束时间。详情 attempt 的开始时间沿用 `startedAt`，新增可选 `reviewFinishedAt`；它不会随问题决策或发布更新，不能用可能被更新的 `completedAt` 替代。旧记录和异常退出后缺少可靠结束时间的记录不回填，页面显示“—”；未开始的任务不显示耗时。
+### 检视耗时
 
-报告和日志接口会同时校验状态引用、规范路径和真实路径均位于 `%LOCALAPPDATA%\ReviewX` 数据目录；不能通过 URL 参数读取任意本地文件。
+列表项提供可选的 `reviewStartedAt` 和 `reviewFinishedAt`（ISO 时间字符串），对应最近 attempt 的实际执行开始和检视结束时间。执行中由客户端每秒更新耗时，不增加接口请求。耗时包含准备与清理，不包含排队、人工处理或评论发送；停止、失败同样记录结束时间。详情 attempt 使用 `startedAt` 和可选 `reviewFinishedAt`；后者不会随问题决策或发布更新，不能用可能被更新的 `completedAt` 替代。旧记录和异常退出后缺少可靠结束时间的记录不回填，页面显示“—”；未开始的任务不显示耗时。
 
-## CodeHub 状态约定
+### 多轮进度与执行信息
+
+MR 行和 attempt 详情可选提供 `progress`：`activity`（当前活动）和 `limitations`。事件仅用于观察，不参与结果验收。进度变化推动视图 `revision`，不写历史状态。
+
+成功 attempt 详情可选提供 `execution`：`version=2`、`status=ACCEPTED`、`actualModel`（`providerID/modelID`）、`sessionID`、`durationMs`、`progress`、`opencodeVersion`。从关联独立文件读取；旧 attempt 缺少文件时省略，页面显示“执行信息不可用”。内部 scope、规则和证据不进入 CodeHub 评论。业务合同及接受条件见 [PRD](PRD.md)。
+
+### 文件读取与正文
+
+报告和日志接口会同时校验状态引用、规范路径和真实路径均位于 `%LOCALAPPDATA%\ReviewX\native-v2` 数据目录；不能通过 URL 参数读取任意本地文件。
+
+报告正文原文保留，只有 CodeHub 发送入口做 CRLF 规范化。未登记的孤立报告没有详情 URL，也不可通过 attempt 发布或读取。原生 HTTP/工具不属于公开 Web API，绑定 attempt/session 和随机 loopback 凭据。
+
+每次 attempt 只在开始时读取一次 MR，报告对应固定 base→source。无法完整检视时结果为 partial。执行记录为 v2，包含工作流版本、实际模型、固定版本、规则快照和可选耗时指标，不再使用材料收据。
+
+## CodeHub 状态与地址约定
 
 ReviewX 调用 MR 列表时固定传递 `--state open`，这是 CodeHub CLI 的筛选参数。`codehub mr view` JSON 返回值使用独立的数据词汇：`state` 为 `open` 或 `opened` 时均视为开放状态，比较时忽略首尾空白和大小写。其他状态不会被推断或纠正，并在 Git、OpenCode 启动前终止当前刷新或 attempt。
 
-每次新的 `mr view` 响应还必须包含 `web_url`，且值必须是无用户名、密码的 HTTPS URL。缺失或非法值以 `CODEHUB_INVALID_RESPONSE` 终止本次刷新，并提示升级兼容的 CodeHub CLI；既有旧状态仍可启动和读取。
-
-
+每次新的 `mr view` 响应必须包含 `web_url`，且值必须是无用户名、密码的 HTTPS URL。缺失或非法值以 `CODEHUB_INVALID_RESPONSE` 终止操作，并提示升级兼容的 CodeHub CLI。MR 快照可携带 description 作为检视上下文。
 ### 项目网页链接
 
 `GET /api/state` 的 `projects[]` 必须包含字符串 `webUrl`，来源为 `codehub repo view` 的必填字符串 `web_url`。项目登记时原样保存并返回，不检查 URL 格式、协议或凭据；手动刷新与状态轮询均不补查项目地址。不提供缺失地址降级或旧项目数据迁移。
 
 项目卡片主体定位到本页项目 MR 分组；`#ID` 在新标签页打开 `webUrl`，移除按钮保持独立操作。预览中的示例外链不跳转。
+
+## 部分检视结果
+
+Attempt.result 和 MR 列表 result 支持 pass / findings / partial；字段缺失沿用历史行为。partial 独立于 status：有有效 Finding 时 awaiting_confirmation，处理完毕或无 Finding 时 completed，但始终表示部分完成。现有逐条发布 API 不变。详情 progress 可从 execution.progress 恢复当前简要限制。
+
+### 用户补充规则预检
+
+POST /api/reviews 在创建 attempt、归档旧结果之前读取并冻结安装包 resources/rules 的直属 Markdown。不可读、非普通文件、非法编码或超限返回 HTTP 400（REVIEW_RULE_ERROR）；已有任务与结果保持不变。不增加内容关键词拦截或旧配置迁移。
+
+## 原生检视 v2 接口增量
+
+- POST /api/reviews/resume：请求 {}，重试收尾并继续暂停队列；没有暂停时不做操作，并发恢复返回 409。不会重发模型请求。
+- AppStateView 增加 queuePaused（可选 SafeErrorView）和 warnings（字符串数组）。
+- ReviewProgress 改为 activity、limitations，不再返回工具次数及材料交付计数。
+- AttemptView 增加 warnings；Finding 增加 structured，其字段合同见 PRD 的输出合同。body 为固定渲染后冻结的正文，发布接口仍发送该正文。
+- MR 快照支持可选 description，作为原生检视上下文。
+- execution.version=2；不再包含 receipts、terminal、permissionHash 等旧协议字段。
+- 本代使用独立数据目录，无历史接口兼容承诺。

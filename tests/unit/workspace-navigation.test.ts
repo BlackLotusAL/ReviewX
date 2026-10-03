@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
-import { projectShortName, projectTree, reviewQueue, nextPendingMr, mrAnchor } from "@/src/client/workspace-navigation";
-import { createReviewPreviewData } from "@/src/preview/mr-fixtures";
+import { projectShortName, projectTree, reviewQueue, nextPendingMr, mrAnchor } from "@/src/client/review-workspace/workspace-navigation";
+import { createReviewPreviewData } from "@/src/client/review-workspace/preview-data";
 
 test("groups shared nested directories without merging same-name projects", () => {
   const base = createReviewPreviewData().state.projects[0];

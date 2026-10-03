@@ -3,9 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import type { ReviewAttempt } from "@/src/shared/types";
-import { FileLock } from "@/src/server/file-lock";
-import { ensureDataPaths, resolveDataPaths } from "@/src/server/paths";
-import { StateStore } from "@/src/server/state-store";
+import { FileLock } from "@/src/server/storage/file-lock";
+import { ensureDataPaths, resolveDataPaths } from "@/src/server/platform/paths";
+import { StateStore } from "@/src/server/storage/state-store";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -48,7 +48,7 @@ describe("atomic persistent state", () => {
     await lock.release();
   });
 
-  test("startup turns queued/reviewing/stopping into stopped and never resumes them", async () => {
+  test("startup keeps queued work and stops interrupted reviews", async () => {
     const { paths, store } = await setup();
     await store.mutate((draft) => {
       for (const [id, status] of [["q", "queued"], ["r", "reviewing"], ["s", "stopping"]] as const) draft.attemptsById[id] = attempt(id, status);
@@ -56,8 +56,8 @@ describe("atomic persistent state", () => {
       draft.activeReviewAttemptId = "r";
     });
     const recovered = await new StateStore(paths).initialize("2026-09-02T01:00:00.000Z");
-    expect(Object.values(recovered.attemptsById).map((item) => item.status)).toEqual(["stopped", "stopped", "stopped"]);
-    expect(recovered.reviewQueue).toEqual([]);
+    expect(Object.values(recovered.attemptsById).map((item) => item.status)).toEqual(["queued", "stopped", "stopped"]);
+    expect(recovered.reviewQueue).toEqual(["q"]);
     expect(recovered.activeReviewAttemptId).toBeNull();
     expect(Object.values(recovered.attemptsById).every(item => item.reviewFinishedAt === undefined)).toBe(true);
   });
@@ -116,7 +116,7 @@ describe("atomic persistent state", () => {
     const finished = "2026-09-02T00:03:08Z";
     await store.mutate(draft => { draft.attemptsById.done = { ...attempt("done", "completed"), startedAt: "2026-09-02T00:00:00Z", reviewFinishedAt: finished }; });
     const restored = await new StateStore(paths).initialize("2026-09-03T00:00:00Z");
-    expect(restored.version).toBe(1);
+    expect(restored.version).toBe(2);
     expect(restored.attemptsById.done.reviewFinishedAt).toBe(finished);
   });
 });

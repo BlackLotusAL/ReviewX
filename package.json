@@ -9,11 +9,15 @@
     "reviewx": "dist/reviewx.js"
   },
   "files": [
-    ".next",
+    ".next/BUILD_ID",
+    ".next/server",
+    ".next/static",
+    ".next/*.json",
     "dist",
     "public",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "resources"
   ],
   "engines": {
     "node": ">=22"
@@ -23,16 +27,18 @@
     "dev": "next dev --hostname 127.0.0.1 --port 3210",
     "build": "next build && tsup",
     "start": "node dist/reviewx.js",
-    "lint": "eslint .",
+    "lint": "eslint . && pnpm check:boundaries",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm test:unit && pnpm test:integration",
+    "test": "vitest run tests/unit tests/integration",
+    "test:coverage": "vitest run tests/unit tests/integration --coverage",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:ai": "tsx tests/ai/real-opencode-smoke.ts",
     "test:package": "tsx tests/package/verify-package.ts",
-    "prepack": "pnpm build"
+    "prepack": "pnpm build",
+    "check:boundaries": "tsx scripts/check-boundaries.ts"
   },
   "dependencies": {
     "next": "16.2.9",
@@ -52,6 +58,7 @@
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
+    "@vitest/coverage-v8": "4.1.11",
     "eslint": "9.39.2",
     "eslint-config-next": "16.2.9",
     "jsdom": "30.0.1",

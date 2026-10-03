@@ -1,6 +1,6 @@
 import { ZodError } from "zod";
 import { AppError, unexpectedError, validationError } from "./errors";
-import { Redactor } from "./redaction";
+import { Redactor } from "./platform/redaction";
 
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
 
