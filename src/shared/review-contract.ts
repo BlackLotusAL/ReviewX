@@ -23,6 +23,18 @@ export interface ReviewScope { sourceSha: string; targetSha: string; baseSha: st
 export interface RuleResource { id: string; body: string; resourceHash: string }
 export interface FrozenRules { profileHash: string; resources: RuleResource[]; warnings?: string[] }
 export interface ReviewProgress { activity: string; limitations: string[] }
+export interface ReviewPerformance {
+  httpRequests: number;
+  generationRequests: number;
+  observedModelSteps: number;
+  providerAttempts: number | null;
+  tokens: { input: number | null; output: number | null; reasoning: number | null; cacheRead: number | null; cacheWrite: number | null };
+  toolCalls: number;
+  repeatedReads: number;
+  eventStreamInterrupted: boolean;
+  reconciliationFailed: boolean;
+  traceWriteFailed: boolean;
+}
 export interface ExecutionRecord {
   version: 2;
   attemptId: string;
@@ -37,4 +49,5 @@ export interface ExecutionRecord {
   status: "ACCEPTED";
   warnings: string[];
   metrics?: Record<string, number>;
+  performance?: ReviewPerformance;
 }

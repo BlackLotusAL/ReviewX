@@ -144,8 +144,8 @@ export class ReportStore {
     try {
       const record = JSON.parse(await readContainedFile(this.paths.root, reportPath.replace(/report\.md$/u, "execution.v1.json")));
       if (record.version !== 2 || record.status !== "ACCEPTED") return undefined;
-      const { version, status, actualModel, sessionID, durationMs, progress, opencodeVersion } = record;
-      return { version, status, actualModel, sessionID, durationMs, progress, opencodeVersion };
+      const { version, status, actualModel, sessionID, durationMs, progress, opencodeVersion, performance } = record;
+      return { version, status, actualModel, sessionID, durationMs, progress, opencodeVersion, performance };
     } catch { return undefined; }
   }
 }

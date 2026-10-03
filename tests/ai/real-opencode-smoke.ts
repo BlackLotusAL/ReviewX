@@ -9,13 +9,16 @@ import { OpenCodeReviewer } from "@/src/server/integrations/opencode";
 import { freezeReviewRules } from "@/src/server/review/rules";
 import { digest } from "@/src/server/review/materials";
 import { ensureDataPaths, resolveDataPaths } from "@/src/server/platform/paths";
+import { ReviewTrace } from "@/src/server/review/trace";
+import { runOneshotBaseline } from "./oneshot-baseline";
 
 const execute = promisify(execFile);
 const engine: typeof import("@/src/server/package-engine") = process.env.REVIEWX_ACCEPTANCE_ENGINE
   ? await import(pathToFileURL(process.env.REVIEWX_ACCEPTANCE_ENGINE).href)
   : { GitPreparer, OpenCodeReviewer, freezeReviewRules, ensureDataPaths, resolveDataPaths };
 async function git(cwd: string, ...args: string[]) {
-  return (await execute("git", args, { cwd, windowsHide: true, encoding: "utf8" })).stdout.trim();
+  return (await execute("git", args, { cwd, windowsHide: true, encoding: "utf8", env: { ...process.env,
+    GIT_AUTHOR_DATE: "2026-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2026-01-01T00:00:00Z" } })).stdout.trim();
 }
 async function checkoutCommit(cwd: string) {
   try { return await git(cwd, "rev-parse", "HEAD"); }
@@ -31,9 +34,11 @@ const attemptId = new Date().toISOString().replace(/[:.]/gu, "-");
 const projectRoot = path.resolve(import.meta.dirname, "../..");
 const evidence = path.join(projectRoot, "test-results/acceptance", attemptId);
 const scenario = process.env.REVIEWX_ACCEPTANCE_CASE ?? "defects";
-if (!["defects", "clean", "lifetime-defects", "lifetime-clean", "async-defects", "async-clean"].includes(scenario)) throw new Error("Unknown acceptance case");
+if (!["defects", "clean", "lifetime-defects", "lifetime-clean", "async-defects", "async-clean", "exception-defects", "exception-clean", "concurrency-defects", "concurrency-clean", "rules-defects", "rules-clean"].includes(scenario)) throw new Error("Unknown acceptance case");
 await mkdir(evidence, { recursive: true });
 process.stdout.write(`Acceptance artifacts: ${evidence}\n`);
+const trace = new ReviewTrace(attemptId, path.join(evidence, "trace.jsonl"));
+const reviewSignal = AbortSignal.timeout(60 * 60_000);
 try {
   const repository = path.join(root, "origin"); await mkdir(repository);
   await git(repository, "init", "--initial-branch=main");
@@ -56,16 +61,37 @@ try {
     baseline["loader.py"] = "async def fetch_value():\n    return 42\n\nasync def load_value():\n    return await fetch_value()\n";
     baseline["consumer.py"] = "from loader import load_value\n\nasync def consume():\n    value = await load_value()\n    return value + 1\n";
   }
+  if (scenario.startsWith("exception")) {
+    for (const key of Object.keys(baseline)) delete baseline[key];
+    baseline["loader.py"] = "import json\ndef load(path):\n    try:\n        with open(path) as f:\n            return json.load(f)\n    except (OSError, ValueError):\n        return {}\n";
+    baseline["caller.py"] = "from loader import load\n# Missing config files are supported and should use defaults.\ndef start(path):\n    return load(path).get('port', 8080)\n";
+  }
+  if (scenario.startsWith("concurrency")) {
+    for (const key of Object.keys(baseline)) delete baseline[key];
+    baseline["loader.py"] = "import asyncio\nlock = asyncio.Lock()\nvalue = 0\nasync def increment():\n    global value\n    async with lock:\n        current = value\n        await asyncio.sleep(0)\n        value = current + 1\n";
+    baseline["caller.py"] = "import asyncio\nimport loader\nasync def run():\n    await asyncio.gather(loader.increment(), loader.increment())\n    assert loader.value == 2\n";
+  }
+  if (scenario.startsWith("rules")) {
+    for (const key of Object.keys(baseline)) delete baseline[key];
+    baseline["AGENTS.md"] = "All request timeout constants must be at most 30 seconds.\n";
+    baseline["loader.py"] = "REQUEST_TIMEOUT_SECONDS = 30\n";
+    await mkdir(path.join(repository, "scoped"));
+    baseline["scoped/AGENTS.md"] = "In this directory, request timeout constants may be up to 120 seconds; this overrides the parent limit.\n";
+    baseline["scoped/loader.py"] = "REQUEST_TIMEOUT_SECONDS = 30\n";
+  }
   for (const [file, body] of Object.entries(baseline)) await writeFile(path.join(repository, file), body);
   await git(repository, "add", "."); await git(repository, "commit", "-m", "synthetic Qt baseline");
   await git(repository, "switch", "-c", "feature");
-  const changedFiles = scenario.startsWith("lifetime") ? ["value.h"] : scenario.startsWith("async") ? ["loader.py"] : ["delay.h", "pyqt_delay.py", "pyside_delay.py"];
+  const changedFiles = scenario.startsWith("lifetime") ? ["value.h"] : scenario.startsWith("rules") ? ["loader.py", "scoped/loader.py"] : /^(async|exception|concurrency)/u.test(scenario) ? ["loader.py"] : ["delay.h", "pyqt_delay.py", "pyside_delay.py"];
   for (const file of changedFiles) {
     const clean = scenario.endsWith("clean");
     let body = baseline[file];
-    if (clean) body += file.endsWith(".h") ? "// Preserve the existing behavior.\n" : "# Preserve the existing behavior.\n";
+    if (scenario.startsWith("rules")) body = body.replace("= 30", file.startsWith("scoped/") ? "= 90" : clean ? "= 20" : "= 90");
+    else if (clean) body += file.endsWith(".h") ? "// Preserve the existing behavior.\n" : "# Preserve the existing behavior.\n";
     else if (scenario.startsWith("lifetime")) body = "#pragma once\n#include <memory>\ninline int* makeValue() {\n  auto value = std::make_unique<int>(42);\n  return value.get();\n}\n";
     else if (scenario.startsWith("async")) body = body.replace("return await fetch_value()", "return fetch_value()");
+    else if (scenario.startsWith("exception")) body = body.replace("(OSError, ValueError)", "ValueError");
+    else if (scenario.startsWith("concurrency")) body = body.replace("    async with lock:\n", "").replace(/^        /gmu, "    ");
     else body = body.replace("seconds * 1000", "seconds");
     await writeFile(path.join(repository, file), body);
   }
@@ -79,7 +105,7 @@ try {
   const project = { webUrl: "https://example.test/project", id: "9001", name: "synthetic/Qt", cloneUrl, addedAt: "now", updatedAt: "now" };
   const details = { projectId: project.id, iid: "1", title: "Synthetic Qt review", state: "open", updatedAt: "now", sourceBranch: "feature", targetBranch: "main" };
   const prepareStarted = Date.now();
-  prepared = await new engine.GitPreparer(paths, environment).prepare(project, details, new AbortController().signal);
+  prepared = await new engine.GitPreparer(paths, environment).prepare(project, details, reviewSignal, trace);
   const prepareMs = Date.now() - prepareStarted;
   let rules = await engine.freezeReviewRules(paths.root, project.id, prepared.scope);
   if (process.env.REVIEWX_GENERIC_RULES === "with") {
@@ -90,8 +116,10 @@ try {
   // Build fixture evidence independently; do not warm the review engine's cache.
   const source = Object.fromEntries(await Promise.all(Object.keys(baseline).map(async file => [file, (await execute("git", ["show", `${prepared!.sourceSha}:${file}`], { cwd: repository, windowsHide: true, encoding: "utf8" })).stdout])));
   await writeFile(path.join(evidence, "fixture.json"), JSON.stringify({ baseline, source, scope: prepared.scope }, null, 2));
-  const result = await new engine.OpenCodeReviewer(process.env).review(project.id, details, prepared, new AbortController().signal, { attemptId, rules,
-    onProgress: p => process.stdout.write(p.activity + "\n") });
+  const result = process.env.REVIEWX_BENCHMARK_BASELINE === "oneshot"
+    ? await runOneshotBaseline(details, prepared, reviewSignal, { attemptId, rules, trace })
+    : await new engine.OpenCodeReviewer(process.env).review(project.id, details, prepared, reviewSignal, { attemptId, rules, trace,
+      onProgress: p => process.stdout.write(p.activity + "\n") });
   if (!result.submission || !result.execution) throw new Error("Missing production result");
   await writeFile(path.join(evidence, "raw-output.txt"), result.rawOutput ?? "");
   if (result.repairOutput !== undefined) await writeFile(path.join(evidence, "repair-output.txt"), result.repairOutput);
@@ -114,12 +142,19 @@ try {
     const terms = scenario.startsWith("lifetime") ? /悬垂|释放|销毁|dangling|生命周期/iu : /await|协程|coroutine/iu;
     if (!result.submission.findings.some(f => f.locations.some(e => e.path === file) && terms.test(JSON.stringify(f)))) throw new Error("Quality failed: missing " + scenario);
   }
+  if (/^(exception|concurrency|rules)-defects$/u.test(scenario)) {
+    const terms = scenario.startsWith("exception") ? /OSError|FileNotFound|异常|不存在/iu : scenario.startsWith("concurrency") ? /竞态|并发|更新|race/iu : /30|规则|超时/iu;
+    if (!result.submission.findings.some(f => f.locations.some(l => l.path === "loader.py") && terms.test(JSON.stringify(f)))) throw new Error("Quality failed: missing " + scenario);
+  }
+  if (scenario.startsWith("rules") && result.submission.findings.some(f => f.locations.some(l => l.path === "scoped/loader.py"))) throw new Error("Quality failed: ignored nearer scoped rule");
   await writeFile(path.join(evidence, "verification.json"), JSON.stringify({ technical: "passed", quality: "automated fixture checks passed; manual review required", scenario, genericRules: process.env.REVIEWX_GENERIC_RULES ?? "without", benchmarkGroup: process.env.REVIEWX_BENCHMARK_GROUP, prepareMs, modelMs: result.execution.durationMs, installedEngine: !!process.env.REVIEWX_ACCEPTANCE_ENGINE, system: `${os.platform()} ${os.release()} ${os.arch()}`, node: process.version, commit: await checkoutCommit(projectRoot), bodies }, null, 2));
   process.stdout.write(`Production acceptance: ${evidence}\n`);
 } catch (error) {
-  await writeFile(path.join(evidence, "failure.json"), JSON.stringify({ technical: "failed", scenario, genericRules: process.env.REVIEWX_GENERIC_RULES ?? "without", reason: error instanceof Error ? error.message : String(error), code: (error as { code?: string }).code ?? "AI_ACCEPTANCE_FAILED" }, null, 2));
+  await writeFile(path.join(evidence, "failure.json"), JSON.stringify({ technical: "failed", scenario, genericRules: process.env.REVIEWX_GENERIC_RULES ?? "without", reason: error instanceof Error ? error.message : String(error), code: reviewSignal.aborted ? "REVIEW_TIMEOUT" : (error as { code?: string }).code ?? "AI_ACCEPTANCE_FAILED" }, null, 2));
   throw error;
 } finally {
+  trace.emit("acceptance.finished", { timedOut: reviewSignal.aborted });
+  await trace.flush();
   await prepared?.cleanup();
   if (path.dirname(root) !== os.tmpdir()) throw new Error("Unsafe temporary root");
   await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });

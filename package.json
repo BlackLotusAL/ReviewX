@@ -36,6 +36,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:ai": "tsx tests/ai/real-opencode-smoke.ts",
+    "test:ai:performance": "tsx tests/ai/performance-benchmark.ts",
     "test:package": "tsx tests/package/verify-package.ts",
     "prepack": "pnpm build",
     "check:boundaries": "tsx scripts/check-boundaries.ts"

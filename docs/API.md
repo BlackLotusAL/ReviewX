@@ -111,3 +111,9 @@ POST /api/reviews 在创建 attempt、归档旧结果之前读取并冻结安装
 - MR 快照支持可选 description，作为原生检视上下文。
 - execution.version=2；不再包含 receipts、terminal、permissionHash 等旧协议字段。
 - 本代使用独立数据目录，无历史接口兼容承诺。
+
+### 检视性能摘要（可选，兼容已有 v2 报告）
+
+`AttemptView.execution.performance` 增加 httpRequests、generationRequests、observedModelSteps、providerAttempts、tokens、toolCalls、repeatedReads 以及 eventStreamInterrupted/reconciliationFailed/traceWriteFailed。tokens 分 input/output/reasoning/cacheRead/cacheWrite；无法观测的值为 null，历史报告可无 performance。providerAttempts 当前为 null，生成 POST 数、模型 step 数、HTTP 请求数不可互换。
+
+五分钟软目标不会产生新的失败状态；progress.activity 提示继续执行及当前工作。候选复核不足仍使用现有 partial/incomplete 契约。保存与清理后的最终耗时在本地独立 JSONL trace 中，不修改已保存的不可变报告，也不改变发布接口。详见 [性能说明](REVIEW_PERFORMANCE.md)。

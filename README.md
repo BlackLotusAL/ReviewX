@@ -98,7 +98,7 @@ pnpm test:package
 
 ## 原生检视与故障处理
 
-检视使用 OpenCode 原生四代理审查和逐问题独立复核。全部代理沿用本机 OpenCode 默认模型，无品牌或版本白名单；缺少所需原生接口、任务工具或权限能力时会提示兼容性错误。实现参考与差异见 resources/review-workflow-provenance.md。
+检视支持两种工作流：默认 `legacy` 保留 OpenCode 原生四代理审查和逐问题独立复核；设置 `REVIEWX_WORKFLOW=balanced` 启用一次综合发现、主机调度的小批量独立复核（每批最多 4 个候选，并发 2）和确定性汇总。真实样本质量验收通过前不切换默认值。全部代理沿用本机 OpenCode 默认模型，无品牌或版本白名单；缺少所需原生接口、任务工具或权限能力时会提示兼容性错误。实现参考见 resources/review-workflow-provenance.md，性能观测与验收见 [检视性能说明](docs/REVIEW_PERFORMANCE.md)。
 
 仓库根目录和变更路径祖先目录的 AGENTS.md/CLAUDE.md 提供项目规则，resources/rules 提供入队时冻结的全局补充。表达偏好不能改变固定输出章节。
 

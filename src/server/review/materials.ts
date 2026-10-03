@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { AppError, type AppErrorOptions } from "../errors";
-export const REVIEW_LIMITS = Object.freeze({ timeoutMs: 60 * 60_000, outputBytes: 4 * 1024 * 1024 });
+export const REVIEW_LIMITS = Object.freeze({ timeoutMs: 60 * 60_000, softTargetMs: 5 * 60_000, outputBytes: 4 * 1024 * 1024 });
 export const digest = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
 export function reviewError(code: string, reason: string, details: Partial<Pick<AppErrorOptions, "technical" | "stderr" | "cause" | "classified">> = {}): AppError {
   return new AppError({ code, message: "ReviewX 检视未完成。", reason, impact: "本次任务未完整完成，已保存结果不受影响。",

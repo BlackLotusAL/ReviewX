@@ -8,12 +8,14 @@ import { resolveCommand } from "../platform/resolve-command";
 import { runProcess } from "../platform/process";
 import { reviewError, REVIEW_LIMITS } from "../review/materials";
 import { parseReviewOutput, outputSchema } from "../review/schema";
-import { productionPrompt, reviewerPrompt, verifierPrompt, repairPrompt, WORKFLOW_VERSION } from "../review/prompt";
+import { productionPrompt, reviewerPrompt, verifierPrompt, repairPrompt, WORKFLOW_VERSION, BALANCED_WORKFLOW_VERSION, discoveryPrompt, batchVerifierPrompt } from "../review/prompt";
+import { runBalanced } from "../review/balanced";
+import { ReviewTrace } from "../review/trace";
 import { httpJson, openResponse, consumeEvents } from "./opencode-http";
 import type { PreparedReview } from "./git";
 export { productionPrompt } from "../review/prompt";
 
-export interface ReviewOptions { attemptId: string; rules: FrozenRules; onProgress?: (progress: ReviewProgress) => void }
+export interface ReviewOptions { attemptId: string; rules: FrozenRules; onProgress?: (progress: ReviewProgress) => void; trace?: ReviewTrace }
 export interface ReviewerPort {
   review(projectId: string, details: MergeRequestSnapshot, prepared: PreparedReview, signal: AbortSignal, options: ReviewOptions): Promise<ReviewerResult>;
   retryCleanup?(): Promise<void>;
@@ -39,6 +41,8 @@ export function nativeConfig(prepared: PreparedReview) {
       "reviewx-bugs": { mode: "subagent", description: "Independently review introduced defects", prompt: reviewerPrompt, permission: readOnly },
       "reviewx-verify": { mode: "subagent", description: "Independently verify one candidate", prompt: verifierPrompt, permission: readOnly },
       "reviewx-format": { mode: "primary", description: "Repair review JSON only", prompt: repairPrompt, permission: { "*": "deny" } },
+      "reviewx-discover": { mode: "primary", description: "Comprehensive candidate discovery", prompt: discoveryPrompt, permission: readOnly },
+      "reviewx-batch-verify": { mode: "primary", description: "Independent batch verification", prompt: batchVerifierPrompt, permission: readOnly },
     },
   };
 }
@@ -54,6 +58,10 @@ export class OpenCodeReviewer implements ReviewerPort {
   async review(_projectId: string, details: MergeRequestSnapshot, prepared: PreparedReview, signal: AbortSignal, options: ReviewOptions): Promise<ReviewerResult> {
     await this.retryCleanup();
     const started = Date.now(), stop = new AbortController(), streamStop = new AbortController();
+    const trace = options.trace ?? new ReviewTrace(options.attemptId);
+    const balanced = this.environment.REVIEWX_WORKFLOW === "balanced";
+    if (this.environment.REVIEWX_WORKFLOW && !["legacy", "balanced"].includes(this.environment.REVIEWX_WORKFLOW)) throw reviewError("REVIEW_CONFIG_ERROR", "REVIEWX_WORKFLOW 必须为 legacy 或 balanced。");
+    trace.emit("workflow", { workflowVersion: balanced ? BALANCED_WORKFLOW_VERSION : WORKFLOW_VERSION, scope: prepared.scope, profileHash: options.rules.profileHash });
     const warnings: string[] = [];
     let url = "", startup = "", sessionID = "", version = "unknown", tail = "";
     let server: ReturnType<typeof runProcess> | undefined, stream: Promise<void> | undefined;
@@ -63,20 +71,21 @@ export class OpenCodeReviewer implements ReviewerPort {
     const password = randomUUID();
     const headers = { authorization: "Basic " + Buffer.from("opencode:" + password).toString("base64"), "content-type": "application/json" };
     const progress = (activity: string) => options.onProgress?.({ activity, limitations: [...warnings] });
-    const request = (route: string, body?: unknown, control = true) => httpJson(url + route, {
+    const request = (route: string, body?: unknown, control = true) => { trace.http(route, body === undefined ? "GET" : "POST"); return httpJson(url + route, {
       headers, body, signal: control ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : signal,
-    });
+    }); };
     const createSession = async () => {
       const result = await request("/session", { title: "ReviewX " + options.attemptId }) as { id?: string };
       if (!result?.id) throw reviewError("OPENCODE_CAPABILITY_MISSING", "OpenCode 未返回可用会话 ID。");
       return result.id;
     };
     // A lost POST response is ambiguous: query its session, never resend the generation.
-    const generate = async (id: string, agent: string, text: string): Promise<Message> => {
+    const generateResponse = async (id: string, agent: string, text: string): Promise<Message> => {
       try { return await request("/session/" + id + "/message", { agent, parts: [{ type: "text", text }] }, false) as Message; }
       catch (error) {
         signal.throwIfAborted();
         warnings.push("生成响应连接中断，已查询原会话；未重发请求。");
+        trace.emit("generation.response_lost", { sessionID: id });
         let failures = 0;
         while (!signal.aborted && !exited) {
           try {
@@ -94,15 +103,33 @@ export class OpenCodeReviewer implements ReviewerPort {
         signal.throwIfAborted(); throw error;
       }
     };
+    const generate = async (id: string, agent: string, text: string): Promise<Message> => {
+      trace.generation(id, agent);
+      const end = trace.span("generation", { sessionID: id, agent });
+      try {
+        const message = await generateResponse(id, agent, text);
+        trace.message({ ...message, info: { ...message.info, sessionID: id } });
+        end(message.info?.error ? "failed" : "complete");
+        return message;
+      } catch (error) { end(signal.aborted ? "cancelled" : "failed"); throw error; }
+    };
     let result: ReviewerResult | undefined;
     let primaryError: unknown;
     try {
       signal.throwIfAborted();
       const configDir = path.join(prepared.rootDirectory, "reviewx-config");
       await mkdir(configDir, { recursive: true });
+      // Large rule bodies stay in addressable files; each verifier reads only applicable texts.
+      const resources = [...prepared.repositoryRules, ...options.rules.resources];
+      const ruleIndex = balanced ? await Promise.all(resources.map(async (resource, index) => {
+        const file = `review-rule-${index}.txt`;
+        await writeFile(path.join(prepared.rootDirectory, file), resource.body);
+        return { id: resource.id, resourceHash: resource.resourceHash, file };
+      })) : undefined;
       await writeFile(path.join(prepared.rootDirectory, "review-context.json"), JSON.stringify({
         mr: { title: details.title, description: details.description ?? "" }, scope: prepared.scope,
-        repositoryRules: prepared.repositoryRules, supplementalRules: options.rules.resources,
+        repositoryRules: ruleIndex ? ruleIndex.slice(0, prepared.repositoryRules.length) : prepared.repositoryRules,
+        supplementalRules: ruleIndex ? ruleIndex.slice(prepared.repositoryRules.length) : options.rules.resources,
         allowedGitCommands: prepared.gitCommands,
         rulePolicy: "Nearer directory wins; explicitly applicable supplements override repository rules. Same-scope conflicts are limitations.",
       }, null, 2));
@@ -113,6 +140,7 @@ export class OpenCodeReviewer implements ReviewerPort {
         OPENCODE_SERVER_PASSWORD: password, OPENCODE_SERVER_USERNAME: "opencode" };
       const command = await resolveCommand("opencode", env);
       progress("启动 OpenCode 原生检视");
+      const endStartup = trace.span("opencode_startup");
       server = runProcess(command, ["serve", "--pure", "--hostname", "127.0.0.1", "--port", "0"], {
         cwd: prepared.rootDirectory, env, signal: stop.signal, timeoutMs: REVIEW_LIMITS.timeoutMs,
         outputMode: "tail", maxOutputBytes: 16 * 1024,
@@ -129,32 +157,52 @@ export class OpenCodeReviewer implements ReviewerPort {
       if (!health?.healthy) throw reviewError("OPENCODE_CAPABILITY_MISSING", "OpenCode 健康检查不可用。");
       version = health.version ?? "unknown";
       const agents = await request("/agent") as Array<{ name: string }>;
-      if (!Array.isArray(agents) || !["reviewx", "reviewx-rules", "reviewx-bugs", "reviewx-verify", "reviewx-format"].every(name => agents.some(a => a.name === name))) {
+      const requiredAgents = balanced ? ["reviewx-discover", "reviewx-batch-verify", "reviewx-format"] : ["reviewx", "reviewx-rules", "reviewx-bugs", "reviewx-verify", "reviewx-format"];
+      if (!Array.isArray(agents) || !requiredAgents.every(name => agents.some(a => a.name === name))) {
         throw reviewError("OPENCODE_CAPABILITY_MISSING", "OpenCode 未加载所需原生代理配置。");
       }
+      endStartup();
       sessionID = await createSession();
       // Events are observability only; loss must not invalidate output or abort generation.
       stream = (async () => {
         const streamSignal = AbortSignal.any([signal, streamStop.signal]);
+        trace.http("/event", "GET");
         const response = await openResponse(url + "/event", { headers, signal: streamSignal });
         await consumeEvents(response, streamSignal, raw => {
+          trace.event(raw);
           const event = raw as { type?: string; properties?: { sessionID?: string; info?: { parentID?: string } } };
           if (event.type === "session.created" && event.properties?.info?.parentID === sessionID) { nativeSubagents++; progress("原生子代理正在检视或独立复核"); }
-          if (event.type === "session.status" && event.properties?.sessionID === sessionID) progress("OpenCode 正在检视、复核并汇总");
+          if (!balanced && event.type === "session.status" && event.properties?.sessionID === sessionID) progress("OpenCode 正在检视、复核并汇总");
         }, REVIEW_LIMITS.outputBytes);
-      })().catch(() => { if (!streamStop.signal.aborted && !signal.aborted) warnings.push("进度事件连接中断；结果通过原生消息接口获取。"); });
-      progress("四代理检视与逐问题独立复核");
-      const message = await generate(sessionID, "reviewx", productionPrompt + "\nFinal JSON schema:\n" + JSON.stringify(outputSchema));
-      const raw = messageText(message);
+      })().catch(() => { if (!streamStop.signal.aborted && !signal.aborted) { trace.streamInterrupted(); warnings.push("进度事件连接中断；结果通过原生消息接口获取。"); } });
+      let message: Message, raw: string, initialRepairRaw: string | undefined;
+      let finalText: string;
+      if (balanced) {
+        let first = true;
+        let discoveryMessage: Message = {};
+        const reviewed = await runBalanced({ signal, trace, progress, generate: async (agent, prompt) => {
+          const id = first ? sessionID : await createSession(); first = false;
+          const generated = await generate(id, agent, prompt);
+          if (agent === "reviewx-discover") discoveryMessage = generated;
+          return { text: messageText(generated), failed: !!generated.info?.error };
+        } });
+        message = discoveryMessage; raw = reviewed.raw; initialRepairRaw = reviewed.repairRaw;
+        finalText = JSON.stringify(reviewed.document);
+      } else {
+        progress("四代理检视与逐问题独立复核");
+        message = await generate(sessionID, "reviewx", "Review the fixed change. Final JSON schema:\n" + JSON.stringify(outputSchema));
+        raw = finalText = messageText(message);
+      }
       // Save raw evidence before formatting or cleanup, including malformed output.
       await writeFile(path.join(prepared.rootDirectory, "raw-output.txt"), raw);
-      let parsed = parseReviewOutput(raw);
-      let repairRaw: string | undefined;
-      if (parsed.errors.length && !signal.aborted) {
+      let parsed = parseReviewOutput(finalText);
+      let repairRaw: string | undefined = initialRepairRaw;
+      if (!balanced && parsed.errors.length && !signal.aborted) {
         progress("修复输出结构（最多一次）");
+        const endRepair = trace.span("format_repair");
         try {
           const repairID = await createSession();
-          const repair = await generate(repairID, "reviewx-format", repairPrompt + "\nSchema:\n" + JSON.stringify(outputSchema) +
+          const repair = await generate(repairID, "reviewx-format", "Schema:\n" + JSON.stringify(outputSchema) +
             "\nErrors:\n" + JSON.stringify(parsed.errors) + "\nInput:\n" + (parsed.envelopeValid ? JSON.stringify({ ...parsed.document, findings: parsed.invalid }) : raw));
           repairRaw = messageText(repair);
           const fixed = parseReviewOutput(repairRaw);
@@ -174,7 +222,7 @@ export class OpenCodeReviewer implements ReviewerPort {
           }
         } catch (error) {
           signal.throwIfAborted(); warnings.push("格式修复未完成：" + (error instanceof Error ? error.message : String(error)));
-        }
+        } finally { endRepair(); }
       }
       signal.throwIfAborted();
       const document = parsed.document;
@@ -198,13 +246,34 @@ export class OpenCodeReviewer implements ReviewerPort {
         submission: document, rawOutput: raw, repairOutput: repairRaw,
         execution: { version: 2, attemptId: options.attemptId, sessionID, opencodeVersion: version,
           actualModel: { providerID: message.info?.providerID ?? "unknown", modelID: message.info?.modelID ?? "unknown" },
-          workflowVersion: WORKFLOW_VERSION, scope: prepared.scope, rules: { ...options.rules, resources: [...options.rules.resources, ...prepared.repositoryRules] },
+          workflowVersion: balanced ? BALANCED_WORKFLOW_VERSION : WORKFLOW_VERSION, scope: prepared.scope, rules: { ...options.rules, resources: [...options.rules.resources, ...prepared.repositoryRules] },
           progress: { activity: "检视输出已生成", limitations: document.limitations }, durationMs: Date.now() - started, status: "ACCEPTED", warnings, metrics: { ...prepared.metrics, nativeSubagents } },
       };
     } catch (error) { primaryError = error; }
     finally {
+      // Recover terminal messages/usage even when SSE was lost. Bounded independently of a cancelled review.
+      const reconciliationSignal = AbortSignal.timeout(5000);
+      const recovered = new Set<string>();
+      for (const [id] of trace.sessions) {
+        if (reconciliationSignal.aborted || !url || exited) { trace.reconciliationFailure(id); continue; }
+        try {
+          trace.http("/session/" + id + "/children", "GET");
+          const children = await httpJson(url + "/session/" + id + "/children", { headers, signal: reconciliationSignal }) as Array<{ id: string; parentID: string }>;
+          if (Array.isArray(children)) for (const child of children) trace.event({ type: "session.created", properties: { info: child } });
+          else trace.reconciliationFailure(id);
+        } catch { trace.reconciliationFailure(id); }
+        if (recovered.has(id)) continue;
+        recovered.add(id);
+        try {
+          trace.http("/session/" + id + "/message", "GET");
+          const messages = await httpJson(url + "/session/" + id + "/message", { headers, signal: reconciliationSignal });
+          if (Array.isArray(messages)) for (const m of messages) trace.message({ ...m, info: { ...m.info, sessionID: id } });
+          else trace.reconciliationFailure(id);
+        } catch { trace.reconciliationFailure(id); }
+      }
       streamStop.abort();
-      if (sessionID && url) await httpJson(url + "/session/" + sessionID + "/abort", { headers, body: {}, signal: AbortSignal.timeout(3000) }).catch(() => undefined);
+      const endCleanup = trace.span("opencode_cleanup");
+      if (sessionID && url) { trace.http("/session/" + sessionID + "/abort", "POST"); await httpJson(url + "/session/" + sessionID + "/abort", { headers, body: {}, signal: AbortSignal.timeout(3000) }).catch(() => undefined); }
       stop.abort();
       if (server) {
         const cleanup = server.catch(() => undefined).then(async () => { await markerWrite; await unlink(marker).catch(() => undefined); });
@@ -216,10 +285,15 @@ export class OpenCodeReviewer implements ReviewerPort {
         }
       }
       await stream;
+      endCleanup(this.pendingCleanup ? "pending" : "complete");
+      trace.closeSpans(result ? "complete" : signal.aborted ? "cancelled" : "failed");
+      trace.emit("opencode.finished", { outcome: result ? "accepted" : signal.aborted ? "cancelled" : "failed", performance: trace.summary() });
+      await trace.flush();
     }
     if (result) {
       result.cleanupPending = !!this.pendingCleanup;
       result.execution.durationMs = Date.now() - started;
+      result.execution.performance = trace.summary();
       return result;
     }
     throw primaryError;

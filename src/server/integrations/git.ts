@@ -6,6 +6,7 @@ import { resolveCommand } from "../platform/resolve-command";
 import type { DataPaths } from "../platform/paths";
 import { runProcess } from "../platform/process";
 import { digest, reviewError, safeRepositoryPath } from "../review/materials";
+import type { ReviewTrace } from "../review/trace";
 
 export interface PreparedReview {
   rootDirectory: string;
@@ -19,12 +20,12 @@ export interface PreparedReview {
   metrics?: Record<string, number>;
   cleanup(): Promise<void>;
 }
-export interface GitPreparerPort { prepare(project: ProjectRecord, details: MergeRequestSnapshot, signal: AbortSignal): Promise<PreparedReview> }
+export interface GitPreparerPort { prepare(project: ProjectRecord, details: MergeRequestSnapshot, signal: AbortSignal, trace?: ReviewTrace): Promise<PreparedReview> }
 const quote = (s: string) => "'" + s.replace(/'/gu, "'\\''") + "'";
 
 export class GitPreparer implements GitPreparerPort {
   constructor(private readonly paths: DataPaths, private readonly environment: NodeJS.ProcessEnv = process.env) {}
-  async prepare(project: ProjectRecord, details: MergeRequestSnapshot, signal: AbortSignal): Promise<PreparedReview> {
+  async prepare(project: ProjectRecord, details: MergeRequestSnapshot, signal: AbortSignal, trace?: ReviewTrace): Promise<PreparedReview> {
     const url = new URL(project.cloneUrl);
     if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw reviewError("INVALID_GIT_REMOTE", "仓库 URL 必须为无凭据 HTTPS。");
     const command = await resolveCommand("git", this.environment);
@@ -37,10 +38,14 @@ export class GitPreparer implements GitPreparerPort {
     const run = async (args: string[]) => {
       signal.throwIfAborted(); metrics.gitProcesses++;
       const started = Date.now();
-      const result = await runProcess(command, [...options, ...args], { env, signal, timeoutMs: 10 * 60_000, maxOutputBytes: 64 * 1024 * 1024 });
-      metrics.gitMs += Date.now() - started;
-      if (result.exitCode !== 0 || result.aborted || result.timedOut || result.outputLimitExceeded) throw reviewError(signal.aborted ? "GIT_CANCELLED" : "GIT_ERROR", "Git 准备失败。", { stderr: result.stderr });
-      return result.stdout;
+      const operation = args[0] === "-C" ? args[2] : args[0];
+      const end = trace?.span("git." + operation);
+      try {
+        const result = await runProcess(command, [...options, ...args], { env, signal, timeoutMs: 10 * 60_000, maxOutputBytes: 64 * 1024 * 1024 });
+        if (result.exitCode !== 0 || result.aborted || result.timedOut || result.outputLimitExceeded) throw reviewError(signal.aborted ? "GIT_CANCELLED" : "GIT_ERROR", "Git 准备失败。", { stderr: result.stderr });
+        end?.(); return result.stdout;
+      } catch (error) { end?.(signal.aborted ? "cancelled" : "failed"); throw error; }
+      finally { metrics.gitMs += Date.now() - started; }
     };
     const git = (args: string[]) => run(["-C", repository, ...args]);
     const cleanup = async () => {

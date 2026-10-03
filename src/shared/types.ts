@@ -212,7 +212,7 @@ export interface AppStateView {
 export interface AttemptView extends Omit<ReviewAttempt, "reportPath"> {
   reportUrl?: string;
   progress?: ReviewProgress;
-  execution?: Pick<ExecutionRecord, "version" | "status" | "actualModel" | "sessionID" | "durationMs" | "progress" | "opencodeVersion">;
+  execution?: Pick<ExecutionRecord, "version" | "status" | "actualModel" | "sessionID" | "durationMs" | "progress" | "opencodeVersion" | "performance">;
 }
 
 export interface MrDetailView {

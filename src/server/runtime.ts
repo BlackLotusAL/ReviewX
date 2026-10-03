@@ -1,6 +1,6 @@
 import { projectAppState, projectAttempt, projectMrDetail, selectMrDetail } from "./review/views";
 import { randomUUID } from "node:crypto";
-import { relative, sep } from "node:path";
+import { relative, sep, join } from "node:path";
 import type {
   AppStateView,
   AttemptStatus,
@@ -24,6 +24,8 @@ import { REVIEW_LIMITS, reviewError } from "@/src/server/review/materials";
 import type { FrozenRules, ReviewProgress } from "@/src/shared/review-contract";
 import { StateStore } from "./storage/state-store";
 import { checkWorkspaceProcesses } from "./platform/workspace-process";
+import { ReviewTrace } from "./review/trace";
+import { timedProgress } from "./review/progress";
 
 const ACTIVE_REVIEW_STATUSES: AttemptStatus[] = ["queued", "reviewing", "stopping"];
 
@@ -64,7 +66,8 @@ export class ReviewXRuntime {
   #viewRevision = 0;
   #rules = new Map<string, FrozenRules>();
   #progress = new Map<string, ReviewProgress>();
-  #timings = new Map<string, { phase: string; since: number; values: Record<string, number> }>();
+  #timings = new Map<string, { started: number; phase: string; since: number; values: Record<string, number> }>();
+  #traces = new Map<string, ReviewTrace>();
   #fatalError: SafeErrorView | null = null;
   #warnings: string[] = [];
   #pendingCleanup: (() => Promise<void>) | null = null;
@@ -346,6 +349,9 @@ export class ReviewXRuntime {
       draft.reviewQueue.push(attemptId);
       this.#rules.set(attemptId, rules);
     }).catch(error => { this.#rules.delete(attemptId); throw error; });
+    const trace = new ReviewTrace(attemptId, join(this.dependencies.paths.logs, `review-${attemptId}.jsonl`));
+    trace.emit("review.queued", { queuedAt: now, profileHash: rules.profileHash });
+    this.#traces.set(attemptId, trace);
     this.#kickReviewWorker();
     return this.snapshot();
   }
@@ -376,6 +382,9 @@ export class ReviewXRuntime {
       throw conflictError("ATTEMPT_NOT_STOPPABLE", "该 attempt 当前不可停止。", "刷新页面并使用当前可用操作。");
     });
     if (stoppedQueued) {
+      const trace = this.#traces.get(attemptId) ?? new ReviewTrace(attemptId, join(this.dependencies.paths.logs, `review-${attemptId}.jsonl`));
+      trace.emit("review.finished", { outcome: "cancelled_while_queued" });
+      await trace.flush(); this.#traces.delete(attemptId);
       this.#info(this.#context(attempt), "Queued review attempt stopped and removed from FIFO.");
       return this.snapshot();
     }
@@ -493,30 +502,53 @@ export class ReviewXRuntime {
 
   async #runReview(attemptId: string, cancellation: AbortSignal): Promise<void> {
     const started = Date.now();
+    const trace = this.#traces.get(attemptId) ?? new ReviewTrace(attemptId, join(this.dependencies.paths.logs, `review-${attemptId}.jsonl`));
+    this.#traces.set(attemptId, trace);
+    const attempt = this.#state.attemptsById[attemptId];
+    trace.emit("review.started", { queuedAt: attempt.createdAt, queueMs: Math.max(0, Date.parse(attempt.startedAt!) - Date.parse(attempt.createdAt)), profileHash: attempt.rules?.profileHash });
+    const softTimer = setTimeout(() => {
+      const current = this.#progress.get(attemptId) ?? { activity: "正在准备检视材料", limitations: [] };
+      this.#progress.set(attemptId, timedProgress(current, Date.now() - started));
+      this.#viewRevision++;
+      trace.emit("review.soft_target_exceeded");
+    }, REVIEW_LIMITS.softTargetMs);
+    softTimer.unref();
+    let outcome = "complete";
     const budget = AbortSignal.timeout(REVIEW_LIMITS.timeoutMs);
     const signal = AbortSignal.any([cancellation, budget]);
-    this.#timings.set(attemptId, { phase: "loading_mr", since: started, values: {} });
+    this.#timings.set(attemptId, { started, phase: "loading_mr", since: started, values: {} });
     try {
       await this.#executeReview(attemptId, signal);
     } catch (error) {
+      outcome = cancellation.aborted ? "cancelled" : budget.aborted ? "timeout" : "failed";
       if (budget.aborted && !cancellation.aborted && !(isAppError(error) && error.code === "OPENCODE_CLEANUP_FAILED")) throw reviewError("REVIEW_TIMEOUT", "整轮检视超过时间预算。", { cause: error, technical: error instanceof Error ? error.stack : String(error) });
       throw error;
     } finally {
+      clearTimeout(softTimer);
       const timing = this.#timings.get(attemptId)!;
       timing.values[timing.phase] = (timing.values[timing.phase] ?? 0) + Date.now() - timing.since;
       this.#info(this.#context(this.#state.attemptsById[attemptId]), `Review elapsedMs=${Date.now() - started}; cancelled=${cancellation.aborted}; timedOut=${budget.aborted}; phases=${JSON.stringify(timing.values)}.`);
       this.#timings.delete(attemptId);
+      trace.closeSpans(outcome);
+      trace.emit("review.finished", { outcome, durationMs: Date.now() - started, phases: timing.values, performance: trace.summary() });
+      await trace.flush();
+      if (trace.summary().traceWriteFailed) this.#warnings.push(`检视 ${attemptId} 的性能记录写入失败，检视结果不受影响。`);
+      this.#traces.delete(attemptId);
     }
   }
 
   async #executeReview(attemptId: string, signal: AbortSignal): Promise<void> {
+    const trace = this.#traces.get(attemptId)!;
     const initialAttempt = this.#state.attemptsById[attemptId];
     if (!initialAttempt) throw new Error(`Missing attempt ${attemptId}.`);
     const project = this.#state.projectsById[initialAttempt.projectId];
     if (!project) throw new Error(`Missing Project ${initialAttempt.projectId}.`);
     this.#info(this.#context(initialAttempt), "Loading the current MR details for this attempt.");
     this.#assertOperational();
-    const first = await this.dependencies.codeHub.viewMr(initialAttempt.projectId, initialAttempt.mrIid, initialAttempt.mrTitle, signal);
+    const endMr = trace.span("loading_mr");
+    let first: MergeRequestSnapshot;
+    try { first = await this.dependencies.codeHub.viewMr(initialAttempt.projectId, initialAttempt.mrIid, initialAttempt.mrTitle, signal); endMr(); }
+    catch (error) { endMr("failed"); throw error; }
     assertOpen(first);
     await this.#phase(attemptId, "preparing_git", (attempt) => {
       attempt.mrTitle = first.title;
@@ -529,16 +561,21 @@ export class ReviewXRuntime {
     let prepared: PreparedReview | null = null;
     let result: import("@/src/shared/types").ReviewerResult | undefined;
     try {
-      prepared = await this.dependencies.git.prepare(project, first, signal);
+      const endGit = trace.span("preparing_git");
+      try { prepared = await this.dependencies.git.prepare(project, first, signal, trace); endGit(); }
+      catch (error) { endGit("failed"); throw error; }
+      trace.emit("review.scope", { scope: prepared.scope });
       const rules = this.#rules.get(attemptId);
       if (!rules) throw reviewError("REVIEW_RULE_ERROR", "缺少入队前冻结的用户补充规则。");
       await this.#phase(attemptId, "running_opencode", (attempt) => {
         attempt.sourceSha = prepared!.sourceSha;
         attempt.targetSha = prepared!.targetSha;
       });
-      this.#info(this.#context(initialAttempt), "Running one read-only OpenCode review invocation.");
+      this.#info(this.#context(initialAttempt), "Running read-only OpenCode review workflow.");
       this.#assertOperational();
-      result = await this.dependencies.reviewer.review(initialAttempt.projectId, first, prepared, signal, { attemptId, rules, onProgress: (progress) => { this.#progress.set(attemptId, progress); this.#viewRevision += 1; } });
+      result = await this.dependencies.reviewer.review(initialAttempt.projectId, first, prepared, signal, { attemptId, rules, trace, onProgress: (progress) => {
+        this.#progress.set(attemptId, timedProgress(progress, Date.now() - this.#timings.get(attemptId)!.started)); this.#viewRevision += 1;
+      } });
       if (signal.aborted) throw new AppError({
         code: "OPENCODE_CANCELLED",
         message: "OpenCode 检视已停止。",
@@ -547,27 +584,42 @@ export class ReviewXRuntime {
         nextStep: "如仍需检视，请手动重新检视。",
         technical: "Abort signal observed after OpenCode completion.",
       });
-      await this.#phase(attemptId, "cleaning_up");
     } catch (error) {
       if (result?.cleanupPending) error = reviewError("OPENCODE_CLEANUP_FAILED", "停止检视后进程退出仍未确认。", { cause: error });
       if (prepared) {
         if (isAppError(error) && error.code === "OPENCODE_CLEANUP_FAILED") this.#pendingCleanup = prepared.cleanup;
-        else await prepared.cleanup().catch(e => {
-          this.#warnings.push("工作区清理失败：" + String(e));
-          const main = this.#error(error, "检视");
-          throw new AppError({ code: main.code, message: main.message, reason: main.reason, impact: main.impact, nextStep: main.nextStep,
-            technical: main.technical + "\nCleanup: " + String(e), cause: error });
-        });
+        else {
+          const endCleanup = trace.span("workspace_cleanup");
+          await prepared.cleanup().then(() => endCleanup(), e => {
+            endCleanup("failed");
+            this.#warnings.push("工作区清理失败：" + String(e));
+            const main = this.#error(error, "检视");
+            throw new AppError({ code: main.code, message: main.message, reason: main.reason, impact: main.impact, nextStep: main.nextStep,
+              technical: main.technical + "\nCleanup: " + String(e), cause: error });
+          });
+        }
       }
       throw error;
     }
     if (!result || !prepared) return;
-    if (signal.aborted) throw reviewError("REVIEW_CANCELLED", "保存前收到停止请求。");
-    await this.#phase(attemptId, "saving_report");
-    result.execution.metrics = { ...result.execution.metrics, ...this.#timings.get(attemptId)?.values };
-    const reportPath = await this.dependencies.reports.save(this.#state.attemptsById[attemptId], first, prepared, result);
+    let endSave: ((outcome?: string) => void) | undefined;
+    let reportPath: string;
+    try {
+      if (signal.aborted) throw reviewError("REVIEW_CANCELLED", "保存前收到停止请求。");
+      await this.#phase(attemptId, "saving_report");
+      result.execution.metrics = { ...result.execution.metrics, ...this.#timings.get(attemptId)?.values };
+      endSave = trace.span("saving_report");
+      reportPath = await this.dependencies.reports.save(this.#state.attemptsById[attemptId], first, prepared, result);
+      endSave();
+    }
+    catch (error) {
+      endSave?.("failed");
+      if (result.cleanupPending) this.#pendingCleanup = prepared.cleanup;
+      else { const endCleanup = trace.span("workspace_cleanup"); await prepared.cleanup().then(() => endCleanup(), () => endCleanup("failed")); }
+      throw error;
+    }
     const accepted = result;
-    await this.#mutate((draft) => {
+    try { await this.#mutate((draft) => {
       const attempt = draft.attemptsById[attemptId];
       if (!attempt || signal.aborted || attempt.status !== "reviewing") throw reviewError("REVIEW_CANCELLED", "登记结果前收到停止请求；孤立文件不可发布。");
       attempt.reportPath = reportPath;
@@ -578,13 +630,21 @@ export class ReviewXRuntime {
       attempt.phase = undefined;
       attempt.completedAt = this.#now().toISOString();
       attempt.reviewFinishedAt = attempt.completedAt;
-    });
+    }); } catch (error) {
+      if (result.cleanupPending) this.#pendingCleanup = prepared.cleanup;
+      else { const endCleanup = trace.span("workspace_cleanup"); await prepared.cleanup().then(() => endCleanup(), () => endCleanup("failed")); }
+      throw error;
+    }
+    trace.emit("report.visible", { result: this.#state.attemptsById[attemptId].result });
+    this.#timePhase(attemptId, "cleaning_up");
     if (result.cleanupPending) {
       this.#pendingCleanup = prepared.cleanup;
       await this.#pauseQueue(reviewError("OPENCODE_CLEANUP_FAILED", "进程退出未确认，结果已保存。"));
     } else {
-      try { await prepared.cleanup(); }
+      const endCleanup = trace.span("workspace_cleanup");
+      try { await prepared.cleanup(); endCleanup(); }
       catch (error) {
+        endCleanup("failed");
         const warning = "工作区清理失败，已保存结果仍可使用：" + String(error);
         this.#warnings.push(warning);
         await this.#mutate(draft => { draft.attemptsById[attemptId].warnings = [...(draft.attemptsById[attemptId].warnings ?? []), warning]; })
@@ -598,13 +658,7 @@ export class ReviewXRuntime {
   }
 
   async #phase(attemptId: string, phase: ReviewPhase, update?: (attempt: ReviewAttempt) => void): Promise<void> {
-    const timing = this.#timings.get(attemptId);
-    if (timing) {
-      const elapsed = Date.now() - timing.since;
-      timing.values[timing.phase] = (timing.values[timing.phase] ?? 0) + elapsed;
-      this.#info(this.#context(this.#state.attemptsById[attemptId]), `Phase ${timing.phase} elapsedMs=${elapsed}.`);
-      timing.phase = phase; timing.since = Date.now();
-    }
+    this.#timePhase(attemptId, phase);
     await this.#mutate((draft) => {
       const attempt = draft.attemptsById[attemptId];
       if (!attempt) throw new Error(`Missing attempt ${attemptId}.`);
@@ -619,6 +673,16 @@ export class ReviewXRuntime {
       attempt.phase = phase;
       update?.(attempt);
     });
+  }
+
+  #timePhase(attemptId: string, phase: ReviewPhase): void {
+    const timing = this.#timings.get(attemptId);
+    if (timing) {
+      const elapsed = Date.now() - timing.since;
+      timing.values[timing.phase] = (timing.values[timing.phase] ?? 0) + elapsed;
+      this.#info(this.#context(this.#state.attemptsById[attemptId]), `Phase ${timing.phase} elapsedMs=${elapsed}.`);
+      timing.phase = phase; timing.since = Date.now();
+    }
   }
 
   async decideFinding(attemptId: string, ordinal: number, decision: "dismissed" | "pending"): Promise<AppStateView> {

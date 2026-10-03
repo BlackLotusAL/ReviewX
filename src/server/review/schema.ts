@@ -19,9 +19,9 @@ export const findingSchema = z.object({
 export const submissionSchema = z.object({
   schemaVersion: z.literal(1), summary: text,
   completion: z.enum(["complete", "incomplete"]), limitations: z.array(text).max(100),
-  findings: z.array(findingSchema).max(100),
+  findings: z.array(findingSchema),
 });
-const envelopeSchema = submissionSchema.extend({ findings: z.array(z.unknown()).max(100) });
+const envelopeSchema = submissionSchema.extend({ findings: z.array(z.unknown()) });
 export const outputSchema = z.toJSONSchema(submissionSchema);
 
 /** Only a whole JSON document, optionally fenced, is an output; never a chat fragment. */

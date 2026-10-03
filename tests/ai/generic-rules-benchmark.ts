@@ -23,7 +23,7 @@ for (let run = 0; run < 5; run++) for (const scenario of cases) {
     let stdout = "", stderr = "", exitCode: string | number = 0;
     try {
       ({ stdout, stderr } = await execute(process.execPath, [path.join(root, "node_modules/tsx/dist/cli.mjs"), "tests/ai/real-opencode-smoke.ts"], {
-        cwd: root, windowsHide: true, timeout: 10 * 60_000, maxBuffer: 8 * 1024 * 1024,
+        cwd: root, windowsHide: true, timeout: 62 * 60_000, maxBuffer: 8 * 1024 * 1024,
         env: { ...process.env, REVIEWX_ACCEPTANCE_ENGINE: path.join(packageRoot, "dist/review-engine.js"),
           REVIEWX_ACCEPTANCE_CASE: scenario, REVIEWX_GENERIC_RULES: group, REVIEWX_BENCHMARK_GROUP: directory },
       }));
@@ -31,10 +31,10 @@ for (let run = 0; run < 5; run++) for (const scenario of cases) {
       const failure = error as { stdout?: string; stderr?: string; code?: string | number };
       stdout = failure.stdout ?? ""; stderr = failure.stderr ?? ""; exitCode = failure.code ?? "FAILED";
     }
-    const evidence = stdout.match(/Acceptance artifacts: (.+)/u)?.[1].trim();
+    const evidence = stdout.match(/(?:Acceptance artifacts|Production acceptance): (.+)/u)?.[1].trim();
     const read = async (name: string) => evidence ? JSON.parse(await readFile(path.join(evidence, name), "utf8").catch(() => "null")) : null;
     const execution = await read("execution.json"), submission = await read("submission.json");
-    if (exitCode !== 0) failures.push(`${run + 1}/${scenario}/${group}`);
+    if (exitCode !== 0 || !execution || !submission) failures.push(`${run + 1}/${scenario}/${group}`);
     if (execution) { models.add(JSON.stringify(execution.actualModel)); prompts.add(execution.workflowVersion); }
     const fixture = await read("fixture.json");
     const fixtureHash = fixture ? createHash("sha256").update(JSON.stringify({ baseline: fixture.baseline, source: fixture.source })).digest("hex") : null;
@@ -46,7 +46,7 @@ for (let run = 0; run < 5; run++) for (const scenario of cases) {
       fixtureHash,
       verification: await read("verification.json"), failure: await read("failure.json"),
       model: execution?.actualModel, workflowVersion: execution?.workflowVersion, durationMs: execution?.durationMs,
-      subagents: execution?.metrics?.nativeSubagents,
+      subagents: execution?.metrics?.nativeSubagents, performance: execution?.performance,
       completion: submission?.completion, findings: submission?.findings?.length });
     await writeFile(path.join(directory, `${run + 1}-${scenario}-${group}.log`), stdout + "\n" + stderr);
     await writeFile(path.join(directory, "results.json"), JSON.stringify({ engineHash, cases, repetitions: 5, results }, null, 2));
