@@ -1,34 +1,159 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
-<title>ReviewX · 多轮检视架构总览</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>ReviewX · 原生 Agent 完整架构总览</title>
 <style>
-:root{--ink:#203149;--muted:#596b81;--line:#dce4ef;--blue:#285dc4;--purple:#7447b1;--green:#207358;--amber:#966014;--side:220px}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);background:#f4f7fb;font:15px/1.8 "Segoe UI","Microsoft YaHei",sans-serif}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}button{font:inherit;cursor:pointer;border:1px solid var(--line);background:white;color:var(--ink);border-radius:8px;padding:7px 12px}button:hover{border-color:var(--blue)}:focus-visible{outline:3px solid #78a9ff;outline-offset:3px}code{font:12px/1.7 Consolas,"Microsoft YaHei",monospace;overflow-wrap:anywhere}p{margin:8px 0 14px}h1,h2,h3,h4{line-height:1.4;letter-spacing:-.02em}h1{font-size:44px;margin:18px 0}h2{font-size:28px;margin:4px 0 12px}h3{font-size:19px;margin:28px 0 12px}h4{margin:0 0 6px}small,.muted{color:var(--muted)}aside{position:fixed;width:var(--side);inset:0 auto 0 0;background:#fff;border-right:1px solid var(--line);padding:30px 22px;display:flex;flex-direction:column;z-index:10}.brand{font-size:23px;font-weight:800}.brand b{color:var(--blue)}.side-label{font-size:10px;letter-spacing:2px;color:var(--muted);margin:2px 0 40px}nav a{display:flex;gap:12px;padding:12px 9px;border-radius:7px;color:var(--muted);margin-bottom:6px;font-weight:600}nav a span{font-size:12px;color:#8391a4}nav a.active,nav a:hover{background:#edf3ff;color:var(--blue);text-decoration:none}.side-note{margin-top:auto;font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:18px}main{margin-left:var(--side);max-width:1510px;padding:42px 44px 60px}.eyebrow{font-size:12px;font-weight:700;letter-spacing:2px;color:var(--blue)}.hero{padding:10px 0 30px}.hero p{max-width:820px;font-size:18px;color:var(--muted)}.meta,.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0}.badge{padding:3px 10px;border:1px solid var(--line);background:white;border-radius:20px;font-size:12px}.js-only{display:none}.js .js-only{display:inline-block}.summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:0 0 36px}.summary-grid article{background:white;border:1px solid var(--line);padding:17px;border-radius:10px}.summary-grid b{display:block;color:var(--blue);font-size:12px;margin-bottom:12px}.summary-grid p{font-size:12px;color:var(--muted);margin:6px 0 0}section{background:white;border:1px solid var(--line);border-radius:14px;padding:30px;margin:24px 0;scroll-margin-top:24px}.section-head{display:flex;gap:16px;align-items:flex-start;margin-bottom:24px}.section-no{font:600 14px Consolas,monospace;color:var(--blue);background:#edf3ff;border-radius:10px;padding:9px 11px}.section-head p{margin:0;color:var(--muted)}.legend{display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:16px}.legend i{display:inline-block;width:24px;border-top:2px solid var(--blue);vertical-align:middle;margin-right:6px}.legend i.data{border-top-style:dashed;border-color:var(--green)}.legend i.ai{border-color:var(--purple)}.diagram{background:#f9fbfe;border:1px solid var(--line);border-radius:10px;padding:20px;overflow:auto}.diagram svg{display:block;width:100%;height:auto;min-width:740px}.caption{font-size:13px;color:var(--muted);margin-top:10px}.callout{border-left:3px solid var(--blue);background:#eff5ff;padding:13px 17px;margin:18px 0;font-size:14px}.warn{border-color:var(--amber);background:#fff8ed}.ok{border-color:var(--green);background:#edf8f3}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:9px}table{border-collapse:collapse;width:100%;font-size:13px;min-width:650px}th{text-align:left;background:#f2f5fa;color:#56697e;padding:12px 15px}td{padding:13px 15px;border-top:1px solid var(--line);vertical-align:top}td:first-child{font-weight:600;min-width:110px}td:last-child{min-width:220px}.path{display:block;color:#536984;margin-top:4px}.copy{font-size:10px;padding:0 5px;margin:2px 0;border-radius:4px}details{border:1px solid var(--line);border-radius:8px;padding:10px 13px;margin-top:10px;background:white}summary{cursor:pointer;font-size:13px;font-weight:600}details[open]>summary{margin-bottom:8px}details p{font-size:13px;margin-bottom:6px}.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}.mini{border:1px solid var(--line);border-radius:10px;padding:18px}.mini p{font-size:13px;color:var(--muted)}.swim-scroll{overflow:auto;border:1px solid var(--line);border-radius:10px}.swim{min-width:1100px;background:repeating-linear-gradient(to right,#f7f9fc 0,#f7f9fc calc(20% - 1px),#dfe6ef calc(20% - 1px),#dfe6ef 20%);padding-bottom:18px}.swim-head{display:grid;grid-template-columns:repeat(5,1fr);background:#eaf0f8;margin-bottom:18px}.swim-head span{padding:16px 8px;text-align:center;font-size:13px;font-weight:700;border-right:1px solid #d4dfed}.swim-row{display:grid;grid-template-columns:repeat(5,1fr)}.step{background:white;border:1px solid #bed0ed;border-top:3px solid var(--blue);border-radius:8px;margin:0 9px;padding:12px}.step.ai{border-top-color:var(--purple)}.step.accepted{border-top-color:var(--green)}.step.pending{border-top-color:var(--amber)}.step-number{display:block;font:600 11px Consolas,monospace;color:#70829b;margin-bottom:5px}.step strong{font-size:13px}.step p{font-size:12px;color:var(--muted);line-height:1.65;margin:6px 0}.step details{border:0;border-top:1px solid #e4eaf2;border-radius:0;padding:7px 0 0}.step summary{font-size:11px}.step code{font-size:10px}.swim-link{height:32px;position:relative}.swim-link svg{width:100%;height:32px;display:block}.swim-link span{position:absolute;left:40%;top:4px;background:#fff8ed;color:var(--amber);font-size:11px;padding:0 8px}.loop{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:18px;background:#f5f0fc;border-radius:9px;color:var(--purple);font-size:13px}.loop b{background:white;border:1px solid #ded0f2;padding:7px 11px;border-radius:6px}.flow-rows{display:grid;gap:10px}.flow-row{display:grid;grid-template-columns:1fr 30px 1.4fr 30px 1.4fr;align-items:center;font-size:13px}.flow-row>div{border:1px solid var(--line);padding:12px;border-radius:8px;min-height:86px}.flow-row>span{text-align:center;color:var(--green)}.flow-header{font-size:12px;font-weight:700;color:var(--muted)}.flow-header>div{border:0;min-height:0;padding:8px}.tree ul{margin:8px 0;padding-left:20px;list-style:none;font:12px/1.8 Consolas,"Microsoft YaHei",monospace}.tree li{padding:3px 0 3px 15px;border-left:1px solid var(--line)}.glossary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.glossary div{background:#f6f8fb;border-radius:8px;padding:14px}.glossary dt{font-weight:700;font-size:13px}.glossary dd{margin:5px 0 0;font-size:12px;color:var(--muted)}footer{font-size:12px;color:var(--muted);padding:12px 0}.status{position:fixed;bottom:20px;right:20px;background:var(--ink);color:white;padding:10px 18px;border-radius:8px;z-index:30}.status:empty{display:none}
-@media(max-width:1100px){:root{--side:180px}main{padding:28px 24px}.summary-grid{grid-template-columns:repeat(3,1fr)}section{padding:22px}.two{grid-template-columns:1fr}}
-@media(max-width:760px){aside{position:sticky;top:0;width:auto;height:auto;padding:10px 16px;display:block;border-right:0;border-bottom:1px solid var(--line)}.brand{font-size:17px}.side-label,.side-note{display:none}nav{display:flex;gap:5px;overflow:auto}nav a{white-space:nowrap;padding:6px;font-size:12px;margin:0}nav a span{display:none}main{margin:0;padding:24px 16px}h1{font-size:32px}.hero p{font-size:16px}.summary-grid{grid-template-columns:repeat(2,1fr);gap:8px}.summary-grid article{padding:12px}section{padding:18px 14px;scroll-margin-top:100px}h2{font-size:23px}.section-head{gap:10px}.diagram{padding:12px}.glossary{grid-template-columns:1fr 1fr}.flow-rows{min-width:700px}.data-scroll{overflow:auto}.toolbar button{font-size:12px}}
+:root{--ink:#203149;--muted:#53677e;--line:#dce4ef;--blue:#285dc4;--purple:#7447b1;--green:#207358;--amber:#966014;--paper:#fff;--bg:#f4f7fb}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.8 "Segoe UI","Microsoft YaHei",sans-serif}a{color:var(--blue);text-underline-offset:3px}a:hover{color:var(--purple)}:focus-visible{outline:3px solid #78a9ff;outline-offset:4px}p{margin:8px 0 14px}h1,h2,h3{line-height:1.4}h1{font-size:42px;letter-spacing:-1px;margin:16px 0}h2{font-size:26px;margin:0 0 12px}h3{font-size:18px;margin:24px 0 10px}small,.muted,.caption{color:var(--muted)}code,pre{font-family:Consolas,"Microsoft YaHei",monospace}code{font-size:.88em;overflow-wrap:anywhere}pre{font-size:12px;line-height:1.75;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}aside{position:fixed;inset:0 auto 0 0;width:216px;padding:28px 22px;border-right:1px solid var(--line);background:white;display:flex;flex-direction:column}.brand{font-size:24px;font-weight:800}.brand span{color:var(--blue)}.eyebrow{font-size:11px;letter-spacing:2px;font-weight:700;color:var(--blue)}nav{margin-top:30px}nav a{display:block;padding:10px 8px;margin-bottom:4px;text-decoration:none;border-radius:7px;color:var(--muted)}nav a:hover{background:#edf3ff}.side-note{margin-top:auto;font-size:12px;color:var(--muted)}main{margin-left:216px;max-width:1510px;padding:44px 42px 28px;min-width:0}.hero{max-width:980px;margin-bottom:28px}.lead{font-size:18px;color:var(--muted)}.badges,.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px;margin:18px 0}.badge{border:1px solid var(--line);background:white;border-radius:20px;padding:3px 12px}.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.card{border:1px solid var(--line);border-radius:10px;background:white;padding:18px;min-width:0}.card strong{display:block;font-size:16px}.card p{font-size:13px;color:var(--muted);margin:8px 0 0}.card .label{display:block;color:var(--blue);font-size:11px;font-weight:700;letter-spacing:1px;margin-bottom:6px}section{border:1px solid var(--line);background:white;border-radius:14px;padding:28px;margin:24px 0;scroll-margin-top:24px;min-width:0}.section-head{display:flex;gap:16px;align-items:flex-start}.num{flex:none;font:600 14px Consolas,monospace;color:var(--blue);background:#edf3ff;border-radius:9px;padding:8px 11px}.section-head p{color:var(--muted);margin:0 0 20px}.scroll{overflow-x:auto;max-width:100%;border:1px solid var(--line);border-radius:10px;background:#f9fbfe}.diagram{padding:18px}.diagram svg{display:block;width:100%;height:auto;min-width:850px}.diagram text{font-family:"Segoe UI","Microsoft YaHei",sans-serif;fill:var(--ink);font-size:15px}.diagram .sub{fill:var(--muted);font-size:12px}.diagram .box{fill:white;stroke:#bacce5;stroke-width:1.5}.diagram .ai{fill:#f5f0fc;stroke:#ccb8e4}.diagram .data{fill:#edf8f3;stroke:#aed5c7}.diagram .edge{fill:none;stroke:var(--blue);stroke-width:2;marker-end:url(#arrow)}.legend span::before{content:"";display:inline-block;width:22px;margin-right:7px;border-top:2px solid var(--blue);vertical-align:middle}.legend .ai-key::before{border-color:var(--purple)}.legend .data-key::before{border-color:var(--green);border-top-style:dashed}.caption{font-size:12px;margin:10px 0 0}.callout{border-left:3px solid var(--blue);background:#eff5ff;padding:12px 16px;margin:18px 0;font-size:14px}.callout.warn{border-color:var(--amber);background:#fff8ed}.callout.good{border-color:var(--green);background:#edf8f3}.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.two>*{min-width:0}details{border:1px solid var(--line);border-radius:8px;padding:12px 15px;margin-top:14px}summary{cursor:pointer;font-weight:600;font-size:14px}details[open]>summary{margin-bottom:12px}ul{padding-left:22px}li{margin:5px 0}table{width:100%;border-collapse:collapse;font-size:13px;min-width:730px;text-align:left}th{background:#edf2f9;color:var(--muted);font-weight:600}td,th{padding:12px 15px;vertical-align:top;border-bottom:1px solid var(--line)}tr:last-child td{border-bottom:0}td:first-child{font-weight:600;width:20%}.sources{font-size:12px;color:var(--muted);margin-top:16px}.sources a{margin-right:14px}.sequence{list-style:none;counter-reset:step;padding:0;margin:0}.sequence li{counter-increment:step;display:grid;grid-template-columns:34px 145px 1fr;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);margin:0;align-items:start}.sequence li::before{content:counter(step,decimal-leading-zero);font:600 12px Consolas,monospace;background:#edf3ff;color:var(--blue);border-radius:50%;width:30px;height:30px;display:grid;place-items:center}.sequence p{margin:0;color:var(--muted);font-size:13px}.sequence strong{font-size:14px}.sequence .critical{background:#fff8ed;padding-right:14px}.flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;min-width:770px;padding:18px}.flow .card{border-top:3px solid var(--purple)}.flow .card strong{font-size:14px}.flow .card .label{color:var(--purple)}.agent-top{max-width:520px;margin:0 auto;text-align:center;background:#f5f0fc;border-color:#ccb8e4}.connector{text-align:center;color:var(--purple);font-size:13px;margin:10px 0}.agents{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.agents .card{border-top:3px solid var(--purple)}.agents .card strong{font-size:14px}.agents .card p{font-size:12px}.codebox{border:1px solid var(--line);border-radius:9px;background:#f7f9fc;padding:18px}.status{display:inline-block;white-space:nowrap;border-radius:5px;font:600 12px Consolas,monospace;background:#edf3ff;color:var(--blue);padding:2px 7px}.status.partial{color:var(--amber);background:#fff1db}.status.pass{color:var(--green);background:#e5f4eb}.tree{line-height:1.95}.footer{color:var(--muted);font-size:12px;padding:12px 0 24px}.skip{position:absolute;top:-100px;left:12px;background:white;padding:10px;z-index:10}.skip:focus{top:12px}
+@media(max-width:1100px){aside{width:180px;padding:24px 14px}main{margin-left:180px;padding:30px 24px}.agents{grid-template-columns:repeat(2,minmax(0,1fr))}.two{grid-template-columns:1fr}}
+@media(max-width:760px){aside{position:static;width:auto;display:block;border-right:0;border-bottom:1px solid var(--line);padding:14px 16px}.brand{font-size:20px}nav{display:flex;overflow-x:auto;gap:6px;margin-top:10px}nav a{flex:none;white-space:nowrap;font-size:12px;padding:6px}.side-note{display:none}main{margin:0;padding:24px 16px}h1{font-size:31px}h2{font-size:22px}.lead{font-size:16px}.cards{grid-template-columns:1fr}section{padding:20px 16px}.section-head{gap:10px}.sequence li{grid-template-columns:32px 1fr;gap:5px 10px}.sequence p{grid-column:2}.sequence .critical{padding-right:5px}.agents{grid-template-columns:1fr}.badges{gap:8px}.codebox{padding:12px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
-@media print{@page{size:A3 landscape;margin:12mm}body{background:white;font-size:11px}aside,.toolbar,.copy,.status,.js-only{display:none!important}main{margin:0;max-width:none;padding:0}.hero{padding:0}h1{font-size:30px}.hero p{font-size:13px}.summary-grid{grid-template-columns:repeat(5,1fr);margin:10px 0}section{break-before:page;border:0;padding:0;margin:0 0 20px;border-radius:0}.diagram,.table-wrap,.swim-scroll,.data-scroll{overflow:visible}.diagram svg{min-width:0}.swim{min-width:0}.swim-row,.swim-link{break-inside:avoid}.swim-head{break-after:avoid}details>summary{display:none}details::details-content{display:block!important;content-visibility:visible!important;height:auto!important}details>*:not(summary){display:block!important}.technical{padding:5px 0}.two{grid-template-columns:1fr 1fr}td,th{padding:7px}tr,.mini,.flow-row{break-inside:avoid}*{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
-</style></head><body>
-<main style="margin:auto;max-width:1100px">
-<div class="eyebrow">REVIEWX · NATIVE AGENT V2</div>
-<h1>原生 Agent 检视架构</h1>
-<p>ReviewX 固定输入、权限和输出合同；OpenCode 负责原生工具调用、子代理上下文和逐问题复核。模型沿用用户配置的默认模型。</p>
-<section><h2>一条主流程</h2>
-<div class="loop"><b>固定 Git 版本与规则</b>→<b>四个独立检视任务</b>→<b>候选去重</b>→<b>逐条新会话复核</b>→<b>结构化 JSON</b>→<b>固定脚本渲染</b></div>
-<p>两个规则代理、两个缺陷代理使用 OpenCode 原生 task。调度由提示词驱动，不再通过宿主端工具收据、材料阅读配额或全历史重放进行结果验收。</p>
-<p>检视可读取 source/base、diff 和按目录作用域冻结的 AGENTS.md、CLAUDE.md；只开放固定 Git 查询。禁止修改、构建、测试、脚本执行和评论发送。</p></section>
-<section><h2>职责边界</h2><table><thead><tr><th>组件</th><th>责任</th><th>异常边界</th></tr></thead><tbody>
-<tr><td>Git 准备</td><td>固定 source/target/base，构造只读检视工作区，冻结规则</td><td>失败只影响当前 attempt</td></tr>
-<tr><td>OpenCode 适配</td><td>启动服务、原生会话、读取最终消息；SSE 仅观察</td><td>丢失生成响应时查询原会话，不重发生成</td></tr>
-<tr><td>结构化输出</td><td>字段类型、必要内容、路径与行范围等基本检查</td><td>最多一次无工具修复；保留有效条目，异常条目隔离并标记 partial</td></tr>
-<tr><td>固定渲染</td><td>严重级别、标题、标签、描述、位置、影响、解决方案、预防建议</td><td>UI、报告、发布复用同一份冻结正文</td></tr>
-<tr><td>持久化与队列</td><td>不可变报告与状态引用，全局 FIFO</td><td>持久化失败或进程退出未确认时暂停，保留队列，支持恢复</td></tr>
-<tr><td>发布</td><td>用户逐条确认后发送已有正文</td><td>失败或结果未知不自动重发，不拖停检视队列</td></tr>
-</tbody></table></section>
-<section><h2>完成、部分完成与失败</h2>
-<p>完整检视且无问题才是 PASS。缺少上下文、未完成复核或隔离异常意见均是 partial；有效意见仍可确认发送。单任务失败继续后续任务。目录清理与日志失败作为警告，不推翻已保存结果。</p>
-<p>进程退出未确认时先保存可用结果，再暂停队列。恢复会重试清理和残留进程检查，不重新生成已有检视。应用重启保留排队项，执行中任务标为停止。</p></section>
-<section><h2>独立数据与证据</h2><p>新目录：<code>%LOCALAPPDATA%\ReviewX\native-v2</code>。state.version=2；不迁移、不删除旧数据。每份报告保存结构化结果、原始输出、可选修复输出和执行信息。</p><p><a href="PRD.md">产品与合同</a> · <a href="API.md">接口</a> · <a href="../resources/review-workflow-provenance.md">工作流来源</a></p></section>
-<footer>稳定性改善需要真实运行数据验证；模型、网络和工具运行失败仍可能发生。</footer>
-</main></body></html>
+@media print{@page{size:A3 portrait;margin:12mm}body{background:white;font-size:11px}aside,.skip{display:none}main{margin:0;max-width:none;padding:0}h1{font-size:28px}h2{font-size:21px}.lead{font-size:13px}.hero{margin:0}.badges{margin:8px 0}.cards{grid-template-columns:repeat(3,minmax(0,1fr))}.card{padding:10px}.card strong{font-size:13px}.card p{font-size:11px}#overview{break-before:auto}h3{break-after:avoid}section{break-before:page;border:0;border-radius:0;margin:0;padding:0}.scroll{overflow:visible}.diagram svg{min-width:0}.diagram{padding:8px}.flow{min-width:0;padding:10px}.two{grid-template-columns:repeat(2,minmax(0,1fr))}.agents{grid-template-columns:repeat(4,minmax(0,1fr))}table{min-width:0;font-size:11px}td,th{padding:7px 9px}tr,.card,.callout,.sequence li{break-inside:avoid}.section-head{break-after:avoid}details{padding:8px}details::details-content{display:block!important;content-visibility:visible!important;height:auto!important}details>*:not(summary){display:block!important}summary{list-style:none}summary::marker{content:""}pre{font-size:10px}.sequence li{grid-template-columns:30px 130px 1fr;padding:9px 0}.sequence p{font-size:11px}.sources{font-size:10px}a{color:inherit}.footer{padding:10px 0}*{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
+</style>
+</head>
+<body>
+<a class="skip" href="#overview">跳至架构正文</a>
+<aside aria-label="文档目录">
+<div class="brand">Review<span>X</span></div><div class="eyebrow">ARCHITECTURE / NATIVE V2</div>
+<nav aria-label="页内导航"><a href="#overview">01　系统组件</a><a href="#sequence">02　检视时序</a><a href="#agents">03　代理协作</a><a href="#output">04　结构化意见</a><a href="#recovery">05　异常与存储</a></nav>
+<p class="side-note">按当前实现绘制<br>核对日期：2026-10-03<br>内容基线：68bd5ce<br><a href="PRD.md">产品要求</a> · <a href="API.md">接口说明</a></p>
+</aside>
+<main>
+<header class="hero"><div class="eyebrow">CODE → REVIEW → STRUCTURED FINDINGS</div><h1>原生 Agent 检视架构</h1><p class="lead">ReviewX 管理固定输入、队列与发布；OpenCode 管理工具调用和子代理上下文；固定渲染器把字段化意见转成可发送的中文正文。</p><div class="badges"><span class="badge">本地单实例 · Loopback</span><span class="badge">OpenCode 默认模型</span><span class="badge">工作流 native-review/1</span><span class="badge">人工逐条发布</span></div></header>
+<div class="cards"><article class="card"><span class="label">执行边界</span><strong>一个活动检视 + 一个活动发送</strong><p>各自串行，彼此可并行。模型内部的原生子任务由 OpenCode 调度。</p></article><article class="card"><span class="label">输出边界</span><strong>JSON 内容，脚本排版</strong><p>格式异常最多修复一次；有效条目保留，未完整结果与 PASS 区分。</p></article><article class="card"><span class="label">故障边界</span><strong>结果、任务、队列分别处理</strong><p>普通任务失败继续 FIFO；退出未确认或存储故障可暂停队列。</p></article></div>
+<section id="overview" aria-labelledby="overview-title">
+<div class="section-head"><span class="num">01</span><div><h2 id="overview-title">系统组件与调用方向</h2><p>浏览器只访问本地 Web API；Runtime 是业务协调入口，外部能力由适配器提供。</p></div></div>
+<div class="legend"><span>蓝线：调用 / 请求；响应沿原路返回</span><span class="ai-key">紫色：原生 AI 执行</span><span class="data-key">绿虚线：文件读取 / 持久化</span></div>
+<div class="scroll diagram" tabindex="0" role="region" aria-label="可横向滚动的系统组件图">
+<svg viewBox="0 0 1000 490" role="img" aria-labelledby="system-title system-desc"><title id="system-title">ReviewX 系统组件关系</title><desc id="system-desc">浏览器调用 Web API，Web API 调用 Runtime。Runtime 调用 Git、OpenCode 和 CodeHub 适配器，读写本地存储。OpenCode 通过配置的模型服务检视工作区。检视与发送各自串行。</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" fill="#285dc4"/></marker><marker id="green-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#207358"/></marker></defs>
+<rect class="box" x="20" y="24" width="245" height="80" rx="10"/><text x="40" y="56">浏览器工作台</text><text class="sub" x="40" y="81">1 秒轮询状态；用户发起操作</text>
+<rect class="box" x="365" y="24" width="260" height="80" rx="10"/><text x="385" y="56">Web API / Next.js</text><text class="sub" x="385" y="81">校验请求边界；返回视图 / 报告</text>
+<path class="edge" d="M265 64 H365"/>
+<rect class="box" x="365" y="160" width="260" height="105" rx="10"/><text x="385" y="190">ReviewXRuntime</text><text class="sub" x="385" y="216">FIFO 检视队列 · 取消 · 暂停恢复</text><text class="sub" x="385" y="241">Finding 决策 · 全局串行发送</text><path class="edge" d="M495 104 V160"/>
+<rect class="box" x="735" y="174" width="245" height="80" rx="10"/><text x="755" y="205">CodeHub 适配器 → CLI</text><text class="sub" x="755" y="231">项目 / MR 查询；人工确认后发评论</text><path class="edge" d="M625 210 H735"/>
+<rect class="box" x="20" y="345" width="245" height="80" rx="10"/><text x="40" y="377">GitPreparer → Git</text><text class="sub" x="40" y="401">固定修订；构造 source / base</text><path class="edge" d="M405 265 V301 H142 V345"/>
+<rect class="box ai" x="365" y="345" width="260" height="80" rx="10"/><text x="385" y="377">OpenCodeReviewer → serve</text><text class="sub" x="385" y="401">原生 task / 读取 / 固定 Git 查询</text><path class="edge" d="M495 265 V345"/>
+<rect class="box ai" x="735" y="345" width="245" height="80" rx="10"/><text x="755" y="377">配置的模型服务</text><text class="sub" x="755" y="401">主代理与子代理沿用默认模型</text><path class="edge" d="M625 385 H735"/>
+<rect class="box data" x="20" y="160" width="245" height="105" rx="10"/><text x="40" y="190">本地文件 / 存储</text><text class="sub" x="40" y="216">StateStore · ReportStore · Logger</text><text class="sub" x="40" y="241">workspaces：Git 树、上下文、原文</text>
+<path d="M365 211 H265" fill="none" stroke="#207358" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#green-arrow)"/><path d="M142 345 V265" fill="none" stroke="#207358" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#green-arrow)"/>
+<path d="M400 425 V458 H285 V249 H265" fill="none" stroke="#207358" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#green-arrow)"/><text class="sub" x="420" y="462">读取任务目录；保存原始输出</text>
+</svg></div>
+<div class="two"><div><h3>两个独立的业务通道</h3><p>检视通道一次执行一个 attempt，按 FIFO 取队列。发送通道一次发送一条 Finding，用户确认后调用 CodeHub；可与检视同时进行。评论发送结果未知时不自动重试，避免重复评论。</p></div><div><h3>本地服务与模型服务</h3><p>ReviewX 和每轮 OpenCode 服务都使用本地 loopback。OpenCode 通过随机凭据访问，模型请求由其已配置的服务处理。模型与版本不设品牌白名单，但必要接口和代理配置必须可用。</p></div></div>
+<details><summary>接口与信任边界</summary><p>浏览器读取 <code>GET /api/state</code> 只同步本地状态，不刷新 CodeHub。创建检视使用 <code>POST /api/reviews</code>，恢复使用 <code>POST /api/reviews/resume</code>，发布使用 <code>POST /api/attempts/{id}/findings/{ordinal}/publish</code>。</p><p>状态变更请求校验 Host、同源 Origin 和 JSON Content-Type。仓库文件、MR 文本与规则是检视输入，不能授权编辑、执行脚本或发布评论。</p></details>
+<p class="sources">代码：<a href="../src/server/bootstrap.ts">运行时装配</a><a href="../src/server/runtime.ts">业务协调</a><a href="../src/server/http.ts">请求边界</a><a href="../src/server/integrations/codehub.ts">CodeHub</a></p>
+</section>
+<section id="sequence" aria-labelledby="sequence-title">
+<div class="section-head"><span class="num">02</span><div><h2 id="sequence-title">一次检视的真实执行顺序</h2><p>下列主路径从用户请求开始，区分模型执行、进程收尾、持久化与工作区删除。</p></div></div>
+<ol class="sequence">
+<li><strong>入队前冻结规则<br><small>Runtime / rules</small></strong><p>读取安装包 resources/rules 的直属 Markdown，冻结后随 attempt 持久化；规则加载失败时不创建任务、不归档上次结果。加载成功才加入全局 FIFO。</p></li>
+<li><strong>取队列与读取 MR<br><small>Runtime / CodeHub</small></strong><p>任务进入 reviewing；读取当前 MR 一次，确认仍开放，记录标题、描述和源 / 目标分支。不在检视结束后重新查询 MR 作为结果接受条件。</p></li>
+<li><strong>固定 Git 输入<br><small>GitPreparer</small></strong><p>fetch 后固定 sourceSha、targetSha 与唯一 merge-base。宿主创建 source / base 工作树、changes.diff、scope.json，并读取变更路径祖先目录中的仓库规则。</p></li>
+<li><strong>启动原生会话<br><small>OpenCodeReviewer</small></strong><p>写入 review-context.json 和权限配置，启动 serve --pure；检查健康接口与代理配置后创建主会话。配置关闭项目配置加载、默认插件、外部技能、LSP 和格式化等能力。</p></li>
+<li><strong>检视、复核与输出<br><small>OpenCode</small></strong><p>主代理按提示词分发四个任务、去重并逐候选复核；最终文本先写入任务目录。解析 JSON，必要时最多进行一次无工具修复，再执行路径容错和固定渲染。</p></li>
+<li class="critical"><strong>① 尝试进程收尾<br><small>适配器 finally</small></strong><p>结束 SSE、请求会话 abort（最多 3 秒）、触发进程树终止，并等待退出确认（最多 10 秒）。已有结果但退出未确认时，返回结果及 cleanupPending；没有结果时抛出清理异常。</p></li>
+<li class="critical"><strong>② 保存报告和状态<br><small>ReportStore / StateStore</small></strong><p>确认未被取消后，先写不可变报告目录，再登记 attempt 的结果、正文及报告引用。状态登记成功后才有可发布结果；只有孤立报告文件并不代表任务成功。</p></li>
+<li class="critical"><strong>③ 清理或暂停<br><small>Runtime</small></strong><p>进程退出已确认则删除工作区，删除失败记警告。cleanupPending 时保留待清理工作区，保存可用结果后暂停队列。普通任务结束后继续后续 FIFO。</p></li>
+</ol>
+<div class="callout warn">界面阶段 <code>cleaning_up</code> 不是精确的时序边界：代码在适配器返回后设置该阶段，再进入 <code>saving_report</code>。进程收尾与工作区删除必须按上面的两个实际调用位置理解。</div>
+<details><summary>连接恢复、进度与时间预算</summary><p>SSE 只更新活动说明和观察指标，不承担结果验收。生成 POST 响应丢失后，每次查询原会话状态与消息，间隔约 1 秒；连续三次查询失败则退出，不重发生成请求，不重放事件。</p><p>Runtime 整轮预算 60 分钟；普通控制请求 30 秒；生成请求使用整轮信号。单次 Git 命令预算 10 分钟。停止取消活动会话和进程树，取消后不追加格式修复、不登记新的可发布结果。</p></details>
+<p class="sources">代码：<a href="../src/server/runtime.ts">检视生命周期</a><a href="../src/server/integrations/git.ts">固定 Git 范围</a><a href="../src/server/integrations/opencode.ts">原生适配与收尾</a><a href="../src/server/storage/report-store.ts">报告保存</a></p>
+</section>
+<section id="agents" aria-labelledby="agents-title">
+<div class="section-head"><span class="num">03</span><div><h2 id="agents-title">原生代理如何协作</h2><p>上下文隔离由 OpenCode 原生 task 提供；ReviewX 给出工作流提示词与权限。</p></div></div>
+<div class="card agent-top"><strong>reviewx · 主代理</strong><p>读取固定上下文，整理 MR 意图与适用规则</p></div><p class="connector">↓ 四个独立任务；支持时并行，不互传审查结论 ↓</p>
+<div class="agents"><article class="card"><strong>规则检视 A</strong><p>reviewx-rules<br>检查适用项目规则</p></article><article class="card"><strong>规则检视 B</strong><p>reviewx-rules<br>独立检查同一规则范围</p></article><article class="card"><strong>缺陷检视 A</strong><p>reviewx-bugs<br>检查本次引入的缺陷</p></article><article class="card"><strong>缺陷检视 B</strong><p>reviewx-bugs<br>独立检查代码与调用方</p></article></div>
+<p class="connector">↓ 主代理按根因去重；零候选时无需复核 ↓</p><div class="card agent-top"><strong>每个候选 → 新的 reviewx-verify 任务</strong><p>只传候选描述、位置、MR 意图与适用规则位置，不传发现者的推理历史。重新阅读代码和调用方，尝试反证。</p></div><p class="connector">↓ confirmed 保留；rejected / unverified 不作为已确认意见 ↓</p><div class="card agent-top"><strong>主代理汇总最终 JSON</strong><p>仅保留已复核问题；必需工作未完成时按提示词报告 incomplete</p></div>
+<div class="callout">这是<strong>提示词约定的协作流程</strong>。宿主不按子代理数量、投票结果、阅读配额或工具收据硬验收。SSE 观察到的 nativeSubagents 是诊断指标，不证明每个任务均正确执行。</div>
+<div class="two"><div><h3>权限配置</h3><ul><li>默认拒绝；允许 read、glob、grep、list 与宿主列出的固定 Git diff / log 命令。</li><li>仅主代理可调用指定的三个子代理类型；子代理不开放继续委派。</li><li>格式修复代理为独立会话，所有工具均拒绝。</li><li>禁止代理编辑、构建、测试、项目脚本、外部目录访问与评论发送。</li></ul><p class="muted">“只读”指代理权限。宿主实际创建可操作的 Git 工作树，并未把整个文件系统设置成物理只读。</p></div><div><h3>规则来源与优先级</h3><ul><li>全局补充：安装包 resources/rules 直属 Markdown，入队时冻结，总量最多 1 MiB。</li><li>仓库规则：source 根目录及变更路径祖先目录的 AGENTS.md / CLAUDE.md；缺失时回看 base，不跟随规则链接。</li><li>按提示词，较近目录覆盖祖先；明确适用的补充规则覆盖仓库要求，同级冲突记限制。</li><li>没有规则文件或补充规则为空属于正常情况；表达偏好不能修改 JSON 合同与固定章节。</li></ul></div></div>
+<p class="sources">代码：<a href="../src/server/review/prompt.ts">代理提示词</a><a href="../src/server/integrations/opencode.ts">代理与权限配置</a><a href="../src/server/review/rules.ts">补充规则冻结</a><a href="../resources/review-workflow-provenance.md">参考来源与适配说明</a></p>
+</section>
+<section id="output" aria-labelledby="output-title">
+<div class="section-head"><span class="num">04</span><div><h2 id="output-title">从结构化意见到冻结正文</h2><p>模型填写内容，脚本固定中文章节。以下示例说明现有字段，不新增接口。</p></div></div>
+<div class="scroll" tabindex="0" role="region" aria-label="可横向滚动的意见数据流"><div class="flow"><article class="card"><span class="label">01 / PARSE</span><strong>原始完整文本</strong><p>接受完整 JSON 或单个完整 JSON 代码块，不从聊天中截取碎片。</p></article><article class="card"><span class="label">02 / REPAIR</span><strong>字段检查与一次修复</strong><p>有效项保留；结构无效项进入无工具修复会话。原文留存。</p></article><article class="card"><span class="label">03 / RENDER</span><strong>路径容错与固定渲染</strong><p>转义普通文本，适配代码围栏。生成一次 body 后冻结。</p></article><article class="card"><span class="label">04 / USE</span><strong>展示 → 报告 → 发送</strong><p>复用同一正文。发送入口仅规范为 CRLF，不重新调用模型改写。</p></article></div></div>
+<div class="two"><div><h3>ReviewDocument · 顶层结构</h3><div class="codebox"><pre aria-label="顶层 JSON 示例">{
+  "schemaVersion": 1,
+  "summary": "本次变更与检视结论摘要",
+  "completion": "complete",
+  "limitations": [],
+  "findings": []
+}</pre></div><p class="caption">completion：complete / incomplete。findings 为右侧结构的数组；完整检视且数组为空才为 PASS。</p><h3>固定中文意见骨架</h3><div class="codebox"><pre>严重级别图标 + 等级 + 标题
+问题描述：严重级别 / 标签 / 简述
+问题位置：路径 / 行号 / source 或 base / 可选片段
+影响分析：直接后果 / 影响范围 / 触发条件
+解决方案：描述 / 可选代码示例
+预防措施：建议列表</pre></div></div><div><h3>StructuredFinding · 一条意见</h3><div class="codebox"><pre aria-label="Finding JSON 示例">{
+  "severity": "major",
+  "title": "问题标题",
+  "tags": ["逻辑错误"],
+  "description": "问题描述",
+  "locations": [{
+    "path": "src/example.ts",
+    "revision": "source",
+    "startLine": 12,
+    "endLine": 14,
+    "snippet": {
+      "language": "typescript",
+      "code": "示例代码（可选片段）"
+    }
+  }],
+  "impact": {
+    "direct": "直接后果",
+    "scope": "影响范围",
+    "trigger": "触发条件"
+  },
+  "solutions": [{
+    "description": "修复建议",
+    "example": {
+      "language": "typescript",
+      "code": "示例代码（可选示例）"
+    }
+  }],
+  "preventions": ["预防建议"]
+}</pre></div></div></div>
+<details><summary>保留哪些检查，如何修复和容错</summary><ul><li>检查完整 JSON、字段类型、必需文本、枚举、数组大小、安全相对路径、正整数行号及 endLine ≥ startLine。解析输出上限 4 MiB；最多 100 条 Finding。检查不会证明行号确实对应缺陷。</li><li>severity 支持 fatal / major / minor / suggestion；revision 支持 source / base。tags 可空；locations、solutions、preventions 至少一项。snippet 和 example 可省略。</li><li>顶层可解析时，只将无效意见交给修复器，原有有效条目不交由其改写；顶层不可解析时提供完整原文修复。仍无效或缺少内容时隔离并记录未完成。</li><li>路径误带 source/ 或 base/ 前缀时，仅在原路径不存在、去掉对应修订前缀后的路径确为文件时修正。仓库确有同名目录则保留原路径；这不是完整的文件证据校验。</li></ul></details>
+<div class="callout warn"><strong>limitations 非空 ≠ 自动 partial。</strong>程序保留模型的 incomplete 标志；顶层无效、仍有结构错误、主会话错误或准备阶段限制会触发 incomplete，修复会话错误或修复遗漏也有相应处理。普通说明、SSE 警告和目录清理警告不会仅因存在就把完整结果判为 partial。</div>
+<p class="sources">代码：<a href="../src/shared/review-contract.ts">字段合同</a><a href="../src/server/review/schema.ts">解析与校验</a><a href="../src/server/integrations/opencode.ts">修复与路径容错</a><a href="../src/shared/finding-markdown.ts">固定渲染器</a></p>
+</section>
+<section id="recovery" aria-labelledby="recovery-title">
+<div class="section-head"><span class="num">05</span><div><h2 id="recovery-title">结果、异常恢复与本地存储</h2><p>result 描述检视完整性与发现；status 描述任务和人工处理阶段；queuePaused 描述队列是否暂停。</p></div></div>
+<div class="scroll" tabindex="0" role="region" aria-label="结果与异常判定表"><table><thead><tr><th>条件</th><th>结果 / 任务处理</th><th>队列与后续动作</th></tr></thead><tbody>
+<tr><td>complete + 零意见</td><td><span class="status pass">pass</span>；status 为 completed</td><td>继续 FIFO；不会自动发表评论。</td></tr>
+<tr><td>complete + 有意见</td><td><span class="status">findings</span>；awaiting_confirmation</td><td>继续 FIFO；用户逐条发送或不发送。</td></tr>
+<tr><td>incomplete</td><td><span class="status partial">partial</span>；有有效意见则 awaiting_confirmation，无意见则 completed</td><td>有效项可人工发送；处理完仍保留 partial，不变成 PASS。</td></tr>
+<tr><td>普通任务异常 / 超时</td><td>review_failed；记录错误</td><td>通常继续后续 FIFO；不自动重跑失败任务。</td></tr>
+<tr><td>SSE / 日志 / 目录清理异常</td><td>警告；不单独推翻已保存结果</td><td>通常继续；若记录状态时发生存储故障，则按存储故障暂停。</td></tr>
+<tr><td>进程退出未确认</td><td>有可用结果时先保存；无结果时记录失败或停止</td><td>暂停，保留排队项与待清理工作区；用户重试清理。</td></tr>
+<tr><td>报告 / 状态存储失败</td><td>不把未登记的报告当作可发布结果；已登记结果不因后续警告写入失败被撤销</td><td>暂停；状态文件无法写入时至少在内存中暂停。</td></tr>
+<tr><td>用户停止</td><td>排队项移出 FIFO；活动任务取消后 stopped</td><td>不发布中断输出；若退出仍未确认，队列仍需暂停。</td></tr>
+<tr><td>评论发送失败 / 结果未知</td><td>Finding 标记 failed / unknown；记录该次发送结果</td><td>不自动重发评论，不因此拖停检视队列。</td></tr>
+</tbody></table></div>
+<div class="two"><div><h3>恢复不是重新生成</h3><ol><li>用户调用 POST /api/reviews/resume。</li><li>等待旧 worker 结束，重试进程退出确认。</li><li>检查工作区中的持久化 PID 记录，再执行待清理回调。</li><li>成功写入恢复状态后清除暂停 / fatal 标记，继续保留的 FIFO。</li></ol><p>没有暂停时恢复是空操作；并发恢复返回 409。失败时保留暂停，不重发已有模型请求。</p></div><div><h3>重启后的处理</h3><p>reviewing / stopping 任务标为 stopped，尚未开始的 queued 任务保留，规则快照可恢复。原有发布中的意见恢复为结果未知，不能假定未发送。</p><p>启动检查遗留进程记录：PID 仍存活、无法确认或记录异常时暂停。只检查，不自动杀死可能被系统复用的 PID；确认进程不存在后删除标记。</p></div></div>
+<h3>数据目录与版本</h3><div class="two"><div class="codebox"><pre class="tree">%LOCALAPPDATA%/ReviewX/native-v2/
+├─ state.json                 状态、FIFO、规则快照
+├─ logs/                      会话日志
+├─ reports/&lt;attempt-id&gt;/
+│  ├─ report.md               固定正文与报告摘要
+│  ├─ submission.v1.json      ReviewDocument
+│  ├─ execution.v1.json       执行信息（内部 version=2）
+│  ├─ raw-output.txt          原始生成文本
+│  └─ repair-output.txt       可选修复文本
+└─ workspaces/review-*/
+   ├─ objects/                Git 对象仓库
+   ├─ hooks/                  宿主控制的 hooks 路径
+   └─ task/
+      ├─ source/ · base/      固定修订工作树
+      ├─ changes.diff · scope.json
+      ├─ review-context.json · reviewx-config/
+      ├─ raw-output.txt
+      └─ opencode-process.json 进程存活检查记录</pre></div><div><div class="scroll" tabindex="0" role="region" aria-label="版本对照表"><table style="min-width:0"><thead><tr><th>标识</th><th>当前值</th></tr></thead><tbody><tr><td>业务状态</td><td>state.version = 2</td></tr><tr><td>意见文档</td><td>schemaVersion = 1</td></tr><tr><td>执行记录</td><td>version = 2；文件名仍为 execution.v1.json</td></tr><tr><td>工作流</td><td>native-review/1</td></tr></tbody></table></div><p>执行记录包含实际模型、会话、固定修订、规则快照、进度、耗时与警告；ACCEPTED 表示可接收的结果记录，也可能对应 partial，并不证明检视质量。</p><p>新目录独立于旧数据，不迁移、不删除旧数据。报告先写暂存目录再重命名，状态另行原子落盘，两者并非一个数据库事务。</p></div></div>
+<div class="callout good">规则哈希用于记录冻结输入；进度与子任务计数用于观察。旧材料分页、强制阅读配额、工具收据和全历史重放不再作为接受门槛。</div>
+<p class="sources">代码：<a href="../src/server/runtime.ts">异常隔离 / 恢复</a><a href="../src/server/storage/state-store.ts">状态与重启</a><a href="../src/server/storage/report-store.ts">不可变报告</a><a href="../src/server/platform/workspace-process.ts">遗留进程检查</a><a href="../src/server/review/finding-state.ts">人工决策与发布恢复</a></p>
+</section>
+<footer class="footer"><p>本页按当前实现描述行为，未修改生产接口或数据合同。代码基线与压缩提交 68bd5ce 内容一致；相关说明：<a href="PRD.md">PRD 与验收记录</a> · <a href="API.md">Web API</a>。</p><p>既有测试与合成仓库验收说明已覆盖场景可以工作，不等于长期稳定性、所有模型兼容或检视结论正确性的保证。</p></footer>
+</main>
+</body>
+</html>
