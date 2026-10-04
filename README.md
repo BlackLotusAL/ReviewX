@@ -50,7 +50,7 @@ Finding 头部展示严重等级、处理状态和操作按钮，概览展示版
 
 ## 本地数据
 
-永久数据位于 `%LOCALAPPDATA%\ReviewX\native-v2`：
+永久数据位于 `%LOCALAPPDATA%\ReviewX`：
 
 - `state.json`：版本化原子状态文件
 - `reports\<attempt-id>\report.md`：每次成功 attempt 的不可变报告
@@ -106,6 +106,6 @@ pnpm test:package
 
 单任务失败后继续其他排队任务。目录清理失败只警告；进程退出无法确认、报告或状态无法保存时暂停队列，可使用“重试清理并继续”。日志故障不单独阻止检视。
 
-新数据使用 %LOCALAPPDATA%/ReviewX/native-v2，旧数据不读取、不迁移、不删除。重启停止中断任务，保留尚未开始的队列，先检查遗留进程。
+新数据使用 %LOCALAPPDATA%/ReviewX，直接在该目录保存状态、锁文件、报告、日志和工作区，state.json version=2。旧 native-v2 子目录不自动读取、迁移或删除。重启停止中断任务，保留尚未开始的队列，先检查遗留进程。
 
 真实 AI 默认验收三处单位换算缺陷；REVIEWX_ACCEPTANCE_CASE=clean 为无缺陷对照，lifetime-defects/async-defects 检查生命周期和异步逻辑。源码与安装包分别保存原始输出、结构、正文和执行信息；脚本通过后仍需人工核对意见依据。

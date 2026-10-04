@@ -125,6 +125,7 @@ export function structuredFinding(body = "发现问题"): import("@/src/shared/r
 /** New-generation fixture; the old helper remains useful for historical compatibility. */
 export function generatedFinding(body = "发现问题"): import("@/src/shared/review-contract").StructuredFinding {
   const finding = structuredFinding(body);
+  finding.locations[0].highlights = [{ startLine: 1, endLine: 1 }];
   finding.locations[0].annotations = [{ line: 1, text: "此处逻辑导致调用结果错误。" }];
   finding.solutions = [{ kind: "recommended", description: "修复逻辑", steps: [{ description: "修正调用结果。", path: "fixture.ts" }] }];
   return finding;

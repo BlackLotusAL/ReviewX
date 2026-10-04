@@ -24,7 +24,7 @@ export function resolveDataPaths(environment: Readonly<Record<string, string | u
       technical: "LOCALAPPDATA is missing.",
     });
   }
-  const root = path.resolve(localAppData, "ReviewX", "native-v2");
+  const root = path.resolve(localAppData, "ReviewX");
   return {
     root,
     stateFile: path.join(root, "state.json"),

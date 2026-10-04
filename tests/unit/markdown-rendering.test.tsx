@@ -7,6 +7,18 @@ import { generatedFinding } from "../helpers/runtime";
 
 afterEach(cleanup);
 
+test("impact and repair prose allow only inline code while escaping active markup and formatting", () => {
+  const finding = generatedFinding();
+  finding.impact.direct = "导入 `FitReq` 失败，``x`y`` 保留反引号。<script>alert(1)</script> **bold** [link](https://example.com)";
+  finding.solutions[0].steps = [{ path: "api.py", description: "将 `WrongReq` 改为 `Req`。未闭合 ` <img src=x onerror=alert(1)>" }];
+  const view = render(<Markdown>{renderFinding(finding)}</Markdown>);
+  const inline = [...view.container.querySelectorAll("code")].filter(code => !code.closest("pre"));
+  expect(inline.map(code => code.textContent)).toEqual(expect.arrayContaining(["FitReq", "x`y", "WrongReq", "Req"]));
+  expect(view.container.querySelector("script, img, a, [onerror]")).toBeNull();
+  expect(view.container.textContent).toContain("**bold**");
+  expect(view.container.textContent).toContain("未闭合 `");
+});
+
 test("annotated file groups and solution steps remain readable nested Markdown blocks", () => {
   const finding = generatedFinding();
   finding.locations = [{ path: "delay.py", revision: "source", startLine: 2, endLine: 2,
@@ -18,12 +30,14 @@ test("annotated file groups and solution steps remain readable nested Markdown b
   const view = render(<Markdown>{renderFinding(finding)}</Markdown>);
   const blocks = view.container.querySelectorAll("pre code");
   expect(blocks).toHaveLength(3);
-  expect(blocks[0].textContent).toBe("    # 【检视注释·问题行 L2】缺少换算，包含 ``` 和 <script>。\n    return seconds\n");
+  expect(blocks[0].textContent).toBe("    return seconds  # 缺少换算，包含 ``` 和 <script>。\n");
   expect(blocks[0].querySelector(".hljs-comment")).not.toBeNull();
-  expect(blocks[1].textContent).toBe('【检视注释·问题行 L1】延迟值错误。\n{"delay": 0}\n');
+  expect(blocks[1].textContent).toBe('{"delay": 0}  // 延迟值错误。\n');
   expect(blocks[1].querySelector("span")).toBeNull();
   expect(blocks[2].textContent).toBe("def delay(seconds):\n    return seconds * 1000\n");
-  expect([...blocks].every(block => block.closest("li"))).toBe(true);
+  expect(blocks[0].closest("li")).not.toBeNull();
+  expect(blocks[1].closest("li")).not.toBeNull();
+  expect(blocks[2].closest("li")).toBeNull();
   expect(view.container.querySelector("script")).toBeNull();
   expect(view.container.textContent).toContain("推荐方案"); expect(view.container.textContent).toContain("备用方案");
 });

@@ -130,8 +130,9 @@ try {
     const license = await readFile(path.join(packageRoot, "public", "fonts", filename), "utf8");
     if (!license.includes("SIL OPEN FONT LICENSE")) throw new Error(`Font license ${filename} was not packaged.`);
   }
-  const lock = JSON.parse(await readFile(path.join(localAppData, "ReviewX", "native-v2", "instance.lock"), "utf8")) as { url?: string };
+  const lock = JSON.parse(await readFile(path.join(localAppData, "ReviewX", "instance.lock"), "utf8")) as { url?: string };
   if (lock.url !== first.url) throw new Error("Instance lock did not store the advertised URL.");
+  if ((await readdir(path.join(localAppData, "ReviewX"))).includes("native-v2")) throw new Error("Installation created the obsolete native-v2 directory.");
 
   const second = await runProcess(reviewx, [], { timeoutMs: 60_000, env: { ...environment, REVIEWX_TEST_BROWSER: "skip" } });
   requireSuccess("second ReviewX invocation", second);

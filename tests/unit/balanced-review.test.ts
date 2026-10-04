@@ -11,6 +11,7 @@ const response = (value: unknown): Generation => ({ text: JSON.stringify(value) 
 
 test("independent verification keeps annotations and strategy steps, excluding candidate code", async () => {
   const finding = structuredFinding();
+  finding.locations[0].label = "调用入口";
   finding.locations[0].snippet = { language: "ts", code: "candidate_source();" };
   finding.solutions[0].steps![0].example = { language: "ts", code: "candidate_fix();" };
   finding.solutions.push({ kind: "alternative", description: "替代策略", applicability: "允许迁移接口时适用。", steps: [{ description: "迁移接口。", path: "caller.ts" }] });
@@ -19,6 +20,8 @@ test("independent verification keeps annotations and strategy steps, excluding c
       if (agent === "reviewx-discover") return response({ ...discovery(0), findings: [finding] });
       expect(prompt).not.toContain("candidate_source();"); expect(prompt).not.toContain("candidate_fix();");
       const batch = decode(prompt);
+      expect(batch[0].finding.locations[0].label).toEqual(finding.locations[0].label);
+      expect(batch[0].finding.locations[0].highlights).toEqual(finding.locations[0].highlights);
       expect(batch[0].finding.locations[0].annotations).toEqual(finding.locations[0].annotations);
       expect(batch[0].finding.solutions[1]).toEqual(finding.solutions[1]);
       expect(batch[0].finding.solutions[0].steps![0]).toEqual({ description: "修正调用结果。", path: "fixture.ts" });

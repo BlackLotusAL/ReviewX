@@ -17,7 +17,7 @@ pnpm start
 
 ## 指标与证据
 
-每个 attempt 的独立 trace 位于 `%LOCALAPPDATA%\ReviewX\native-v2\logs\review-<attemptId>.jsonl`，成功、失败、停止和超时均保留。排队记录与执行记录在同一文件中；重启恢复可能开始新的 sequence 段，分析时以事件时间和 attemptId 为准。
+每个 attempt 的独立 trace 位于 `%LOCALAPPDATA%\ReviewX\logs\review-<attemptId>.jsonl`，成功、失败、停止和超时均保留。排队记录与执行记录在同一文件中；重启恢复可能开始新的 sequence 段，分析时以事件时间和 attemptId 为准。
 
 事件包括排队、开始、固定 SHA 和规则 hash、Git 子命令、服务启动、生成、候选去重与来源映射、复核、格式修复、报告保存与可见、工作区和进程清理。`spanId` 关联起止，`sessionID/messageID/partID/toolCallID` 关联模型和工具。默认只写元数据、读取路径/区间、返回字节数及内容 hash，不复制源码、推理、凭据或候选全文。
 

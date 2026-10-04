@@ -7,10 +7,13 @@ const text = z.string().trim().min(1).max(64 * 1024).refine(s => !s.includes("\0
 const example = z.object({ language: z.string().max(64), code: z.string().min(1).max(64 * 1024) });
 const repositoryPath = z.string().refine(safeRepositoryPath, "Use a relative repository path");
 const annotation = z.object({ line: z.number().int().positive(), text });
+const highlight = z.object({ startLine: z.number().int().positive(), endLine: z.number().int().positive() });
 const location = z.object({
   path: repositoryPath, revision: z.enum(["source", "base"]),
   startLine: z.number().int().positive(), endLine: z.number().int().positive(), snippet: example.optional(),
   annotations: z.array(annotation).max(SOURCE_SNIPPET_LINE_LIMIT).optional(),
+  highlights: z.array(highlight).max(SOURCE_SNIPPET_LINE_LIMIT).optional(),
+  label: text.optional(),
 });
 const step = z.object({ description: text, path: repositoryPath.optional(), example: example.optional() });
 const solution = z.object({
@@ -27,17 +30,22 @@ export const findingSchema = z.object({
   preventions: z.array(text).min(1).max(20),
 });
 const generatedLocation = location.extend({
+  label: text.max(40).regex(/^[^\r\n\u2028\u2029]+$/u, "Use a single paragraph").optional().describe("Optional short source context, e.g. read() 新增块 or cleanup()."),
+  highlights: z.array(highlight).max(SOURCE_SNIPPET_LINE_LIMIT)
+    .describe("Independent problem ranges using ORIGINAL one-based source lines. Each range must satisfy startLine <= endLine and fit inside the location's first 40 displayed source lines. Do not infer ranges from explanation positions."),
   annotations: z.array(annotation.extend({
     text: text.max(120).regex(/^[^\r\n\u2028\u2029]+$/u, "Use a single paragraph")
       .describe("A short Chinese explanation of this actual source line, at most 120 characters. No comment syntax or Markdown; the host inserts the annotation."),
   })).min(1).max(SOURCE_SNIPPET_LINE_LIMIT)
     .describe("Annotate the actual problem lines using ORIGINAL one-based line numbers. Each line must fall within startLine..min(endLine, startLine+39); create another location for more distant lines."),
 }).refine(l => l.endLine >= l.startLine, "endLine must follow startLine")
+  .refine(l => l.highlights.every(h => h.startLine >= l.startLine && h.endLine >= h.startLine && h.endLine <= Math.min(l.endLine, l.startLine + SOURCE_SNIPPET_LINE_LIMIT - 1)),
+    { message: "Highlights must reference complete displayed original source ranges", path: ["highlights"] })
   .refine(l => l.annotations.every(a => a.line >= l.startLine && a.line <= Math.min(l.endLine, l.startLine + SOURCE_SNIPPET_LINE_LIMIT - 1)),
     { message: "Annotations must reference displayed original source lines", path: ["annotations"] });
 const generatedStep = z.strictObject({
   description: text, path: repositoryPath.optional(),
-  example: example.optional().describe("Prefer minimal COMPLETE corrected source in the repository's real language and APIs, without review annotations. Include its target path. Omit only when reliable code cannot be supported."),
+  example: example.optional().describe("For branches, control flow or resource management provide the smallest applicable corrected source with necessary context and target path; a whole function is not required. Simple exact import/name/type/constant replacements may use precise textual instructions without duplicate code. Never use problem markers, invented APIs or ellipses."),
 }).refine(s => !s.example || !!s.path, { message: "A code example requires its target repository path", path: ["path"] });
 const generatedSolution = z.strictObject({
   kind: z.enum(["recommended", "alternative"]), description: text,
@@ -50,7 +58,9 @@ export const generatedFindingSchema = findingSchema.extend({
     .refine(value => value.split(/(?:[。！？!?]+[”’」』）)]*|\.(?=\s|$))/u).filter(part => part.trim()).length <= 2, "Use at most two sentences")
     .describe("Plain Chinese, 1–2 sentences, one paragraph, at most 120 characters: cause and core consequence only. Put evidence, callers, scope and triggers in locations/impact instead."),
   tags: z.array(z.enum(FINDING_TAGS)).max(32).describe("Chinese categories only; choose applicable categories without duplicates. May be empty."),
-  locations: z.array(generatedLocation).min(1).max(100),
+  locations: z.array(generatedLocation).min(1).max(100)
+    .describe("At least one location must have a problem highlight. Evidence-only contexts may use empty highlights; never mark normal supporting code as erroneous. Select concise source ranges; same-file ranges are grouped by the host.")
+    .refine(locations => locations.some(l => l.highlights.length > 0), "A finding requires at least one problem highlight"),
   solutions: z.array(generatedSolution).min(1).max(20)
     .describe("Exactly one recommended strategy, FIRST. Further items may only be genuine interchangeable alternatives, each with applicability. Do not force alternatives; all necessary coordinated edits belong to the recommended strategy's steps.")
     .refine(s => s[0]?.kind === "recommended" && s.filter(v => v.kind === "recommended").length === 1, "Exactly one recommended solution must be first"),

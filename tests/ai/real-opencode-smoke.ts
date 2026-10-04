@@ -13,6 +13,7 @@ import { ReviewTrace } from "@/src/server/review/trace";
 import { runOneshotBaseline } from "./oneshot-baseline";
 import { FINDING_TAGS, SOURCE_SNIPPET_LINE_LIMIT } from "@/src/shared/review-output-policy";
 import { generatedFindingSchema } from "@/src/server/review/schema";
+import { compactFixture } from "./compact-fixtures";
 
 const execute = promisify(execFile);
 const engine: typeof import("@/src/server/package-engine") = process.env.REVIEWX_ACCEPTANCE_ENGINE
@@ -36,7 +37,7 @@ const attemptId = new Date().toISOString().replace(/[:.]/gu, "-");
 const projectRoot = path.resolve(import.meta.dirname, "../..");
 const evidence = path.join(projectRoot, "test-results/acceptance", attemptId);
 const scenario = process.env.REVIEWX_ACCEPTANCE_CASE ?? "defects";
-if (!["defects", "clean", "lifetime-defects", "lifetime-clean", "async-defects", "async-clean", "exception-defects", "exception-clean", "concurrency-defects", "concurrency-clean", "rules-defects", "rules-clean"].includes(scenario)) throw new Error("Unknown acceptance case");
+if (!["defects", "clean", "imports-defects", "resources-defects", "evidence-clean", "lifetime-defects", "lifetime-clean", "async-defects", "async-clean", "exception-defects", "exception-clean", "concurrency-defects", "concurrency-clean", "rules-defects", "rules-clean"].includes(scenario)) throw new Error("Unknown acceptance case");
 await mkdir(evidence, { recursive: true });
 process.stdout.write(`Acceptance artifacts: ${evidence}\n`);
 const trace = new ReviewTrace(attemptId, path.join(evidence, "trace.jsonl"));
@@ -81,14 +82,17 @@ try {
     baseline["scoped/AGENTS.md"] = "In this directory, request timeout constants may be up to 120 seconds; this overrides the parent limit.\n";
     baseline["scoped/loader.py"] = "REQUEST_TIMEOUT_SECONDS = 30\n";
   }
+  const compact = compactFixture(scenario);
+  if (compact) { for (const key of Object.keys(baseline)) delete baseline[key]; Object.assign(baseline, compact.baseline); }
   for (const [file, body] of Object.entries(baseline)) await writeFile(path.join(repository, file), body);
   await git(repository, "add", "."); await git(repository, "commit", "-m", "synthetic Qt baseline");
   await git(repository, "switch", "-c", "feature");
-  const changedFiles = scenario.startsWith("lifetime") ? ["value.h"] : scenario.startsWith("rules") ? ["loader.py", "scoped/loader.py"] : /^(async|exception|concurrency)/u.test(scenario) ? ["loader.py"] : ["delay.h", "pyqt_delay.py", "pyside_delay.py"];
+  const changedFiles = compact?.changedFiles ?? (scenario.startsWith("lifetime") ? ["value.h"] : scenario.startsWith("rules") ? ["loader.py", "scoped/loader.py"] : /^(async|exception|concurrency)/u.test(scenario) ? ["loader.py"] : ["delay.h", "pyqt_delay.py", "pyside_delay.py"]);
   for (const file of changedFiles) {
     const clean = scenario.endsWith("clean");
     let body = baseline[file];
-    if (scenario.startsWith("rules")) body = body.replace("= 30", file.startsWith("scoped/") ? "= 90" : clean ? "= 20" : "= 90");
+    if (compact) body = compact.change(file, body);
+    else if (scenario.startsWith("rules")) body = body.replace("= 30", file.startsWith("scoped/") ? "= 90" : clean ? "= 20" : "= 90");
     else if (clean) body += file.endsWith(".h") ? "// Preserve the existing behavior.\n" : "# Preserve the existing behavior.\n";
     else if (scenario.startsWith("lifetime")) body = "#pragma once\n#include <memory>\ninline int* makeValue() {\n  auto value = std::make_unique<int>(42);\n  return value.get();\n}\n";
     else if (scenario.startsWith("async")) body = body.replace("return await fetch_value()", "return fetch_value()");
@@ -105,7 +109,7 @@ try {
   const cloneUrl = "https://reviewx-ai.invalid/synthetic.git";
   const environment = { ...process.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: `url.${pathToFileURL(repository).href}.insteadOf`, GIT_CONFIG_VALUE_0: cloneUrl };
   const project = { webUrl: "https://example.test/project", id: "9001", name: "synthetic/Qt", cloneUrl, addedAt: "now", updatedAt: "now" };
-  const details = { projectId: project.id, iid: "1", title: "Synthetic Qt review", state: "open", updatedAt: "now", sourceBranch: "feature", targetBranch: "main" };
+  const details = { projectId: project.id, iid: "1", title: compact ? "Synthetic " + scenario + " review" : "Synthetic Qt review", state: "open", updatedAt: "now", sourceBranch: "feature", targetBranch: "main" };
   const prepareStarted = Date.now();
   prepared = await new engine.GitPreparer(paths, environment).prepare(project, details, reviewSignal, trace);
   const prepareMs = Date.now() - prepareStarted;
@@ -147,12 +151,17 @@ try {
     }
     const body = result.findings.find(f => f.structured === finding)?.body ?? result.findings[result.submission.findings.indexOf(finding)]?.body ?? "";
     for (const location of finding.locations) for (const annotation of location.annotations ?? []) {
-      if (!body.includes(`【检视注释·问题行 L${annotation.line}】${annotation.text}`)) throw new Error("Quality failed: missing in-code annotation");
+      const sourceLine = location.snippet!.code.split("\n")[annotation.line - location.startLine];
+      if (!body.split("\n").some(line => line.includes(sourceLine) && line.includes(annotation.text))) throw new Error("Quality failed: explanation not on its original source line");
     }
-    if (!body.includes("**推荐方案**")) throw new Error("Quality failed: missing recommended strategy");
-    if (!finding.solutions.some(solution => solution.steps?.some(step => step.path && step.example?.code.trim()))) throw new Error("Quality failed: concrete fixture defect lacks file-specific corrected source code");
+    if (!body.includes("[!code ") || body.includes("检视注释")) throw new Error("Quality failed: missing range marker or redundant explanation prefix");
+    if (finding.solutions.length === 1 && body.includes("**推荐方案**")) throw new Error("Quality failed: redundant recommendation heading");
+    if (finding.solutions.some(solution => solution.steps?.some(step => step.example?.code.includes("[!code ")))) throw new Error("Quality failed: repair code contains problem markers");
+    if (!scenario.startsWith("imports") && !finding.solutions.some(solution => solution.steps?.some(step => step.path && step.example?.code.trim()))) throw new Error("Quality failed: concrete fixture defect lacks file-specific corrected source code");
   }
   if (scenario.endsWith("clean") && result.findings.length) throw new Error("Quality failed: false positive on comment-only fixture");
+  if (scenario === "imports-defects" && !result.submission.findings.some(f => f.locations.some(l => l.path === "api.py") && /ImportError|导入|FitReply/u.test(JSON.stringify(f)))) throw new Error("Quality failed: missing synthetic import/type defect");
+  if (scenario === "resources-defects" && !result.submission.findings.some(f => f.locations.some(l => l.path === "DatProcess.cpp") && /泄漏|释放/u.test(JSON.stringify(f)) && f.solutions.some(s => s.steps?.some(step => /uint32_t/u.test(step.example?.code ?? ""))))) throw new Error("Quality failed: missing allocation/cleanup defect or applicable typed release code");
   if (scenario === "defects") {
     for (const file of ["delay.h", "pyqt_delay.py", "pyside_delay.py"]) {
       if (!result.submission.findings.some(f => f.locations.some(e => e.path === file) && /毫秒|millisecond|1000/iu.test(JSON.stringify(f)))) throw new Error(`Quality failed: missing conversion defect in ${file}`);

@@ -1,5 +1,5 @@
 import { fakeResult } from "../helpers/runtime";
-import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -21,6 +21,18 @@ async function paths() {
 }
 
 describe("permanent logs and immutable reports", () => {
+  test("uses the ReviewX root directly without creating or deleting legacy directories", async () => {
+    const data = await paths();
+    expect(path.basename(data.root)).toBe("ReviewX");
+    expect(await readdir(data.root)).toEqual(expect.arrayContaining(["reports", "logs", "workspaces"]));
+    expect(await readdir(data.root)).not.toContain("native-v2");
+    expect(data.stateFile).toBe(path.join(data.root, "state.json"));
+    expect(data.instanceLockFile).toBe(path.join(data.root, "instance.lock"));
+    await mkdir(path.join(data.root, "native-v2"));
+    await writeFile(path.join(data.root, "native-v2", "keep.txt"), "old data");
+    ensureDataPaths(data);
+    expect(await readFile(path.join(data.root, "native-v2", "keep.txt"), "utf8")).toBe("old data");
+  });
   test("logger emits English diagnostics once and redacts credentials/control characters", async () => {
     const data = await paths();
     const token = "super-secret-value";

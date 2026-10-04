@@ -77,7 +77,7 @@ MR 行和 attempt 详情可选提供 `progress`：`activity`（当前活动）�
 
 ### 文件读取与正文
 
-报告和日志接口会同时校验状态引用、规范路径和真实路径均位于 `%LOCALAPPDATA%\ReviewX\native-v2` 数据目录；不能通过 URL 参数读取任意本地文件。
+报告和日志接口会同时校验状态引用、规范路径和真实路径均位于 `%LOCALAPPDATA%\ReviewX` 数据目录；不能通过 URL 参数读取任意本地文件。
 
 报告正文原文保留，只有 CodeHub 发送入口做 CRLF 规范化。未登记的孤立报告没有详情 URL，也不可通过 attempt 发布或读取。原生 HTTP/工具不属于公开 Web API，绑定 attempt/session 和随机 loopback 凭据。
 

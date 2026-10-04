@@ -48,12 +48,14 @@ test("card-level decisions, cached report folding, MR links, history, and Markdo
   await expect(secondCard.getByText("已完成")).toBeVisible({ timeout: 15_000 });
   const fixedComment = drawer.locator(".finding-card").filter({ hasText: "恢复延迟单位换算" });
   await expect(fixedComment.locator("pre code")).toHaveText([
-    "// 【检视注释·问题行 L1】缺少秒到毫秒换算，导致重试提前。\nreturn seconds;\n",
-    "    # 【检视注释·问题行 L2】Python 实现同样缺少毫秒换算。\n    return seconds\n",
+    "// L1-2\nconst value = seconds;  // [!code warning:2]\nreturn value;  // 缺少秒到毫秒换算，导致重试提前。\n// … 省略原始 L3–4 …\n// 调用方 L5\nschedule(value);  // 调用方按毫秒使用该值。\n",
+    "    return seconds  # Python 实现同样缺少毫秒换算。 [!code warning:1]\n",
     "return seconds * 1000;\n", "def delay(seconds):\n    return seconds * 1000\n",
   ]);
-  await expect(fixedComment.locator(".hljs-comment")).toHaveCount(2);
-  await expect(fixedComment).toContainText("推荐方案");
+  await expect(fixedComment.locator(".hljs-comment")).toHaveCount(7);
+  await expect(fixedComment).toContainText("fixture.ts:1-2,5");
+  await expect(fixedComment).not.toContainText("检视注释");
+  await expect(fixedComment).not.toContainText("推荐方案");
   await expect(fixedComment).not.toContainText("备用方案");
   await expect(fixedComment.locator("pre").first()).toBeVisible();
   await expect(fixedComment).toContainText("简述：单位换算缺失导致重试提前触发。");

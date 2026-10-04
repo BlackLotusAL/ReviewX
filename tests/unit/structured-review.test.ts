@@ -24,7 +24,7 @@ test("fixed renderer owns headings, severity, escaping and code fences", () => {
   expect(body).toContain("### 🟠 Major:");
   expect(body).toContain("- 严重级别：Major");
   expect(body).toContain("\\<script\\>");
-  expect(body).toContain(String.fromCharCode(96).repeat(4) + "tsmalicious");
+  expect(body).toContain(String.fromCharCode(96).repeat(4) + "text");
   expect(body).not.toContain("\n### injected");
   for (const label of ["问题描述", "问题位置", "影响分析", "解决方案", "预防措施"]) expect(body).toContain("**" + label + "**");
   expect(renderFinding(finding)).toBe(body);
@@ -47,7 +47,7 @@ test.each(["fatal", "major", "minor", "suggestion"] as const)("PRD comment templ
   expect(renderFinding(f)).toBe([
     `### ${levels[severity]}: 恢复换算`, "", "**问题描述**：", "",
     `- 严重级别：${level}`, "- 标签：`#功能回归` `#单位换算`", "- 简述：换算缺失导致等待时间过短。", "",
-    "**问题位置**：`delay.py:2-2`", "", "```python", "    return seconds", "```", "",
+    "**问题位置**：`delay.py:2`", "", "```python", "    return seconds", "```", "",
     "**影响分析**：", "", "- **直接后果**：结果错误", "- **影响范围**：调用者", "- **触发条件**：调用函数", "",
     "**解决方案**：", "", "恢复毫秒换算。", "", "```python", "def delay(seconds):", "    return seconds * 1000", "```", "",
     "**预防措施**：", "", "- 添加边界测试",
@@ -59,7 +59,7 @@ test("multiple locations keep their revision and empty tags are explicit", () =>
   f.locations.push({ path: "old.ts", revision: "base", startLine: 3, endLine: 4 });
   const body = renderFinding(f);
   expect(body).toContain("- 标签：无");
-  expect(body).toContain("**问题位置**：`fixture.ts:1-1`");
+  expect(body).toContain("**问题位置**：\n\n1. `fixture.ts:1`");
   expect(body).toContain("`old.ts:3-4`（基线版本）");
   expect(body.match(/\*\*问题位置\*\*/gu)).toHaveLength(1);
   expect(body).not.toContain("1. 修复逻辑");

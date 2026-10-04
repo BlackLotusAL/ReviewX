@@ -25,7 +25,7 @@ test("exact fixed revision source replaces model code and matches reported lines
     { language: "python", code: "    return seconds" }, { language: "python", code: "    return seconds * 1000" },
   ]);
   expect(renderFinding(f)).not.toContain("fake model code");
-  expect(renderFinding(f)).toContain("# 【检视注释·问题行 L2】缺少换算。\n       return seconds");
+  expect(renderFinding(f)).toContain("return seconds  # 缺少换算。");
   expect(f.locations[0].snippet!.code).not.toContain("检视注释");
 });
 
@@ -33,6 +33,7 @@ test("long ranges show forty real lines and put omission notes outside the fence
   const root = await workspace(), f = structuredFinding();
   await writeFile(join(root, "source", "fixture.ts"), Array.from({ length: 70 }, (_, i) => `const x${i + 1} = ${i + 1};`).join("\n"));
   f.locations[0].startLine = 5; f.locations[0].endLine = 65;
+  f.locations[0].highlights = [{ startLine: 5, endLine: 44 }];
   f.locations[0].annotations = [{ line: 5, text: "范围开头的问题。" }, { line: 44, text: "最后一个展示行的问题。" }];
   expect(await populateSourceSnippets(root, [f])).toEqual([]);
   const snippet = f.locations[0].snippet!;
@@ -40,8 +41,10 @@ test("long ranges show forty real lines and put omission notes outside the fence
   expect(snippet.code.split("\n")).toHaveLength(40);
   expect(snippet.code).toMatch(/^const x5 = 5;/u); expect(snippet.code).toMatch(/const x44 = 44;$/u);
   expect(snippet.code).not.toContain("省略");
-  expect(renderFinding(f)).toContain("// 【检视注释·问题行 L44】最后一个展示行的问题。\nconst x44 = 44;");
-  expect(renderFinding(f)).toContain("const x44 = 44;\n```\n\n仅展示第 5–44 行，其余源码已省略。");
+  expect(snippet.code).not.toContain("[!code");
+  expect(renderFinding(f)).toContain("const x5 = 5;  // 范围开头的问题。 [!code error:40]");
+  expect(renderFinding(f)).toContain("const x44 = 44;  // 最后一个展示行的问题。");
+  expect(renderFinding(f)).toContain("const x44 = 44;  // 最后一个展示行的问题。\n```\n\n仅展示第 5–44 行，其余源码已省略。");
 });
 
 test("unreadable, binary, invalid UTF-8, empty and out-of-range files remove model snippets", async () => {
@@ -54,7 +57,7 @@ test("unreadable, binary, invalid UTF-8, empty and out-of-range files remove mod
   f.locations = ["missing.ts", "one.ts", "binary.ts", "invalid.ts", "empty.ts", "large.ts"].map(path => ({ path, revision: "source", startLine: path === "one.ts" ? 2 : 1, endLine: path === "one.ts" ? 2 : 1, snippet: { language: "ts", code: "invented" } }));
   expect(await populateSourceSnippets(root, [f])).toHaveLength(6);
   expect(f.locations.every(l => l.snippet === undefined)).toBe(true);
-  expect(renderFinding(f)).toContain("`one.ts:2-2`");
+  expect(renderFinding(f)).toContain("`one.ts:2`");
   expect(renderFinding(f)).not.toContain("invented");
 });
 

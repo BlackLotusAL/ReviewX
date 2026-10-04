@@ -64,6 +64,7 @@ test("the fixed comment body is saved, displayed and published unchanged", async
   try {
     configureMr(h, "1", "1"); await registerAndRefresh(h, ["1"]);
     const f = generatedFinding("单位换算缺失导致计时过短。"); f.tags = ["单位换算"];
+    f.locations[0].label = "延迟换算";
     f.locations[0].snippet = { language: "typescript", code: "return seconds;" };
     f.solutions[0].steps![0].example = { language: "typescript", code: "return seconds * 1000;" };
     const body = renderFinding(f);
@@ -77,8 +78,8 @@ test("the fixed comment body is saved, displayed and published unchanged", async
     expect(h.codeHub.comments[0].body).toBe(body);
     expect((await h.store.read()).attemptsById[displayed.id].findings[0].body).toBe(body);
     expect((await h.store.read()).attemptsById[displayed.id].findings[0].structured).toEqual(f);
-    expect(displayed.findings[0].body).toContain("// 【检视注释·问题行 L1】");
-    expect(displayed.findings[0].body).toContain("**推荐方案**");
+    expect(displayed.findings[0].body).toContain("[!code error:1]");
+    expect(displayed.findings[0].body).not.toContain("**推荐方案**");
     expect(displayed.findings[0].structured!.locations[0].snippet!.code).toBe("return seconds;");
   } finally { await h.cleanup(); }
 });

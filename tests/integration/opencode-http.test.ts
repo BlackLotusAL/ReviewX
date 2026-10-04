@@ -22,7 +22,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-test.each(["normal", "disconnect", "lost-response", "repair", "bad-repair", "long-brief", "english-tag", "missing-annotation", "bad-annotation", "misgrouped-solution", "missing-source", "post-error", "new-version", "informational-note", "prefixed-location", "real-prefix-directory"])("native adapter: %s", async kind => {
+test.each(["normal", "disconnect", "lost-response", "repair", "bad-repair", "long-brief", "english-tag", "missing-annotation", "bad-annotation", "missing-highlight", "bad-highlight", "misgrouped-solution", "missing-source", "post-error", "new-version", "informational-note", "prefixed-location", "real-prefix-directory"])("native adapter: %s", async kind => {
   const root = await mkdtemp(join(tmpdir(), "native-review-")); roots.push(root);
   const prepared: PreparedReview = { rootDirectory: root, sourceSha: "s", targetSha: "t", baseSha: "b",
     scope: { sourceSha: "s", targetSha: "t", baseSha: "b", changedPaths: [] }, repositoryRules: [], limitations: [], gitCommands: [], cleanup: async () => {} };
@@ -35,8 +35,10 @@ test.each(["normal", "disconnect", "lost-response", "repair", "bad-repair", "lon
   }
   if (kind === "long-brief") input.findings.push(structuredFinding("字".repeat(121)));
   if (kind === "english-tag") { const invalid = structuredFinding("标签待修复"); invalid.tags = ["bug"]; input.findings.push(invalid); }
-  if (["missing-annotation", "bad-annotation", "misgrouped-solution"].includes(kind)) {
+  if (["missing-annotation", "bad-annotation", "missing-highlight", "bad-highlight", "misgrouped-solution"].includes(kind)) {
     const invalid = structuredFinding("结构待修复");
+    if (kind === "missing-highlight") delete invalid.locations[0].highlights;
+    if (kind === "bad-highlight") invalid.locations[0].highlights![0].endLine = 2;
     if (kind === "missing-annotation") delete invalid.locations[0].annotations;
     if (kind === "bad-annotation") invalid.locations[0].annotations![0].line = 2;
     if (kind === "misgrouped-solution") invalid.solutions[0] = { description: "缺少明确分组。", example: { language: "ts", code: "repair();" } };
@@ -85,17 +87,17 @@ test.each(["normal", "disconnect", "lost-response", "repair", "bad-repair", "lon
   if (kind === "prefixed-location") expect(result.submission.findings[0].solutions[0].steps![0].path).toBe("fixture.ts");
   if (kind === "real-prefix-directory") expect(result.submission.findings[0].locations[0].path).toBe("source/fixture.ts");
   if (kind === "real-prefix-directory") expect(result.submission.findings[0].solutions[0].steps![0].path).toBe("source/fixture.ts");
-  expect(generations).toBe(["repair", "bad-repair", "long-brief", "english-tag", "missing-annotation", "bad-annotation", "misgrouped-solution"].includes(kind) ? 2 : 1);
+  expect(generations).toBe(["repair", "bad-repair", "long-brief", "english-tag", "missing-annotation", "bad-annotation", "missing-highlight", "bad-highlight", "misgrouped-solution"].includes(kind) ? 2 : 1);
   expect(result.submission.completion).toBe(["bad-repair", "post-error"].includes(kind) ? "incomplete" : "complete");
   expect(result.findings[0].structured!.tags).toEqual(["逻辑错误"]);
   if (kind === "normal") {
-    expect(result.findings[0].body).toContain("```typescript\n// 【检视注释·问题行 L1】此处逻辑导致调用结果错误。\nconst value = 1;\n```");
+    expect(result.findings[0].body).toContain("```typescript\nconst value = 1;  // 此处逻辑导致调用结果错误。 [!code error:1]\n```");
     expect(result.submission.findings[0].locations[0].snippet?.code).toBe("const value = 1;");
-    expect(result.findings[0].body).toContain("**推荐方案**");
+    expect(result.findings[0].body).not.toContain("**推荐方案**");
     expect(result.execution.warnings).toEqual([]);
   }
   if (kind === "missing-source") { expect(result.execution.warnings.some(w => w.includes("无法展示源码"))).toBe(true); expect(result.submission.findings[0].locations[0].snippet).toBeUndefined(); }
-  if (["long-brief", "english-tag", "missing-annotation", "bad-annotation", "misgrouped-solution"].includes(kind)) { expect(result.findings).toHaveLength(2); expect(result.submission.findings[0].description).toBe("发现问题"); }
+  if (["long-brief", "english-tag", "missing-annotation", "bad-annotation", "missing-highlight", "bad-highlight", "misgrouped-solution"].includes(kind)) { expect(result.findings).toHaveLength(2); expect(result.submission.findings[0].description).toBe("发现问题"); }
   events?.destroy();
 });
 test("permissions deny editing and scripts for every child, format agent has no tools", () => {
@@ -154,7 +156,7 @@ test.each(["normal", "lost-response", "sse-lost"])("balanced HTTP workflow: %s",
     new AbortController().signal, { attemptId: "test", rules: { profileHash: "", resources: [] }, trace: new ReviewTrace("test", traceFile) });
   expect(posts).toBe(3); expect(result.findings).toHaveLength(5); expect(result.submission.completion).toBe("complete");
   expect(result.submission.findings.every(f => f.locations[0].snippet?.code === "const actual = true;")).toBe(true);
-  expect(result.execution.workflowVersion).toBe("balanced-review/3");
+  expect(result.execution.workflowVersion).toBe("balanced-review/5");
   expect(result.execution.performance?.observedModelSteps).toBe(3);
   expect(result.execution.performance?.tokens.input).toBe(30);
   expect(result.execution.performance?.reconciliationFailed).toBe(false);

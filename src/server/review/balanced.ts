@@ -103,7 +103,7 @@ export async function runBalanced(options: BalancedOptions): Promise<{ document:
     try {
       const response = await generate("reviewx-batch-verify", "Independently verify these candidates. Schema:\n" + JSON.stringify(verificationJsonSchema) +
         "\nCandidates:\n" + JSON.stringify(batch.map(({ id, finding }) => ({ id, finding: { ...finding,
-          locations: finding.locations.map(({ path, revision, startLine, endLine, annotations }) => ({ path, revision, startLine, endLine, annotations })),
+          locations: finding.locations.map(({ path, revision, startLine, endLine, annotations, highlights, label }) => ({ path, revision, startLine, endLine, annotations, highlights, label })),
           solutions: finding.solutions.map(({ kind, description, applicability, steps }) => ({ kind, description, applicability,
             steps: steps?.map(({ description, path }) => ({ description, path })),
           })),

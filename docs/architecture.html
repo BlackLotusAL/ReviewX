@@ -132,7 +132,7 @@
 <tr><td>评论发送失败 / 结果未知</td><td>Finding 标记 failed / unknown；记录该次发送结果</td><td>不自动重发评论，不因此拖停检视队列。</td></tr>
 </tbody></table></div>
 <div class="two"><div><h3>恢复不是重新生成</h3><ol><li>用户调用 POST /api/reviews/resume。</li><li>等待旧 worker 结束，重试进程退出确认。</li><li>检查工作区中的持久化 PID 记录，再执行待清理回调。</li><li>成功写入恢复状态后清除暂停 / fatal 标记，继续保留的 FIFO。</li></ol><p>没有暂停时恢复是空操作；并发恢复返回 409。失败时保留暂停，不重发已有模型请求。</p></div><div><h3>重启后的处理</h3><p>reviewing / stopping 任务标为 stopped，尚未开始的 queued 任务保留，规则快照可恢复。原有发布中的意见恢复为结果未知，不能假定未发送。</p><p>启动检查遗留进程记录：PID 仍存活、无法确认或记录异常时暂停。只检查，不自动杀死可能被系统复用的 PID；确认进程不存在后删除标记。</p></div></div>
-<h3>数据目录与版本</h3><div class="two"><div class="codebox"><pre class="tree">%LOCALAPPDATA%/ReviewX/native-v2/
+<h3>数据目录与版本</h3><div class="two"><div class="codebox"><pre class="tree">%LOCALAPPDATA%/ReviewX/
 ├─ state.json                 状态、FIFO、规则快照
 ├─ logs/                      会话日志
 ├─ reports/&lt;attempt-id&gt;/

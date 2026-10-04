@@ -2,10 +2,13 @@ export type Revision = "source" | "base";
 export type Severity = "fatal" | "major" | "minor" | "suggestion";
 export interface CodeExample { language: string; code: string }
 export interface ReviewAnnotation { line: number; text: string }
+export interface ReviewHighlight { startLine: number; endLine: number }
 export interface ReviewLocation {
   path: string; revision: Revision; startLine: number; endLine: number;
   snippet?: CodeExample;
   annotations?: ReviewAnnotation[];
+  highlights?: ReviewHighlight[];
+  label?: string;
 }
 export interface SolutionStep { description: string; path?: string; example?: CodeExample }
 export interface ReviewSolution {
