@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ReviewX · 报告抽屉 · 检视失败</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+html{scrollbar-gutter:stable;overflow-x:clip}
+body{margin:0;background:#fff;font-variant-numeric:tabular-nums}
+.rx-scrim{overflow-x:clip}
+a{color:#0059b8;text-underline-offset:3px}a:hover{color:#003f82}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:2px solid #007cff;outline-offset:2px}
+.mono{font-family:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace}
+.md{font-size:15px;line-height:1.6;word-wrap:break-word}
+.md>*:first-child{margin-top:0}
+.md h3{margin:0 0 16px;font-size:1.25em;font-weight:600;line-height:1.25}
+.md h4{margin:20px 0 6px;font-size:15px;font-weight:600;line-height:1.4;color:#1f2328}
+.md .lbl{font-size:15px;font-weight:600;color:#1f2328;margin-right:8px}
+.md p{margin:0 0 12px}
+.md ul{margin:0 0 12px;padding-left:2em}
+.md li+li{margin-top:.25em}
+.md strong{font-weight:600}
+.md code{font-family:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;font-size:85%;background:rgba(175,184,193,.2);padding:.2em .4em;border-radius:6px;white-space:break-spaces}
+.md pre{margin:0 0 12px;padding:16px;background:#f6f8fa;border-radius:6px;overflow:auto;font-size:85%;line-height:1.45}
+.md pre code{display:block;font-size:100%;background:transparent;padding:0;border-radius:0;white-space:pre;color:#1f2328}
+.md>*:last-child{margin-bottom:0}
+.btn{min-height:40px;padding:0 16px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid transparent;border-radius:999px;font-size:14px;font-weight:600;white-space:nowrap;line-height:1.5;text-decoration:none;box-sizing:border-box}
+.btn-p{background:#121212;color:#fff}.btn-p:hover{background:#303030;border-color:#007cff;color:#fff}
+.btn-s{background:#fff;border-color:#c6c9cc;color:#121212}.btn-s:hover{background:#f5f7f8;border-color:#8c9195;color:#121212}
+.btn-q{background:transparent;color:#62686c;padding:0 10px}.btn-q:hover{background:#e8ebed;color:#121212}
+.btn-d{background:#ac3039;color:#fff}.btn-d:hover{background:#8f2630;color:#fff}
+.btn[disabled]{opacity:.42;cursor:not-allowed}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;line-height:1.6;font-weight:500;white-space:nowrap}
+.dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex:0 0 auto}
+.spin{width:10px;height:10px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;display:inline-block;animation:rxspin 1s linear infinite;flex:0 0 auto;box-sizing:border-box}
+@keyframes rxspin{to{transform:rotate(360deg)}}
+@keyframes rxbreathe{50%{opacity:.45}}
+.rx-scrim{-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);background:rgb(18 18 18 / 12%);animation:rxfadein 260ms ease-out}
+.rx-scrim.is-closing{animation:rxfadeout 180ms ease-in both}
+.rx-drawer{animation:rxdrawerin 260ms cubic-bezier(.22,1,.36,1)}
+.rx-scrim.is-closing .rx-drawer{animation:rxdrawerout 180ms ease-in both}
+@keyframes rxfadein{from{opacity:0}to{opacity:1}}
+@keyframes rxfadeout{to{opacity:0}}
+@keyframes rxdrawerin{from{opacity:0;transform:translateX(32px)}to{opacity:1;transform:none}}
+@keyframes rxdrawerout{to{opacity:0;transform:translateX(24px)}}
+@media (prefers-reduced-motion:reduce){.rx-scrim,.rx-drawer,.rx-scrim.is-closing,.rx-scrim.is-closing .rx-drawer{animation:none}}
+.ico{width:16px;height:16px;flex:0 0 auto;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.ico-s{width:12px;height:12px}
+.navlink{display:flex;align-items:center;gap:10px;width:100%;min-height:40px;padding:0 12px;border-radius:10px;color:#62686c;font-size:14px;border:1px solid transparent;background:transparent;text-align:left;box-sizing:border-box}
+.navlink:hover{background:#e8ebed;color:#121212}
+.tbtn{padding:0;border:0;background:transparent;color:inherit;text-align:left;font:inherit}
+.tbtn:hover{color:#0059b8}
+.code{margin:0;max-width:100%;box-sizing:border-box;background:#f3f5f7;border:1px solid #e1e3e6;border-radius:11px;padding:12px 14px;overflow-x:auto;font-size:12px;line-height:1.85;white-space:pre}
+.inline{background:#eef0f2;padding:2px 5px;border-radius:4px;font-size:12px}
+.field{width:100%;box-sizing:border-box;min-height:40px;border:1px solid #c6c9cc;border-radius:11px;padding:8px 12px;font:inherit;font-size:13px;background:#fff;color:#121212}
+.field:focus{outline:2px solid #007cff;outline-offset:1px;border-color:#007cff}
+.rowh:hover{background:#f7f8f9}
+summary{cursor:pointer;list-style:none}summary::-webkit-details-marker{display:none}
+details[open] .chev{transform:rotate(90deg)}
+</style>
+</helmet>
+<div style="width: 100%; min-height: 1100px; background: #ffffff">
+<dc-import name="app" view="mr" open="406" hint-size="100%,1100px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1100}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

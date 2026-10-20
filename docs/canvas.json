@@ -1,0 +1,131 @@
+{
+ "v": 3,
+ "createdOnFiles": {
+  "v": 1,
+  "at": "2026-10-15T10:00:00Z"
+ },
+ "title": "ReviewX · v2 交互原型",
+ "launch": {
+  "view": "canvas",
+  "page": "proto"
+ },
+ "pages": [
+  {
+   "id": "proto",
+   "name": "v2 · 交互原型（单组件）"
+  }
+ ],
+ "boards": {
+  "prototype/app.dc.html": {
+   "x": 0,
+   "y": 0,
+   "w": 1440,
+   "h": 1620,
+   "title": "00 原型入口 · 检视队列",
+   "expand": "fill",
+   "is_interactive": true,
+   "page": "proto"
+  },
+  "prototype/drawer-pending-findings.dc.html": {
+   "x": 1520,
+   "y": 0,
+   "w": 1440,
+   "h": 3460,
+   "title": "01 报告抽屉 · 有待处理意见",
+   "expand": "fill",
+   "is_interactive": true,
+   "page": "proto"
+  },
+  "prototype/drawer-running.dc.html": {
+   "x": 3040,
+   "y": 0,
+   "w": 1440,
+   "h": 1100,
+   "title": "02 报告抽屉 · 检视进行中",
+   "expand": "fill",
+   "is_interactive": true,
+   "page": "proto"
+  },
+  "prototype/drawer-failed.dc.html": {
+   "x": 0,
+   "y": 1740,
+   "w": 1440,
+   "h": 1100,
+   "title": "03 报告抽屉 · 检视失败",
+   "expand": "fill",
+   "is_interactive": true,
+   "page": "proto"
+  },
+  "prototype/drawer-no-record.dc.html": {
+   "x": 0,
+   "y": 2960,
+   "w": 1440,
+   "h": 1100,
+   "title": "04 报告抽屉 · 暂无检视记录",
+   "expand": "fill",
+   "is_interactive": true,
+   "page": "proto"
+  },
+  "prototype/drawer-no-issues.dc.html": {
+   "x": 3040,
+   "y": 1580,
+   "w": 1440,
+   "h": 1100,
+   "title": "05 报告抽屉 · 未发现问题",
+   "expand": "fill",
+   "is_interactive": true,
+   "page": "proto"
+  },
+  "prototype/rules-config.dc.html": {
+   "x": 3040,
+   "y": 2800,
+   "w": 1440,
+   "h": 1040,
+   "title": "06 规则配置",
+   "expand": "fill",
+   "is_interactive": true,
+   "page": "proto"
+  },
+  "prototype/session-logs.dc.html": {
+   "x": 0,
+   "y": 4180,
+   "w": 1440,
+   "h": 1040,
+   "title": "07 会话日志",
+   "expand": "fill",
+   "is_interactive": true,
+   "page": "proto"
+  }
+ },
+ "order": [
+  "prototype/app.dc.html",
+  "prototype/drawer-pending-findings.dc.html",
+  "prototype/drawer-running.dc.html",
+  "prototype/drawer-failed.dc.html",
+  "prototype/drawer-no-record.dc.html",
+  "prototype/drawer-no-issues.dc.html",
+  "prototype/rules-config.dc.html",
+  "prototype/session-logs.dc.html"
+ ],
+ "notes": {
+  "p0": {
+   "x": 0,
+   "y": -300,
+   "text": "ReviewX · v2 交互原型（细节打磨 7 轮，评审 9.0）",
+   "kind": "title1",
+   "maxW": 4480,
+   "page": "proto"
+  },
+  "p1": {
+   "x": 4560,
+   "y": 0,
+   "w": 420,
+   "maxH": 980,
+   "size": "m",
+   "fill": "blue",
+   "page": "proto",
+   "text": "点任一画板的 Play 试用。所有画板是同一个原型，只是初始页面不同。\n\n· 获取 MR：task-console 会失败，可单独重试\n· 开始检视 / 取消排队 / 停止\n· 添加项目：试 abc、101、999、512\n· !404 报告：发送、不发送、撤销、核对、重新发送\n· 规则：启停、编辑、新建、复制、删除、确认草稿"
+  }
+ },
+ "designSystems": []
+}

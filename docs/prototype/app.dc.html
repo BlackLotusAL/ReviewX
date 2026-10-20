@@ -1,0 +1,1121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ReviewX · 交互原型</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+html{scrollbar-gutter:stable;overflow-x:clip}
+body{margin:0;background:#fff;font-variant-numeric:tabular-nums}
+.rx-scrim{overflow-x:clip}
+a{color:#0059b8;text-underline-offset:3px}a:hover{color:#003f82}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:2px solid #007cff;outline-offset:2px}
+.mono{font-family:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace}
+.md{font-size:15px;line-height:1.6;word-wrap:break-word}
+.md>*:first-child{margin-top:0}
+.md h3{margin:0 0 16px;font-size:1.25em;font-weight:600;line-height:1.25}
+.md h4{margin:20px 0 6px;font-size:15px;font-weight:600;line-height:1.4;color:#1f2328}
+.md .lbl{font-size:15px;font-weight:600;color:#1f2328;margin-right:8px}
+.md p{margin:0 0 12px}
+.md ul{margin:0 0 12px;padding-left:2em}
+.md li+li{margin-top:.25em}
+.md strong{font-weight:600}
+.md code{font-family:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;font-size:85%;background:rgba(175,184,193,.2);padding:.2em .4em;border-radius:6px;white-space:break-spaces}
+.md pre{margin:0 0 12px;padding:16px;background:#f6f8fa;border-radius:6px;overflow:auto;font-size:85%;line-height:1.45}
+.md pre code{display:block;font-size:100%;background:transparent;padding:0;border-radius:0;white-space:pre;color:#1f2328}
+.md>*:last-child{margin-bottom:0}
+.btn{min-height:40px;padding:0 16px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid transparent;border-radius:999px;font-size:14px;font-weight:600;white-space:nowrap;line-height:1.5;text-decoration:none;box-sizing:border-box}
+.btn-p{background:#121212;color:#fff}.btn-p:hover{background:#303030;border-color:#007cff;color:#fff}
+.btn-s{background:#fff;border-color:#c6c9cc;color:#121212}.btn-s:hover{background:#f5f7f8;border-color:#8c9195;color:#121212}
+.btn-q{background:transparent;color:#62686c;padding:0 10px}.btn-q:hover{background:#e8ebed;color:#121212}
+.btn-d{background:#ac3039;color:#fff}.btn-d:hover{background:#8f2630;color:#fff}
+.btn[disabled]{opacity:.42;cursor:not-allowed}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;line-height:1.6;font-weight:500;white-space:nowrap}
+.dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex:0 0 auto}
+.spin{width:10px;height:10px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;display:inline-block;animation:rxspin 1s linear infinite;flex:0 0 auto;box-sizing:border-box}
+@keyframes rxspin{to{transform:rotate(360deg)}}
+@keyframes rxbreathe{50%{opacity:.45}}
+.rx-scrim{-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);background:rgb(18 18 18 / 12%);animation:rxfadein 260ms ease-out}
+.rx-scrim.is-closing{animation:rxfadeout 180ms ease-in both}
+.rx-drawer{animation:rxdrawerin 260ms cubic-bezier(.22,1,.36,1)}
+.rx-scrim.is-closing .rx-drawer{animation:rxdrawerout 180ms ease-in both}
+@keyframes rxfadein{from{opacity:0}to{opacity:1}}
+@keyframes rxfadeout{to{opacity:0}}
+@keyframes rxdrawerin{from{opacity:0;transform:translateX(32px)}to{opacity:1;transform:none}}
+@keyframes rxdrawerout{to{opacity:0;transform:translateX(24px)}}
+@media (prefers-reduced-motion:reduce){.rx-scrim,.rx-drawer,.rx-scrim.is-closing,.rx-scrim.is-closing .rx-drawer{animation:none}}
+.ico{width:16px;height:16px;flex:0 0 auto;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.ico-s{width:12px;height:12px}
+.navlink{display:flex;align-items:center;gap:10px;width:100%;min-height:40px;padding:0 12px;border-radius:10px;color:#62686c;font-size:14px;border:1px solid transparent;background:transparent;text-align:left;box-sizing:border-box}
+.navlink:hover{background:#e8ebed;color:#121212}
+.tbtn{padding:0;border:0;background:transparent;color:inherit;text-align:left;font:inherit}
+.tbtn:hover{color:#0059b8}
+.code{margin:0;max-width:100%;box-sizing:border-box;background:#f3f5f7;border:1px solid #e1e3e6;border-radius:11px;padding:12px 14px;overflow-x:auto;font-size:12px;line-height:1.85;white-space:pre}
+.inline{background:#eef0f2;padding:2px 5px;border-radius:4px;font-size:12px}
+.field{width:100%;box-sizing:border-box;min-height:40px;border:1px solid #c6c9cc;border-radius:11px;padding:8px 12px;font:inherit;font-size:13px;background:#fff;color:#121212}
+.field:focus{outline:2px solid #007cff;outline-offset:1px;border-color:#007cff}
+.rowh:hover{background:#f7f8f9}
+summary{cursor:pointer;list-style:none}summary::-webkit-details-marker{display:none}
+details[open] .chev{transform:rotate(90deg)}
+</style>
+</helmet>
+<div style="width: 100%; min-height: 1040px; display: grid; background: #ffffff; color: #121212; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased">
+
+  <div style="grid-area: 1 / 1; display: flex; flex-wrap: wrap; min-width: 0; align-items: stretch">
+
+    <aside aria-label="导航与项目" style="flex: 1 1 300px; max-width: 100%; box-sizing: border-box; background: #f5f7f8; border-right: 1px solid #e1e3e6; padding: 32px 20px 22px; display: flex; flex-direction: column; gap: 24px">
+      <div style="display: flex; align-items: center; gap: 10px; padding: 0 4px">
+        <span aria-hidden="true" style="position: relative; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: #121212; color: #ffffff; font-size: 17px; line-height: 1; font-weight: 700; letter-spacing: -0.06em; padding: 0 0 2px 1px; box-sizing: border-box"><span style="display: inline-flex; align-items: baseline">rx<span style="display: inline-block; width: 4px; height: 4px; margin-left: 2px; background: #3d9bff; border-radius: 50%"></span></span></span>
+        <span style="font-size: 17px; font-weight: 600; letter-spacing: -0.02em; color: #121212">ReviewX</span>
+      </div>
+
+      <nav aria-label="视图" style="display: flex; flex-direction: column; gap: 4px">
+        <sc-for list="{{nav}}" as="n" hint-placeholder-count="4">
+          <button type="button" class="navlink" aria-current="{{n.current}}" onClick="{{n.go}}" style="background: {{n.bg}}; border-color: {{n.bd}}; color: {{n.fg}}; font-weight: {{n.fw}}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="{{n.icon}}"></path></svg>{{n.label}}<sc-if value="{{n.hasBadge}}" hint-placeholder-val="{{ false }}"><span style="margin-left: auto; font-size: 12px; font-weight: 500; color: {{n.badgeFg}}; background: {{n.badgeBg}}; padding: 0 8px; border-radius: 999px">{{n.badge}}</span></sc-if></button>
+        </sc-for>
+      </nav>
+
+      <section aria-labelledby="pj-h" style="display: flex; flex-direction: column; gap: 10px">
+        <h2 id="pj-h" style="margin: 0 0 0 2px; font-size: 13px; font-weight: 600; color: #62686c">关注项目</h2>
+        <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px">
+          <label for="pid-input" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%)">Project ID</label>
+          <input id="pid-input" class="field" inputmode="numeric" placeholder="Project ID，例如 512" value="{{pid}}" onChange="{{onPid}}" onKeyDown="{{onPidKey}}" aria-invalid="{{pidInvalid}}" style="border-color: {{pidBorder}}">
+          <button type="button" class="btn btn-s" style="padding: 0 13px" disabled="{{pidDisabled}}" onClick="{{addProject}}"><sc-if value="{{pidBusy}}" hint-placeholder-val="{{ false }}"><span class="spin"></span></sc-if><sc-if value="{{pidIdle}}" hint-placeholder-val="{{ true }}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></sc-if>{{pidBtn}}</button>
+        </div>
+        <sc-if value="{{hasPidMsg}}" hint-placeholder-val="{{ false }}"><p role="status" style="margin: -2px 0 0 2px; font-size: 12px; color: {{pidMsgColor}}">{{pidMsg}}</p></sc-if>
+
+        <ul style="list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px">
+          <sc-for list="{{sideGroups}}" as="g" hint-placeholder-count="3">
+            <li>
+              <div style="display: flex; align-items: center; gap: 6px; min-height: 28px; padding-left: 2px; color: #62686c; font-size: 12px"><svg class="ico ico-s" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path></svg>{{g.folder}}</div>
+              <ul style="list-style: none; margin: 0; padding: 0">
+                <sc-for list="{{g.items}}" as="p" hint-placeholder-count="1">
+                  <li style="position: relative">
+                    <div style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 4px 0 10px; border-radius: 10px; background: {{p.bg}}">
+                      <span title="{{p.label}}" style="width: 7px; height: 7px; border-radius: 50%; background: {{p.dot}}; flex: 0 0 auto"></span>
+                      <button type="button" class="tbtn" onClick="{{p.go}}" style="flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{p.name}}</button>
+                      <sc-if value="{{p.spin}}" hint-placeholder-val="{{ false }}"><span class="spin" style="color: #62686c"></span></sc-if>
+                      <span class="mono" style="font-size: 12px; color: #62686c">#{{p.id}}</span>
+                      <button type="button" class="btn btn-q" aria-label="{{p.menuLabel}}" aria-expanded="{{p.menuAttr}}" onClick="{{p.toggleMenu}}" style="min-height: 28px; width: 28px; padding: 0; color: #8c9195">⋯</button>
+                    </div>
+                    <sc-if value="{{p.menuOpen}}" hint-placeholder-val="{{ false }}">
+                      <div role="menu" style="position: absolute; right: 0; top: 38px; z-index: 6; width: 190px; padding: 6px; background: #ffffff; border: 1px solid #e1e3e6; border-radius: 12px; box-shadow: 0 8px 28px rgba(18,18,18,0.14); display: flex; flex-direction: column">
+                        <button type="button" role="menuitem" class="btn btn-q" style="justify-content: flex-start; min-height: 36px; color: #121212; font-weight: 500" onClick="{{p.openCodeHub}}">在 CodeHub 打开</button>
+                        <button type="button" role="menuitem" class="btn btn-q" style="justify-content: flex-start; min-height: 36px; color: #121212; font-weight: 500" onClick="{{p.clearCache}}">清除代码缓存</button>
+                        <button type="button" role="menuitem" class="btn btn-q" style="justify-content: flex-start; min-height: 36px; color: #ac3039; font-weight: 500" onClick="{{p.askRemove}}">移除项目…</button>
+                      </div>
+                    </sc-if>
+                  </li>
+                </sc-for>
+              </ul>
+            </li>
+          </sc-for>
+        </ul>
+      </section>
+
+    </aside>
+
+    <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 40px clamp(20px, 3vw, 44px) 64px">
+
+      <sc-if value="{{isMr}}" hint-placeholder-val="{{ true }}">
+        <header style="position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px">
+          <div style="display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 28px">
+            <h1 style="margin: 0; font-size: 32px; line-height: 1.4; font-weight: 600">检视队列</h1>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px">
+            <button type="button" class="btn btn-s" aria-expanded="{{queueAttr}}" onClick="{{toggleQueue}}"><sc-if value="{{queueBusy}}" hint-placeholder-val="{{ true }}"><span class="spin" style="color: #3b3f42"></span></sc-if>{{queueLabel}}<svg class="ico ico-s" viewBox="0 0 24 24" aria-hidden="true" style="transform: {{queueChevron}}"><path d="m6 9 6 6 6-6"></path></svg></button>
+            <button type="button" class="btn btn-s" disabled="{{hdr.fetchDisabled}}" onClick="{{fetchAll}}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 19.5 10M4.5 14A8 8 0 0 0 17.9 17.9"></path></svg>{{hdr.fetchLabel}}</button>
+            <button type="button" class="btn btn-s" onClick="{{nextPending}}">下一个待处理 MR<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"></path></svg></button>
+          </div>
+
+          <sc-if value="{{queueOpen}}" hint-placeholder-val="{{ false }}">
+            <section aria-label="当前检视队列" style="position: absolute; right: 0; top: 64px; z-index: 6; width: min(560px, 100%); box-sizing: border-box; padding: 16px; background: #ffffff; border: 1px solid #e1e3e6; border-radius: 14px; box-shadow: 0 10px 32px rgba(18,18,18,0.16)">
+              <div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-bottom: 8px"><h3 style="margin: 0; font-size: 15px; font-weight: 600">当前检视队列</h3><span style="font-size: 12px; color: #62686c">{{queueSummary}}</span></div>
+              <sc-if value="{{queueEmpty}}" hint-placeholder-val="{{ false }}"><p style="margin: 8px 0; font-size: 13px; color: #62686c">队列为空</p></sc-if>
+              <ul style="list-style: none; margin: 0; padding: 0">
+                <sc-for list="{{queueItems}}" as="q" hint-placeholder-count="3">
+                  <li style="border-top: 1px solid #e1e3e6"><button type="button" class="tbtn rowh" onClick="{{q.open}}" style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px 8px">
+                    <span style="flex: 1; min-width: 0"><span style="display: block; font-size: 12px; color: #62686c">{{q.project}} <span class="mono" style="color: #0059b8">!{{q.iid}}</span></span><span style="display: block; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{q.title}}</span></span>
+                    <span style="display: flex; flex-direction: column; align-items: flex-end; gap: 2px"><span class="pill" style="background: {{q.bg}}; color: {{q.fg}}"><sc-if value="{{q.spin}}" hint-placeholder-val="{{ false }}"><span class="spin"></span></sc-if>{{q.label}}</span><span style="font-size: 12px; color: #62686c">{{q.sub}}</span></span>
+                  </button></li>
+                </sc-for>
+              </ul>
+            </section>
+          </sc-if>
+        </header>
+
+        <sc-if value="{{noProjects}}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top: 32px; display: flex; flex-direction: column; align-items: flex-start; gap: 18px; padding: 32px; border: 1px solid #e1e3e6; border-radius: 22px; background: #fafbfc">
+            <h2 style="margin: 0; font-size: 26px; font-weight: 500">暂无关注项目</h2>
+            <p style="margin: 0; color: #62686c">在左侧输入 Project ID 添加</p>
+          </div>
+        </sc-if>
+
+        <sc-for list="{{groups}}" as="g" hint-placeholder-count="2">
+          <section id="{{g.anchor}}" style="margin: 32px 0 8px; scroll-margin-top: 20px">
+            <div style="display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; padding-bottom: 14px; border-bottom: 1px solid #e1e3e6">
+              <div style="display: flex; align-items: center; gap: 9px"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" style="color: #62686c"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path></svg><h2 style="margin: 0; font-size: 17px; font-weight: 600">{{g.name}}</h2><sc-if value="{{g.showPill}}" hint-placeholder-val="{{ false }}"><span class="pill" style="background: {{g.pillBg}}; color: {{g.pillFg}}"><sc-if value="{{g.spin}}" hint-placeholder-val="{{ false }}"><span class="spin"></span></sc-if><sc-if value="{{g.dot}}" hint-placeholder-val="{{ true }}"><span class="dot"></span></sc-if>{{g.pillLabel}}</span></sc-if></div>
+              <span style="display: inline-flex; align-items: center; gap: 4px; color: #62686c; font-size: 12px">{{g.right}}<sc-if value="{{g.showRetry}}" hint-placeholder-val="{{ false }}"> · <button type="button" class="tbtn" onClick="{{g.retry}}" style="color: #0059b8; font-weight: 600">重试</button></sc-if></span>
+            </div>
+
+            <sc-if value="{{g.never}}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 22px 20px; border: 1px dashed #c6c9cc; border-radius: 16px; color: #62686c; font-size: 13px"><span style="flex: 1">尚未获取 MR</span><button type="button" class="btn btn-s" disabled="{{g.retryDisabled}}" onClick="{{g.retry}}">获取该项目</button></div>
+            </sc-if>
+            <sc-if value="{{g.emptyOpen}}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top: 14px; padding: 22px 20px; border: 1px dashed #c6c9cc; border-radius: 16px; color: #62686c; font-size: 13px">暂无开放的 MR</div>
+            </sc-if>
+            <sc-if value="{{g.skeleton}}" hint-placeholder-val="{{ false }}">
+              <div aria-hidden="true" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 16px; margin-top: 14px">
+                <div style="display: grid; gap: 12px; padding: 22px; border: 1px solid #e1e3e6; border-radius: 16px"><span style="width: 64px; height: 9px; border-radius: 4px; background: #edf0f2; animation: rxbreathe 2s ease-in-out infinite"></span><span style="width: 200px; max-width: 100%; height: 12px; border-radius: 4px; background: #edf0f2; animation: rxbreathe 2s ease-in-out infinite"></span><span style="width: 120px; height: 9px; border-radius: 4px; background: #edf0f2; animation: rxbreathe 2s ease-in-out infinite"></span></div>
+                <div style="display: grid; gap: 12px; padding: 22px; border: 1px solid #e1e3e6; border-radius: 16px"><span style="width: 64px; height: 9px; border-radius: 4px; background: #edf0f2; animation: rxbreathe 2s ease-in-out infinite"></span><span style="width: 200px; max-width: 100%; height: 12px; border-radius: 4px; background: #edf0f2; animation: rxbreathe 2s ease-in-out infinite"></span><span style="width: 120px; height: 9px; border-radius: 4px; background: #edf0f2; animation: rxbreathe 2s ease-in-out infinite"></span></div>
+              </div>
+            </sc-if>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 16px; margin-top: 14px">
+              <sc-for list="{{g.cards}}" as="c" hint-placeholder-count="3">
+                <article style="position: relative; display: flex; flex-direction: column; gap: 10px; min-height: 204px; box-sizing: border-box; padding: 20px 24px 18px; border: {{c.border}}; border-radius: 14px; background: {{c.bg}}; box-shadow: {{c.shadow}}; opacity: {{c.opacity}}; overflow: hidden">
+                  <div style="display: flex; align-items: center; gap: 10px; font-size: 13px">
+                    <button type="button" class="tbtn mono" onClick="{{c.openCodeHub}}" aria-label="{{c.linkLabel}}" style="font-weight: 600; color: #121212; font-variant-numeric: tabular-nums">!{{c.iid}}</button>
+                    <sc-if value="{{c.staleTag}}" hint-placeholder-val="{{ false }}"><span class="pill" style="background: #fdf6ec; color: #7a4a10; padding: 0 8px">旧版本</span></sc-if>
+                  </div>
+                  <h3 style="margin: 0; font-size: 17px; font-weight: 600; line-height: 1.5"><button type="button" class="tbtn" onClick="{{c.open}}" style="display: -webkit-box; width: 100%; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-weight: 600; text-align: left">{{c.title}}</button></h3>
+                  <p style="margin: -4px 0 0; font-size: 13px; color: #8c9195; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{c.timeLine}}</p>
+                  <sc-if value="{{c.hasProgress}}" hint-placeholder-val="{{ false }}"><div role="img" aria-label="{{c.progressLabel}}" style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; margin-top: 4px"><sc-for list="{{c.segs}}" as="sg" hint-placeholder-count="7"><span style="height: 4px; border-radius: 2px; background: {{sg.c}}; animation: {{sg.a}}"></span></sc-for></div></sc-if>
+                  <div style="margin-top: auto; display: flex; align-items: center; gap: 12px; min-height: 34px">
+                    <span style="flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; white-space: nowrap; overflow: hidden"><span style="display: inline-flex; align-items: center; gap: 6px; color: {{c.stFg}}; font-weight: {{c.stW}}"><sc-if value="{{c.stSpin}}" hint-placeholder-val="{{ false }}"><span class="spin"></span></sc-if><sc-if value="{{c.stDot}}" hint-placeholder-val="{{ true }}"><span class="dot" style="width: 7px; height: 7px"></span></sc-if>{{c.status}}</span><sc-if value="{{c.sub}}" hint-placeholder-val="{{ false }}"><span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: #62686c">{{c.sub}}</span></sc-if></span>
+                    <sc-if value="{{c.hasBtn}}" hint-placeholder-val="{{ true }}"><button type="button" class="btn {{c.btnCls}}" style="min-height: 34px; padding: 0 15px" disabled="{{c.btnDisabled}}" onClick="{{c.btnClick}}">{{c.btnLabel}}</button></sc-if>
+                  </div>
+                </article>
+              </sc-for>
+            </div>
+            <sc-if value="{{g.hasRows}}" hint-placeholder-val="{{ false }}">
+              <ul style="list-style: none; margin: 14px 0 0; padding: 0 18px; border: 1px solid #e3e6e9; border-radius: 14px; background: #ffffff">
+                <sc-for list="{{g.rows}}" as="r" hint-placeholder-count="2">
+                  <li style="display: flex; align-items: center; gap: 14px; min-height: 52px; border-top: {{r.bt}}; font-size: 14px; opacity: {{r.opacity}}">
+                    <button type="button" class="tbtn mono" onClick="{{r.openCodeHub}}" aria-label="{{r.linkLabel}}" style="font-weight: 600; color: #121212; flex: 0 0 auto">!{{r.iid}}</button>
+                    <button type="button" class="tbtn" onClick="{{r.open}}" style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500">{{r.title}}</button>
+                    <span style="font-size: 12px; color: #8c9195; white-space: nowrap">{{r.meta}}</span>
+                    <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: {{r.stFg}}; white-space: nowrap; width: 112px"><span class="dot" style="width: 7px; height: 7px"></span>{{r.status}}</span>
+                    <span style="width: 92px; display: flex; justify-content: flex-end"><sc-if value="{{r.hasBtn}}" hint-placeholder-val="{{ false }}"><button type="button" class="btn btn-q" style="min-height: 32px; color: #121212" onClick="{{r.btnClick}}">{{r.btnLabel}}</button></sc-if></span>
+                  </li>
+                </sc-for>
+              </ul>
+            </sc-if>
+          </section>
+        </sc-for>
+      </sc-if>
+
+      <sc-if value="{{isRules}}" hint-placeholder-val="{{ false }}">
+        <header style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px">
+          <div>
+            <h1 style="margin: 0; font-size: 32px; line-height: 1.4; font-weight: 600">规则配置</h1>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px">
+            <button type="button" class="btn btn-q" onClick="{{rules.openDir}}">打开规则目录</button>
+            <button type="button" class="btn btn-s" onClick="{{rules.newRule}}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>新建规则</button>
+          </div>
+        </header>
+
+        <div style="margin: 24px 0 16px; display: flex; align-items: center; gap: 10px">
+          <label for="rule-scope-filter" style="font-size: 13px; color: #62686c">范围</label>
+          <div style="position: relative; width: 300px"><button type="button" id="rule-scope-filter" class="field" aria-haspopup="listbox" aria-expanded="{{rules.filterPick.openAttr}}" disabled="{{rules.filterPick.locked}}" onClick="{{rules.filterPick.toggle}}" style="display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; font-size: 14px; cursor: pointer"><span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{rules.filterPick.label}}</span><svg class="ico ico-s" viewBox="0 0 24 24" aria-hidden="true" style="color: #62686c; flex: 0 0 auto"><path d="m6 9 6 6 6-6"></path></svg></button><sc-if value="{{rules.filterPick.open}}" hint-placeholder-val="{{ false }}"><div style="position: absolute; top: calc(100% + 6px); left: 0; z-index: 8; width: 100%; min-width: 280px; box-sizing: border-box; padding: 8px; background: #ffffff; border: 1px solid #e1e3e6; border-radius: 12px; box-shadow: 0 10px 32px rgba(18,18,18,0.14)"><input class="field" placeholder="搜索项目" aria-label="搜索项目" value="{{rules.filterPick.q}}" onChange="{{rules.filterPick.onQ}}" style="min-height: 34px"><ul role="listbox" style="list-style: none; margin: 6px 0 0; padding: 0; max-height: 264px; overflow-y: auto"><sc-for list="{{rules.filterPick.opts}}" as="o" hint-placeholder-count="4"><li><button type="button" role="option" aria-selected="{{o.selAttr}}" class="tbtn rowh" onClick="{{o.pick}}" style="width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; font-size: 14px; background: {{o.bg}}; font-weight: {{o.fw}}"><span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{o.label}}</span><span style="font-size: 12px; color: #8c9195">{{o.hint}}</span></button></li></sc-for><sc-if value="{{rules.filterPick.none}}" hint-placeholder-val="{{ false }}"><li style="padding: 10px; font-size: 13px; color: #8c9195">没有匹配的项目</li></sc-if></ul></div></sc-if></div>
+        </div>
+
+        <sc-if value="{{rules.hasDraft}}" hint-placeholder-val="{{ false }}">
+          <div role="note" style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 12px 16px; margin-bottom: 18px; border: 1px solid #c9dcf3; background: #f5f9ff; border-radius: 13px; font-size: 13px">
+            <span style="flex: 1 1 320px"><b style="font-weight: 600">1 份规则草稿待确认</b><span style="color: #62686c">　{{rules.draftFrom}}</span></span>
+            <button type="button" class="btn btn-s" style="min-height: 34px" onClick="{{rules.openDraft}}">编辑草稿</button>
+          </div>
+        </sc-if>
+
+        <div style="display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start">
+          <div style="flex: 999 1 560px; min-width: 0; overflow-x: auto; border: 1px solid #e1e3e6; border-radius: 15px">
+            <div role="table" aria-label="规则列表" style="min-width: 620px; font-size: 13px">
+              <div role="row" style="display: grid; grid-template-columns: 64px minmax(0, 1.3fr) minmax(0, 1fr) 190px 130px; gap: 0 12px; padding: 11px 14px; background: #f5f7f8; color: #62686c"><span role="columnheader">启用</span><span role="columnheader">规则</span><span role="columnheader">适用文件</span><span role="columnheader" style="text-align: right">近 30 天 命中 / 发送 / 不发送</span><span role="columnheader">采纳率</span></div>
+              <sc-for list="{{rules.rows}}" as="rr" hint-placeholder-count="5">
+                <div role="row" style="display: grid; grid-template-columns: 64px minmax(0, 1.3fr) minmax(0, 1fr) 190px 130px; gap: 0 12px; align-items: center; padding: 10px 14px; border-top: 1px solid #e1e3e6; background: {{rr.bg}}; color: {{rr.fg}}">
+                  <span role="cell"><button type="button" role="switch" aria-checked="{{rr.onAttr}}" aria-label="{{rr.switchLabel}}" onClick="{{rr.toggle}}" style="position: relative; width: 36px; height: 22px; border-radius: 999px; border: 0; padding: 0; background: {{rr.swBg}}"><span style="position: absolute; top: 3px; left: {{rr.knob}}; width: 16px; height: 16px; border-radius: 50%; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.2)"></span></button></span>
+                  <span role="cell" style="min-width: 0"><button type="button" class="tbtn" onClick="{{rr.select}}" style="font-weight: 600">{{rr.name}}</button><sc-if value="{{rr.draft}}" hint-placeholder-val="{{ false }}"> <span class="pill" style="background: #eaf3ff; color: #0059b8; padding: 0 7px; font-size: 11px">草稿</span></sc-if></span>
+                  <span role="cell" class="mono" style="font-size: 12px; color: #62686c; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{rr.files}}</span>
+                  <span role="cell" class="mono" style="text-align: right">{{rr.stats}}</span>
+                  <span role="cell" style="display: flex; align-items: center; gap: 8px"><span style="flex: 0 0 70px; height: 5px; border-radius: 3px; background: #e1e3e6; overflow: hidden"><span style="display: block; width: {{rr.rateW}}; height: 5px; background: {{rr.rateC}}"></span></span><span class="mono" style="color: {{rr.rateFg}}">{{rr.rate}}</span></span>
+                </div>
+              </sc-for>
+            </div>
+            <sc-if value="{{rules.noRows}}" hint-placeholder-val="{{ false }}"><p style="margin: 0; padding: 20px; color: #62686c; font-size: 13px; border-top: 1px solid #e1e3e6">该范围下还没有规则。</p></sc-if>
+          </div>
+
+          <sc-if value="{{rules.ed.has}}" hint-placeholder-val="{{ true }}">
+            <section aria-label="编辑规则" style="flex: 1 1 340px; min-width: 0; border: 1px solid #e1e3e6; border-radius: 16px; overflow: hidden">
+              <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 18px; background: #f5f7fa; border-bottom: 1px solid #e1e3e6">
+                <h2 style="margin: 0; font-size: 16px; font-weight: 600">{{rules.ed.title}}</h2>
+                <span class="pill" style="background: {{rules.ed.pillBg}}; color: {{rules.ed.pillFg}}"><span class="dot"></span>{{rules.ed.pill}}</span>
+                <span style="margin-left: auto; display: flex; gap: 2px"><button type="button" class="btn btn-q" style="min-height: 34px" onClick="{{rules.ed.copy}}">复制</button><button type="button" class="btn btn-q" style="min-height: 34px" disabled="{{rules.ed.noDelete}}" onClick="{{rules.ed.del}}">删除</button></span>
+              </header>
+              <div style="padding: 16px 18px; display: flex; flex-direction: column; gap: 14px">
+                <div><label for="rule-scope" style="display: block; font-size: 12px; color: #62686c; margin-bottom: 4px">关联项目</label><div style="position: relative; "><button type="button" id="rule-scope" class="field" aria-haspopup="listbox" aria-expanded="{{rules.ed.scopePick.openAttr}}" disabled="{{rules.ed.scopePick.locked}}" onClick="{{rules.ed.scopePick.toggle}}" style="display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; font-size: 14px; cursor: pointer"><span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{rules.ed.scopePick.label}}</span><svg class="ico ico-s" viewBox="0 0 24 24" aria-hidden="true" style="color: #62686c; flex: 0 0 auto"><path d="m6 9 6 6 6-6"></path></svg></button><sc-if value="{{rules.ed.scopePick.open}}" hint-placeholder-val="{{ false }}"><div style="position: absolute; top: calc(100% + 6px); left: 0; z-index: 8; width: 100%; min-width: 280px; box-sizing: border-box; padding: 8px; background: #ffffff; border: 1px solid #e1e3e6; border-radius: 12px; box-shadow: 0 10px 32px rgba(18,18,18,0.14)"><input class="field" placeholder="搜索项目" aria-label="搜索项目" value="{{rules.ed.scopePick.q}}" onChange="{{rules.ed.scopePick.onQ}}" style="min-height: 34px"><ul role="listbox" style="list-style: none; margin: 6px 0 0; padding: 0; max-height: 264px; overflow-y: auto"><sc-for list="{{rules.ed.scopePick.opts}}" as="o" hint-placeholder-count="4"><li><button type="button" role="option" aria-selected="{{o.selAttr}}" class="tbtn rowh" onClick="{{o.pick}}" style="width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; font-size: 14px; background: {{o.bg}}; font-weight: {{o.fw}}"><span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{o.label}}</span><span style="font-size: 12px; color: #8c9195">{{o.hint}}</span></button></li></sc-for><sc-if value="{{rules.ed.scopePick.none}}" hint-placeholder-val="{{ false }}"><li style="padding: 10px; font-size: 13px; color: #8c9195">没有匹配的项目</li></sc-if></ul></div></sc-if></div><sc-if value="{{rules.ed.scopeNote}}" hint-placeholder-val="{{ false }}"><span style="display: block; margin-top: 6px; font-size: 12px; color: #8c9195">{{rules.ed.scopeNote}}</span></sc-if></div>
+                <div><label for="rule-name" style="display: block; font-size: 12px; color: #62686c; margin-bottom: 4px">名称</label><input id="rule-name" class="field" value="{{rules.ed.name}}" onChange="{{rules.ed.onName}}"></div>
+                <div><label for="rule-files" style="display: block; font-size: 12px; color: #62686c; margin-bottom: 4px">适用文件</label><input id="rule-files" class="field mono" placeholder="*.java, src/db/**" value="{{rules.ed.files}}" onChange="{{rules.ed.onFiles}}"></div>
+                <div><label for="rule-body" style="display: block; font-size: 12px; color: #62686c; margin-bottom: 4px">内容 · Markdown</label><textarea id="rule-body" class="field mono" rows="11" value="{{rules.ed.body}}" onChange="{{rules.ed.onBody}}" style="font-size: 12px; line-height: 1.8; resize: vertical"></textarea></div>
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap">
+                  <span style="font-size: 12px; color: #62686c"><span class="mono">{{rules.ed.path}}</span></span>
+                  <span style="display: flex; gap: 8px"><button type="button" class="btn btn-q" onClick="{{rules.ed.cancel}}">还原</button><button type="button" class="btn btn-p" onClick="{{rules.ed.save}}">{{rules.ed.saveLabel}}</button></span>
+                </div>
+              </div>
+            </section>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{isLogs}}" hint-placeholder-val="{{ false }}">
+        <header style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px">
+          <div>
+            <h1 style="margin: 0; font-size: 32px; line-height: 1.4; font-weight: 600">会话日志</h1>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap"><span class="mono" style="font-size: 12px; color: #62686c">{{logs.path}}</span><button type="button" class="btn btn-s" onClick="{{logs.copy}}">复制路径</button></div>
+        </header>
+        <div style="margin-top: 24px; border: 1px solid #e1e3e6; border-radius: 15px; overflow: hidden">
+          <sc-for list="{{logs.entries}}" as="l" hint-placeholder-count="8">
+            <div class="mono" style="display: grid; grid-template-columns: 76px 58px minmax(0, 1fr); gap: 12px; align-items: start; padding: 9px 16px; border-bottom: 1px solid #eceef0; font-size: 12px; line-height: 1.75; background: {{l.bg}}; box-shadow: inset 3px 0 0 {{l.edge}}"><span style="color: #62686c">{{l.t}}</span><span style="justify-self: start; padding: 0 6px; border-radius: 4px; font-weight: 600; background: {{l.lvBg}}; color: {{l.lvFg}}">{{l.lvl}}</span><span style="white-space: pre-wrap; overflow-wrap: anywhere">{{l.msg}}</span></div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </main>
+  </div>
+
+  <sc-if value="{{drawerOpen}}" hint-placeholder-val="{{ false }}">
+    <div class="rx-scrim {{scrimCls}}" style="grid-area: 1 / 1; position: relative; z-index: 5; display: flex; justify-content: flex-end; align-items: stretch">
+      <button type="button" aria-label="关闭详情" onClick="{{d.close}}" style="position: absolute; inset: 0; border: 0; padding: 0; background: transparent; cursor: default"></button>
+      <section role="dialog" aria-label="MR 详情" class="rx-drawer" style="position: relative; flex: 0 1 780px; min-width: 0; width: 100%; background: #ffffff; border-left: 1px solid #e1e3e6; box-shadow: -12px 0 48px rgb(18 18 18 / 7%)">
+        <header style="position: sticky; top: 0; z-index: 3; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 22px clamp(18px, 4vw, 36px); background: #ffffff; border-bottom: 1px solid #e1e3e6">
+          <div style="min-width: 0">
+            <h2 style="margin: 0; font-size: 24px; line-height: 1.45; font-weight: 700">{{d.title}}</h2>
+            <p style="margin: 8px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 13px; color: #62686c">{{d.path}}<button type="button" class="tbtn mono" onClick="{{d.openCodeHub}}" style="display: inline-flex; align-items: center; gap: 4px; font-weight: 500; color: #3b3f42; text-decoration: underline; text-decoration-color: #c6c9cc; text-underline-offset: 3px">!{{d.iid}}<svg class="ico ico-s" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6m0-6L10 14M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"></path></svg></button><sc-if value="{{d.closed}}" hint-placeholder-val="{{ false }}"><span class="pill" style="background: #eef0f2; color: #62686c">已不在开放列表</span></sc-if></p>
+          </div>
+          <button type="button" aria-label="关闭详情" class="btn btn-q" onClick="{{d.close}}" style="width: 38px; min-height: 38px; padding: 0; background: #f5f7f8; flex: 0 0 auto"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"></path></svg></button>
+        </header>
+
+        <div style="padding: 22px clamp(18px, 4vw, 36px) 60px">
+          <sc-if value="{{d.hasTabs}}" hint-placeholder-val="{{ false }}">
+            <div role="tablist" aria-label="检视历史" style="display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; margin-bottom: 14px; border: 1px solid #e1e3e6; border-radius: 999px; background: #f5f7f8">
+              <sc-for list="{{d.tabs}}" as="tb" hint-placeholder-count="3">
+                <button type="button" role="tab" aria-selected="{{tb.sel}}" onClick="{{tb.go}}" style="min-height: 32px; padding: 0 14px; border-radius: 999px; border: 1px solid {{tb.bd}}; background: {{tb.bg}}; font-size: 13px; font-weight: {{tb.fw}}; color: {{tb.fg}}">{{tb.label}}</button>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{d.hasActivity}}" hint-placeholder-val="{{ false }}">
+            <div role="status" style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 16px; margin-bottom: 14px; border: 1px solid #c9dcf3; border-radius: 13px; background: #f5f9ff; font-size: 13px">
+              <span class="pill" style="background: {{d.actBg}}; color: {{d.actFg}}"><sc-if value="{{d.actSpin}}" hint-placeholder-val="{{ false }}"><span class="spin"></span></sc-if>{{d.actPill}}</span>
+              <span style="flex: 1 1 260px; color: #3b3f42">{{d.actText}}</span>
+              <sc-if value="{{d.actHasBtn}}" hint-placeholder-val="{{ false }}"><button type="button" class="btn btn-s" style="min-height: 34px" disabled="{{d.actDisabled}}" onClick="{{d.actClick}}">{{d.actBtn}}</button></sc-if>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{d.vUnreviewed}}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 16px; padding: 32px; border: 1px solid #e1e3e6; border-radius: 18px; background: #fafbfc">
+              <span style="display: grid; place-items: center; width: 52px; height: 52px; border: 1px solid #e1e3e6; border-radius: 15px; background: #ffffff"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" style="width: 24px; height: 24px"><path d="M14 3H5v18h14V8Zm0 0v5h5M8 12h8M8 16h6"></path></svg></span>
+              <h3 style="margin: 0; font-size: 22px; font-weight: 500">暂无检视记录</h3>
+              <button type="button" class="btn btn-p" onClick="{{d.start}}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7Z"></path></svg>开始检视</button>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{d.vQueued}}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 22px 24px; border: 1px solid #e1e3e6; border-radius: 16px">
+              <span class="pill" style="background: #eef0f2; color: #62686c"><span class="dot"></span>排队中</span>
+              <span style="flex: 1 1 260px">队列第 <b class="mono">{{d.queuePos}}</b> 位</span>
+              <button type="button" class="btn btn-s" onClick="{{d.cancel}}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"></path></svg>取消排队</button>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{d.vRunning}}" hint-placeholder-val="{{ false }}">
+            <section aria-label="检视进度" style="border: 1px solid #e1e3e6; border-radius: 15px; overflow: hidden">
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 14px 18px; background: #f5f7f8">
+                <span class="pill" style="background: {{d.runBg}}; color: {{d.runFg}}"><span class="spin"></span>{{d.runPill}}</span>
+                <span style="flex: 1 1 260px; font-size: 14px">{{d.runText}}</span>
+                <button type="button" class="btn btn-s" disabled="{{d.stopDisabled}}" onClick="{{d.stop}}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6Z"></path></svg>停止</button>
+              </div>
+              <ol style="list-style: none; margin: 0; padding: 8px 18px 14px; border-top: 1px solid #dbe7f6">
+                <sc-for list="{{d.runSteps}}" as="rs" hint-placeholder-count="7">
+                  <li style="display: flex; align-items: center; gap: 12px; padding: 8px 0; color: {{rs.fg}}">
+                    <span style="display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: {{rs.dotBg}}; border: 1.5px solid {{rs.dotBd}}; color: {{rs.dotFg}}; flex: 0 0 auto; box-sizing: border-box"><sc-if value="{{rs.done}}" hint-placeholder-val="{{ true }}"><svg class="ico ico-s" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg></sc-if><sc-if value="{{rs.cur}}" hint-placeholder-val="{{ false }}"><span class="spin" style="width: 9px; height: 9px"></span></sc-if></span>
+                    <span class="mono" style="width: 30px; font-size: 12px; color: #62686c">{{rs.n}}/7</span>
+                    <span style="flex: 1; min-width: 0; font-size: 14px; font-weight: {{rs.fw}}">{{rs.name}}<span style="font-size: 12px; color: #62686c; font-weight: 400">{{rs.detail}}</span></span>
+                    <span class="mono" style="font-size: 12px; color: #62686c">{{rs.time}}</span>
+                  </li>
+                </sc-for>
+              </ol>
+            </section>
+          </sc-if>
+
+          <sc-if value="{{d.vFailed}}" hint-placeholder-val="{{ false }}">
+            <section aria-label="失败说明" style="border: 1px solid #edc4c7; background: #fff8f8; border-radius: 15px; padding: 18px 20px; font-size: 13px">
+              <div style="display: flex; gap: 8px; color: #ac3039"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" style="margin-top: 3px"><path d="M12 8v5m0 3v.01M10.3 4.8 2.8 18a1.5 1.5 0 0 0 1.3 2h15.8a1.5 1.5 0 0 0 1.3-2L13.7 4.8a2 2 0 0 0-3.4 0Z"></path></svg><strong style="font-weight: 600; font-size: 14px">{{d.failTitle}}</strong></div>
+              <dl style="margin: 14px 0 0; display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px 12px">
+                <dt style="color: #62686c">原因</dt><dd style="margin: 0">{{d.failWhy}}</dd>
+                <dt style="color: #62686c">队列</dt><dd style="margin: 0"><b style="font-weight: 600">{{d.failQueue}}</b></dd>
+              </dl>
+              <details style="margin-top: 14px; border-top: 1px solid #edc4c7; padding-top: 10px; color: #62686c; font-size: 12px"><summary style="display: flex; align-items: center; gap: 6px">技术详情<svg class="ico ico-s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"></path></svg></summary><p class="mono" style="margin: 6px 0 0">{{d.failCode}}</p></details>
+              <div style="margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px"><button type="button" class="btn btn-p" onClick="{{d.rerun}}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 19.5 10M4.5 14A8 8 0 0 0 17.9 17.9"></path></svg>重新检视</button><button type="button" class="btn btn-q" onClick="{{d.goLogs}}">查看会话日志</button></div>
+            </section>
+          </sc-if>
+
+          <sc-if value="{{d.vStopped}}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 22px 24px; border: 1px solid #e1e3e6; border-radius: 16px">
+              <span class="pill" style="background: #eef0f2; color: #62686c"><span class="dot"></span>已停止</span>
+              <span style="flex: 1 1 260px">{{d.stopWhy}}</span>
+              <button type="button" class="btn btn-p" onClick="{{d.rerun}}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 19.5 10M4.5 14A8 8 0 0 0 17.9 17.9"></path></svg>重新检视</button>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{d.vConclusion}}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; gap: 14px; align-items: flex-start; padding: 22px 24px; border: 1px solid {{d.conBd}}; border-radius: 16px">
+              <span style="display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: {{d.conIconBg}}; color: {{d.conIconFg}}; flex: 0 0 auto"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="{{d.conIcon}}"></path></svg></span>
+              <div style="flex: 1"><h3 style="margin: 0; font-size: 16px; font-weight: 600">{{d.conTitle}}</h3><p style="margin: 4px 0 0; font-size: 13px; color: #62686c">{{d.conText}}</p><p style="margin: 8px 0 0; font-size: 12px; color: #62686c"><span class="mono">{{d.commit}}</span> · 耗时 <span class="mono">{{d.dur}}</span></p></div>
+              <button type="button" class="btn btn-q" onClick="{{d.rerun}}" disabled="{{d.rerunDisabled}}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 19.5 10M4.5 14A8 8 0 0 0 17.9 17.9"></path></svg>重新检视</button>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{d.vArchived}}" hint-placeholder-val="{{ false }}">
+            <div role="note" style="display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-radius: 13px; background: #f5f7f8; font-size: 13px; color: #62686c"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v4l3 2M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0"></path></svg>历史报告 · 只读</div>
+            <sc-for list="{{d.archFinds}}" as="af" hint-placeholder-count="3">
+              <article style="margin-top: 18px; border: 1px solid #e1e3e6; border-radius: 14px; background: #ffffff">
+                <header style="position: sticky; top: 106px; z-index: 1; display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; min-height: 60px; box-sizing: border-box; padding: 10px 18px; background: #ffffff; border-bottom: 1px solid #ffffff; border-radius: 13px 13px 0 0">
+                  <span class="pill" style="background: {{af.sevBg}}; color: {{af.sevFg}}; font-size: 12px; padding: 2px 9px; font-weight: 600; border-radius: 6px; letter-spacing: 0.02em; border: 1px solid {{af.sevBd}}">{{af.sevLabel}}</span>
+                  <h3 style="margin: 0; flex: 1 1 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 600; color: {{af.textColor}}" title="{{af.title}}">{{af.title}}</h3>
+                  <span class="pill" style="background: transparent; color: {{af.stFg}}; font-size: 13px; padding: 3px 4px"><span class="dot"></span>{{af.stLabel}}</span>
+                </header>
+                <div class="md" style="padding: 18px 22px 20px; color: {{af.textColor}}">
+                  <p>{{af.summary}}</p>
+                  <p><span class="lbl">问题位置</span><code>{{af.loc}}</code><sc-if value="{{af.ruleText}}" hint-placeholder-val="{{ true }}"><span style="margin-left: 8px; font-size: 12px; color: #59636e; background: #f0f2f4; padding: 2px 8px; border-radius: 6px">{{af.ruleText}}</span></sc-if></p>
+                  <sc-if value="{{af.hasCode}}" hint-placeholder-val="{{ true }}"><pre><code><sc-for list="{{af.codeTok}}" as="tk" hint-placeholder-count="3"><span style="color: {{tk.c}}">{{tk.t}}</span></sc-for></code></pre></sc-if>
+                  <h4>影响分析</h4>
+                  <ul>
+                    <li><span style="color: #59636e">直接后果：</span>{{af.consequence}}</li>
+                    <li><span style="color: #59636e">影响范围：</span>{{af.scope}}</li>
+                    <li><span style="color: #59636e">触发条件：</span>{{af.trigger}}</li>
+                  </ul>
+                  <h4>解决方案</h4>
+                  <p>{{af.solution}}</p>
+                  <sc-if value="{{af.hasFix}}" hint-placeholder-val="{{ false }}"><pre><code><sc-for list="{{af.fixTok}}" as="tk" hint-placeholder-count="3"><span style="color: {{tk.c}}">{{tk.t}}</span></sc-for></code></pre></sc-if>
+                  <h4>预防措施</h4>
+                  <ul><sc-for list="{{af.prevention}}" as="pv" hint-placeholder-count="1"><li>{{pv}}</li></sc-for></ul>
+                </div>
+              </article>
+            </sc-for>
+          </sc-if>
+
+          <sc-if value="{{d.vArchiveFail}}" hint-placeholder-val="{{ false }}">
+            <section style="border: 1px solid #edc4c7; background: #fff8f8; border-radius: 15px; padding: 18px 20px; font-size: 13px">
+              <div style="display: flex; gap: 8px; color: #ac3039"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" style="margin-top: 3px"><path d="M12 8v5m0 3v.01M10.3 4.8 2.8 18a1.5 1.5 0 0 0 1.3 2h15.8a1.5 1.5 0 0 0 1.3-2L13.7 4.8a2 2 0 0 0-3.4 0Z"></path></svg><strong style="font-weight: 600">检视失败 · 步骤 7/7 输出格式无效</strong></div>
+              <p style="margin: 10px 0 0; color: #3b3f42">未生成报告，原始输出已写入会话日志。</p>
+            </section>
+          </sc-if>
+
+          <sc-if value="{{d.vReport}}" hint-placeholder-val="{{ false }}">
+            <sc-if value="{{d.stale}}" hint-placeholder-val="{{ false }}">
+              <div role="note" style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 26px; padding: 14px 18px; border: 1px solid #f0d9c2; border-radius: 12px; background: #fff7ee">
+                <span style="flex: 1 1 360px; font-size: 14px"><b style="font-weight: 600; color: #9a4a08">报告基于旧版本</b><span style="color: #3b3f42">　MR 已于 10/15 14:02 更新</span></span>
+                <button type="button" class="btn btn-s" disabled="{{d.rerunDisabled}}" onClick="{{d.rerun}}">重新检视</button>
+              </div>
+            </sc-if>
+
+            <div style="position: sticky; top: 108px; z-index: 2; box-shadow: 0 -12px 0 #ffffff; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: -12px; padding: 12px 0; background: #ffffff; border-bottom: 1px solid #e1e3e6">
+              <h3 style="margin: 0; font-size: 24px; font-weight: 600">检视意见</h3>
+              
+              <span style="margin-left: auto; display: flex; flex-wrap: wrap; gap: 4px">
+                <sc-if value="{{d.hasPending}}" hint-placeholder-val="{{ true }}">
+                  <button type="button" class="btn btn-q" style="min-height: 34px; color: #0059b8" onClick="{{d.goNext}}">下一条待处理 →</button>
+                  <button type="button" class="btn btn-q" style="min-height: 34px; font-weight: 400" onClick="{{d.askBulk}}">其余全部不发送</button>
+                </sc-if>
+                <sc-if value="{{d.notStale}}" hint-placeholder-val="{{ false }}"><button type="button" class="btn btn-q" style="min-height: 34px; font-weight: 400" disabled="{{d.rerunDisabled}}" onClick="{{d.rerun}}">重新检视</button></sc-if>
+              </span>
+            </div>
+
+            <sc-if value="{{d.confirmBulk}}" hint-placeholder-val="{{ false }}">
+              <div role="alertdialog" aria-label="确认其余全部不发送" style="margin-top: 14px; padding: 16px 18px; border: 1px solid #c6c9cc; border-radius: 12px; background: #f5f7f8; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px">
+                <span style="flex: 1 1 300px; font-size: 14px"><b style="font-weight: 600">将 {{d.pendingCount}} 条待处理意见标为「不发送」？</b></span>
+                <button type="button" class="btn btn-s" onClick="{{d.cancelBulk}}">取消</button>
+                <button type="button" class="btn btn-s" style="border-color: #121212" onClick="{{d.doBulk}}">全部不发送</button>
+              </div>
+            </sc-if>
+
+            <sc-for list="{{d.findings}}" as="f" hint-placeholder-count="3">
+              <sc-if value="{{f.groupStart}}" hint-placeholder-val="{{ false }}"><div id="{{f.gid}}" style="display: flex; align-items: center; gap: 10px; margin: {{f.groupTop}} 0 -2px; scroll-margin-top: 170px"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{f.gDot}}"></span><span style="font-size: 21px; font-weight: 600; color: #121212">{{f.gName}}<span style="color: #8c9195; font-weight: 400"> · {{f.gN}}</span></span><span style="flex: 1; height: 1px; background: #e1e3e6"></span></div></sc-if>
+              <article id="{{f.id}}" tabindex="-1" style="margin-top: 18px; border: 1px solid #e1e3e6; border-radius: 14px; background: #ffffff; scroll-margin-top: 170px">
+                <header style="position: sticky; top: 166px; z-index: 1; display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; min-height: 60px; box-sizing: border-box; padding: 10px 18px; background: {{f.headBg}}; border-bottom: 1px solid {{f.headBd}}; border-radius: 13px 13px 0 0">
+                  <span class="pill" style="flex: 0 0 auto; background: {{f.sevBg}}; color: {{f.sevFg}}; font-size: 12px; padding: 2px 9px; font-weight: 600; border-radius: 6px; letter-spacing: 0.02em; border: 1px solid {{f.sevBd}}">{{f.sevLabel}}</span>
+                  <h3 style="margin: 0; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 600; color: {{f.textColor}}" title="{{f.title}}">{{f.title}}</h3><sc-if value="{{f.showSt}}" hint-placeholder-val="{{ false }}"><span class="pill" style="flex: 0 0 auto; background: transparent; color: {{f.stFg}}; font-size: 13px; padding: 3px 4px"><sc-if value="{{f.isSending}}" hint-placeholder-val="{{ false }}"><span class="spin"></span></sc-if><sc-if value="{{f.dotIcon}}" hint-placeholder-val="{{ true }}"><span class="dot"></span></sc-if>{{f.stLabel}}<sc-if value="{{f.showNote}}" hint-placeholder-val="{{ false }}"><span style="color: {{f.noteFg}}; font-weight: 400"> · {{f.note}}</span></sc-if></span></sc-if>
+                  <span style="margin-left: auto; flex: 0 0 auto; display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 8px">
+                    <sc-if value="{{f.isPending}}" hint-placeholder-val="{{ true }}">
+                      <button type="button" class="btn btn-s" disabled="{{f.lock}}" onClick="{{f.dismiss}}">不发送</button>
+                      <button type="button" class="btn {{f.sendCls}}" disabled="{{f.lock}}" onClick="{{f.send}}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m21 3-7 18-4-7-7-4ZM21 3 10 14"></path></svg>发送到 CodeHub</button>
+                    </sc-if>
+                    <sc-if value="{{f.isSending}}" hint-placeholder-val="{{ false }}"><button type="button" class="btn btn-s" disabled="{{ true }}"><span class="spin"></span>发送中…</button></sc-if>
+                    <sc-if value="{{f.isDismissed}}" hint-placeholder-val="{{ false }}"><button type="button" class="btn btn-q" onClick="{{f.undo}}">撤销</button></sc-if>
+                    <sc-if value="{{f.isUnknown}}" hint-placeholder-val="{{ false }}">
+                      <button type="button" class="btn btn-s" onClick="{{f.markUnsent}}">确认未发布</button>
+                      <button type="button" class="btn btn-s" onClick="{{f.markSent}}">已在 CodeHub 看到</button>
+                    </sc-if>
+                    <sc-if value="{{f.isFailed}}" hint-placeholder-val="{{ false }}"><button type="button" class="btn btn-s" disabled="{{f.lock}}" onClick="{{f.send}}">重新发送</button></sc-if>
+                    <sc-if value="{{f.canDraft}}" hint-placeholder-val="{{ false }}"><button type="button" class="btn btn-q" onClick="{{f.draft}}">沉淀为规则草稿</button></sc-if>
+                  </span>
+                </header>
+                <div class="md" style="padding: 18px 22px 20px; color: {{f.textColor}}">
+                  <p>{{f.summary}}</p>
+                  <sc-if value="{{f.full}}" hint-placeholder-val="{{ true }}">
+                  <p><span class="lbl">问题位置</span><code>{{f.loc}}</code><sc-if value="{{f.ruleText}}" hint-placeholder-val="{{ true }}"><span style="margin-left: 8px; font-size: 12px; color: #59636e; background: #f0f2f4; padding: 2px 8px; border-radius: 6px">{{f.ruleText}}</span></sc-if></p>
+                  <sc-if value="{{f.hasCode}}" hint-placeholder-val="{{ true }}"><pre><code><sc-for list="{{f.codeTok}}" as="tk" hint-placeholder-count="3"><span style="color: {{tk.c}}">{{tk.t}}</span></sc-for></code></pre></sc-if>
+                  <h4>影响分析</h4>
+                  <ul>
+                    <li><span style="color: #59636e">直接后果：</span>{{f.consequence}}</li>
+                    <li><span style="color: #59636e">影响范围：</span>{{f.scope}}</li>
+                    <li><span style="color: #59636e">触发条件：</span>{{f.trigger}}</li>
+                  </ul>
+                  <h4>解决方案</h4>
+                  <p>{{f.solution}}</p>
+                  <sc-if value="{{f.hasFix}}" hint-placeholder-val="{{ false }}"><pre><code><sc-for list="{{f.fixTok}}" as="tk" hint-placeholder-count="3"><span style="color: {{tk.c}}">{{tk.t}}</span></sc-for></code></pre></sc-if>
+                  <h4>预防措施</h4>
+                  <ul><sc-for list="{{f.prevention}}" as="pv" hint-placeholder-count="1"><li>{{pv}}</li></sc-for></ul>
+                  </sc-if>
+                </div>
+              </article>
+            </sc-for>
+
+            <section aria-labelledby="ex-h" style="margin-top: 32px">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px">
+                <h4 id="ex-h" style="margin: 0; font-size: 14px; font-weight: 600; color: #3b3f42">排除的文件</h4>
+                <span class="pill" style="background: #eef0f2; color: #62686c; padding: 0 8px">{{d.excludedCount}}</span>
+              </div>
+              <ul style="list-style: none; margin: 0; padding: 0; border: 1px solid #e1e3e6; border-radius: 10px; overflow: hidden">
+                <sc-for list="{{d.excludedList}}" as="ex" hint-placeholder-count="3">
+                  <li style="display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-top: {{ex.bt}}; font-size: 13px">
+                    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" style="color: #8c9195"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Zm0 0v5h5"></path></svg>
+                    <span class="mono" style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #121212">{{ex.path}}</span>
+                    <span style="color: #62686c; font-size: 12px">{{ex.why}}</span>
+                  </li>
+                </sc-for>
+              </ul>
+            </section>
+          </sc-if>
+        </div>
+      </section>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{dialogOpen}}" hint-placeholder-val="{{ false }}">
+    <div style="grid-area: 1 / 1; position: relative; z-index: 8; display: flex; justify-content: center; align-items: flex-start; padding: 120px 20px; background: rgba(18,18,18,0.2)">
+      <section role="dialog" aria-modal="true" aria-label="移除项目" style="width: min(460px, 100%); box-sizing: border-box; background: #ffffff; border-radius: 18px; padding: 22px 24px; box-shadow: 0 16px 48px rgba(18,18,18,0.22)">
+        <h3 style="margin: 0; font-size: 17px; font-weight: 600">移除 {{dlg.name}}？</h3>
+        <p style="margin: 6px 0 12px; font-size: 13px; color: #62686c">历史报告会保留，代码缓存会删除。</p>
+        <sc-if value="{{dlg.hasTasks}}" hint-placeholder-val="{{ false }}">
+          <div style="font-size: 13px; font-weight: 500; margin-bottom: 6px">受影响的任务</div>
+          <ul style="margin: 0 0 18px; padding: 0; list-style: none; font-size: 13px; border: 1px solid #e1e3e6; border-radius: 12px">
+            <sc-for list="{{dlg.tasks}}" as="tk" hint-placeholder-count="1"><li style="display: flex; justify-content: space-between; gap: 10px; padding: 9px 12px; border-bottom: 1px solid #eceef0"><span><span class="mono" style="color: #0059b8">!{{tk.iid}}</span> {{tk.title}}</span><span style="color: #62686c">{{tk.effect}}</span></li></sc-for>
+          </ul>
+        </sc-if>
+        <sc-if value="{{dlg.noTasks}}" hint-placeholder-val="{{ true }}"><p style="margin: 0 0 18px; font-size: 13px; color: #62686c">该项目没有排队或进行中的检视。</p></sc-if>
+        <div style="display: flex; justify-content: flex-end; gap: 8px"><button type="button" class="btn btn-s" onClick="{{dlg.cancel}}">取消</button><button type="button" class="btn btn-d" onClick="{{dlg.confirm}}">{{dlg.confirmLabel}}</button></div>
+      </section>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{toastShow}}" hint-placeholder-val="{{ false }}">
+    <div role="status" style="position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 20; max-width: calc(100% - 32px); box-sizing: border-box; padding: 11px 18px; border-radius: 999px; background: #121212; color: #ffffff; font-size: 13px; box-shadow: 0 8px 24px rgba(18,18,18,0.25)">{{toastText}}</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"view":{"editor":"enum","options":["mr","rules","logs"],"default":"mr"},"open":{"editor":"text","default":""},"$preview":{"width":1440,"height":1040}}'>
+const STEPS = ['读取 MR 信息', '拉取源分支', '拉取目标分支', '校验 MR 未变化', '生成变更快照', 'OpenCode 检视', '保存报告与意见'];
+const IC = {
+  play: 'm8 5 11 7-11 7Z', stop: 'M6 6h12v12H6Z', x: 'm6 6 12 12M6 18 18 6',
+  refresh: 'M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 19.5 10M4.5 14A8 8 0 0 0 17.9 17.9',
+  arrow: 'M5 12h14m-5-5 5 5-5 5',
+  branch: 'M6 6v12m0-8c8 0 12-1 12-4M4 4a2 2 0 1 0 4 0 2 2 0 1 0-4 0M4 20a2 2 0 1 0 4 0 2 2 0 1 0-4 0M16 4a2 2 0 1 0 4 0 2 2 0 1 0-4 0',
+  clock: 'M12 8v4l3 2M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0',
+  doc: 'M14 3H5v18h14V8Zm0 0v5h5M8 12h8M8 16h6',
+  log: 'M4 6h16M4 12h16M4 18h10',
+  check: 'm5 12 4 4L19 6',
+  warn: 'M12 8v5m0 3v.01M10.3 4.8 2.8 18a1.5 1.5 0 0 0 1.3 2h15.8a1.5 1.5 0 0 0 1.3-2L13.7 4.8a2 2 0 0 0-3.4 0Z',
+  minus: 'M5 12h14'
+};
+const SEV = { fatal: ['FATAL', '#121212', 700, '#121212'], major: ['MAJOR', '#4d5256', 600, '#6b7075'], minor: ['MINOR', '#6b7075', 500, '#a3a8ad'], suggestion: ['SUGGESTION', '#7c8287', 500, '#cdd1d4'] };
+const FST = {
+  pending: ['待处理', '#eaf3ff', '#0059b8'], sending: ['发送中…', '#eaf3ff', '#0059b8'], published: ['已发布', '#e3f9ec', '#18733f'],
+  manual: ['已发布 · 人工确认', '#e3f9ec', '#18733f'], dismissed: ['不发送', '#eef0f2', '#62686c'], unknown: ['结果未知', '#eef0f2', '#3b3f42'],
+  failed: ['发布失败', '#fff0f1', '#ac3039'], superseded: ['已被新报告取代', '#eef0f2', '#62686c']
+};
+const ACT = ['pending', 'sending', 'unknown', 'failed'];
+const NOTE = {
+  unknown: ['发送结果未知（14:27），请到 CodeHub 核对。', '#3b3f42', IC.warn],
+  failed: ['发送失败：网络不可用（14:30）。', '#ac3039', IC.warn],
+  published: ['已发布', '#18733f', IC.check],
+  manual: ['已发布 · 手动标记', '#18733f', IC.check]
+};
+function F(n, sev, rule, title, summary, loc, code, consequence, scope, trigger, solution, fix, prevention) {
+  return { n, sev, rule, title, summary, loc, code, consequence, scope, trigger, solution, fix, prevention };
+}
+const FIND = {
+  '404': [
+    F(1, 'fatal', '安全', '报告读取缺少项目范围校验', 'readReport 收到报告 ID 后直接返回内容，没有核对报告是否属于当前项目，跨项目请求可以读到其他项目的检视报告。', 'src/services/report-loader.ts:42-49', 'export async function readReport(id: string) {\n  const report = await store.get(id);\n  return report.body;\n}', '可跨项目读取检视报告', '所有读取 /api/reports 的页面', '请求中带入其他项目的报告 ID', '返回正文前核对 report.projectId 与请求的项目一致，不一致时按「不存在」处理。', 'if (report.projectId !== projectId) {\n  throw new NotFoundError("Report not found");\n}', ['按资源读取的接口统一经过项目范围校验', '为跨项目访问补充集成测试']),
+    F(2, 'fatal', '正确性', '跨文件引用解析遇到循环依赖时无限递归', 'resolveRefs 递归展开引用时没有记录已访问节点，A → B → A 的循环会耗尽调用栈。', 'src/analysis/xref.ts:118-131', 'function resolveRefs(node: Node): Ref[] {\n  return node.refs.flatMap(r => resolveRefs(lookup(r)));\n}', '检视进程栈溢出退出', '存在循环引用的仓库', '两个模块互相 import', '引入 visited 集合，已访问的节点直接返回空结果。', '', ['递归遍历统一使用带 visited 的工具函数']),
+    F(3, 'major', '正确性', '空配置会中断后续任务', '配置文件存在但内容为空时，解析器仍读取首个节点，异常没有转为可处理的结果，导致后续任务提前结束。', 'src/config/parse.ts:18-26', 'const root = yaml.parse(source);\nreturn root.entries[0];', '后续检视任务全部跳过', '新建项目的默认配置', '配置文件为空或只有注释', '先处理空输入，返回空结果并附带警告。', 'if (!source.trim()) {\n  return { entries: [], warnings: ["配置为空"] };\n}', ['为解析器补充空文件与仅注释文件的用例']),
+    F(4, 'major', '正确性', '截断调用方上下文后行号映射错位', '上下文超过上限被截断后，lineMap 仍按原始偏移计算，意见中的行号会整体错位。', 'src/analysis/context.ts:77-90', 'const snippet = lines.slice(start, start + LIMIT);\nreturn { snippet, lineMap: buildMap(lines) };', '意见定位到错误的行', '大文件中的意见', '单段上下文超过 400 行', '截断后基于 snippet 重新构建 lineMap，并保留起始行偏移。', '', ['对截断路径增加行号断言']),
+    F(5, 'minor', '', '请求失败后按钮仍显示「提交中」', '请求成功时会清除 pending，失败分支只更新错误信息，按钮会一直停在提交中。', 'app/components/review.tsx:210-214', '', '用户无法再次提交', '发起检视按钮', '网络请求失败', '在 finally 中统一清除 pending 状态。', '', ['异步按钮统一使用同一个提交状态 Hook']),
+    F(6, 'suggestion', '可维护性', '为循环引用补充回归测试', '本次修改涉及引用解析的边界条件，现有测试没有覆盖循环引用和自引用。', '未定位到具体文件', '', '回归难以及时发现', 'tests/analysis', '后续重构引用解析', '新增 A → B → A 与 A → A 两个用例。', '', ['边界条件修复须附带回归测试'])
+  ],
+  '405': [
+    F(1, 'major', '正确性', '结构化字段缺少 schema 版本号', '报告 JSON 没有记录 schema 版本，后续字段调整后旧报告无法判断如何解析。', 'src/shared/types.ts:12-30', 'export interface Report {\n  findings: Finding[];\n}', '升级后旧报告解析失败', '所有历史报告', '修改 Finding 字段', '在报告根节点增加 schemaVersion，读取时按版本迁移。', '', ['数据格式变更须附带迁移用例']),
+    F(2, 'minor', '可维护性', '证据引用路径大小写不一致', '同一文件在不同意见中分别写作 Report.ts 与 report.ts，Windows 下能打开但跳转去重失效。', 'src/server/report-store.ts:88', '', '同一文件出现两条记录', '证据列表', 'AI 输出路径大小写不一致', '入库前按仓库实际路径规范化大小写。', '', ['路径统一经 normalizePath']),
+    F(3, 'suggestion', '可维护性', '为渲染模板补充快照测试', '评论模板改动频繁，缺少快照测试容易让格式回退。', 'tests/render', '', '评论格式回退', '所有发布的评论', '修改模板', '为四个严重级别各加一个快照。', '', ['模板改动须更新快照'])
+  ],
+  '398': [
+    F(1, 'major', '正确性', '追加写日志未做 fsync', '状态写入后没有 fsync 就返回成功，进程崩溃时最后几条处理记录可能丢失。', 'src/server/state-store.ts:54-61', 'await handle.write(line);\nreturn true;', '处理记录丢失', '所有意见决定', '写入后立即断电或崩溃', '写入后调用 handle.sync()，批量场景合并为一次。', 'await handle.write(line);\nawait handle.sync();', ['持久化路径统一走 appendDurable']),
+    F(2, 'minor', '正确性', '日志轮转文件名含冒号，Windows 下非法', '轮转文件名使用 ISO 时间，Windows 不允许冒号，轮转静默失败。', 'src/server/logger.ts:33', '', '日志无法轮转', 'Windows 用户', '跨天写入日志', '文件名改用 YYYY-MM-DD 格式。', '', ['路径相关代码补 Windows 用例'])
+  ],
+  '588': [
+    F(1, 'major', '安全', '分页游标未编码直接拼进 URL', '游标中的 & 与 = 会破坏查询参数，构造的游标可以注入额外参数。', 'src/server/codehub.ts:140-146', 'const url = base + "?cursor=" + cursor;', '查询参数被注入', '所有分页请求', '游标包含特殊字符', '使用 URLSearchParams 构造查询。', '', ['URL 一律通过 URL/URLSearchParams 构造'])
+  ],
+  '391': [
+    F(1, 'minor', '可维护性', '移除接口后残留路由常量', '旧诊断接口已删除，但 routes.ts 仍导出对应常量。', 'src/server/routes.ts:21', '', '误导后续开发', '路由表', '引用旧常量', '删除常量并在 lint 中禁止未使用导出。', '', ['删除接口时同步清理常量'])
+  ]
+};
+const GEN = {
+  '403': [
+    F(1, 'major', '正确性', '合并差异块时丢失文件末尾换行', 'mergeHunks 拼接相邻差异块时去掉了最后一行的换行，生成的快照与 CodeHub 显示不一致。', 'src/diff/merge.ts:61-74', 'return hunks.map(h => h.lines.join("\\n")).join("");', '快照与 MR 页面不一致', '末尾无换行的文件', '相邻差异块合并', '拼接时保留每个差异块原有的结尾换行。', '', ['差异快照与 git diff 输出逐字节比对']),
+    F(2, 'suggestion', '可维护性', '为 hunk 解析补充属性测试', '解析器只覆盖了手写样例，缺少随机生成差异的属性测试。', 'tests/diff', '', '边界问题难以发现', 'diff 解析', '后续重构', '用随机生成的补丁验证「解析后再渲染」与原文一致。', '', ['解析器改动须附带属性测试'])
+  ],
+  '402': [F(1, 'minor', '正确性', '取消信号没有传递到 git 子进程', '停止任务时只终止了 OpenCode，正在运行的 git fetch 会继续占用网络直到超时。', 'src/server/process.ts:88-97', 'controller.abort();\nopencode.kill();', '停止后仍占用网络', '步骤 2–3 中停止', '在拉取代码时点击停止', '用同一个 AbortSignal 终止整个子进程树。', '', ['子进程统一挂到任务的进程树上'])],
+  '91': [
+    F(1, 'fatal', '正确性', '重复对账时未加锁', '两个对账任务同时运行时会各自写入同一批流水，导致金额重复入账。', 'src/recon/job.ts:40-58', 'const rows = await fetchPending();\nawait writeLedger(rows);', '重复入账', '所有对账批次', '定时任务与手动触发重叠', '按批次号获取分布式锁，拿不到锁时直接返回。', 'await withLock(`recon:${batchId}`, () => writeLedger(rows));', ['幂等任务统一要求批次锁']),
+    F(2, 'minor', '可维护性', '对账日志缺少 traceId', '出错时无法把日志与具体批次关联。', 'src/recon/job.ts:12', '', '排障困难', '对账日志', '任意失败', '在日志上下文中加入 batchId 与 traceId。', '', ['任务日志统一带上下文字段'])
+  ],
+  '404': [
+    F(1, 'fatal', '安全', '报告读取缺少项目范围校验', 'readReport 仍未核对报告所属项目，新提交没有修复这一问题。', 'src/services/report-loader.ts:42-49', 'export async function readReport(id: string) {\n  const report = await store.get(id);\n  return report.body;\n}', '可跨项目读取检视报告', '所有读取 /api/reports 的页面', '请求中带入其他项目的报告 ID', '返回正文前核对 report.projectId 与请求的项目一致。', '', ['按资源读取的接口统一经过项目范围校验']),
+    F(2, 'minor', '可维护性', '新增的 contextWindow 参数缺少注释', '上下文窗口的单位（行或字符）不明确。', 'src/analysis/context.ts:12', '', '调用方容易传错单位', '上下文截断', '新增调用方', '在参数名或注释中写明单位。', '', ['数值参数命名包含单位'])
+  ],
+  '406': [F(1, 'major', '性能', '快照清理逐个删除文件', '临时目录包含上万个文件时，逐个 unlink 让清理耗时超过 1 分钟。', 'src/server/paths.ts:70-82', 'for (const f of files) await fs.unlink(f);', '停止任务很慢', '大型仓库', '停止或完成检视', '改为 fs.rm(dir, { recursive: true })。', '', ['目录清理统一用递归删除'])],
+  '603': [F(1, 'major', '正确性', '并发发送时没有互斥', '两次快速点击会各自调用 CLI，可能重复发布评论。', 'app/components/finding.tsx:55', '', '重复发布评论', '发送按钮', '连续点击', '发送期间锁定全部发送按钮，同一时间只调用一次 CLI。', '', ['写操作统一串行化'])],
+  '401': 'pass', '88': 'pass', '601': 'pass', '602': 'empty', '405': 'pass'
+};
+const ARCH_EXTRA = [
+  F(91, 'major', '性能', '缓存键未包含目标分支', '代码快照缓存只按源分支和提交号生成键，目标分支变化后仍命中旧快照，差异基于错误的基线。', 'src/cache/snapshot-key.ts:12-18', 'return `${mr.sourceBranch}:${mr.headSha}`;', '检视基于过期的目标分支', '所有复用缓存的检视', 'MR 修改目标分支或目标分支有新提交', '缓存键加入目标分支名与目标提交号。', 'return `${mr.sourceBranch}:${mr.headSha}:${mr.targetBranch}:${mr.baseSha}`;', ['缓存键须覆盖所有影响结果的输入']),
+  F(92, 'minor', '安全', '日志打印完整请求体', '调用 CodeHub CLI 失败时把完整请求体写入诊断日志，其中包含评论正文与访问令牌头。', 'src/codehub/client.ts:88', 'log.error("publish failed", { request });', '诊断日志泄露令牌', '会话日志文件', '发布评论失败', '只记录请求方法、路径与状态码，令牌头统一脱敏。', 'log.error("publish failed", { method: req.method, path: req.path, status });', ['日志字段走白名单', '为脱敏逻辑补单元测试']),
+  F(93, 'suggestion', '可维护性', '抽取上下文截断工具函数', '三处调用方各自实现了「超过上限截断并保留首尾」的逻辑，规则略有不同。', 'src/analysis/context.ts', '', '截断行为不一致', '上下文构建', '修改截断上限', '抽取 truncateContext(lines, limit) 并统一调用。', '', ['重复逻辑超过两处即抽取']),
+  F(94, 'minor', '正确性', '日志轮转文件名含冒号', '轮转文件名使用 ISO 时间，Windows 不允许冒号，轮转静默失败。', 'src/log/rotate.ts:23', 'const name = `review-${new Date().toISOString()}.log`;', '日志无法轮转', 'Windows 用户', '跨天写入日志', '文件名改用 YYYY-MM-DD 格式。', '', ['路径相关代码补 Windows 用例'])
+];
+const ARCH_LOOKUP = (() => { const m = {}; [FIND, GEN].forEach((src) => Object.keys(src).forEach((k) => [].concat(...Object.values(Array.isArray(src[k]) ? { a: src[k] } : (src[k] || {})).map((v) => Array.isArray(v) ? v : [v])).forEach((f) => { if (f && f.title && !m[f.title]) m[f.title] = f; }))); ARCH_EXTRA.forEach((f) => { if (!m[f.title]) m[f.title] = f; }); return m; })();
+const FS0 = {
+  '404': { 1: 'pending', 2: 'unknown', 3: 'published', 4: 'failed', 5: 'dismissed', 6: 'pending' },
+  '405': { 1: 'published', 2: 'dismissed', 3: 'published' },
+  '398': { 1: 'pending', 2: 'published' },
+  '588': { 1: 'unknown' },
+  '391': { 1: 'published' }
+};
+const EXCL = ['pnpm-lock.yaml · 锁文件', 'public/logo.svg · 图片', 'public/fonts/inter.woff2 · 二进制'];
+function att(key, label, time, status, kind) { return { key, label, time, status, kind }; }
+function M(iid, pid, title, updated, extra) {
+  return Object.assign({ iid, pid, title, updated, st: 'unreviewed', result: null, stale: false, closed: false, removed: false, step: 0, obj: 0, objN: 36, elapsed: 0, run: 0, times: [], dur: '', commit: '', reportTime: '', attempts: [], archives: {}, excluded: EXCL, branch: 'feature/' + iid }, extra || {});
+}
+function makeInitial(props) {
+  const mrs = {
+    '401': M('401', '101', '补充配置校验', '10/15 08:00', { branch: 'feat/config-validate' }),
+    '402': M('402', '101', '为检视队列增加取消信号，确保停止后能清理临时工作区并及时释放子进程持有的文件锁', '10/15 08:07', { st: 'queued', branch: 'feat/queue-abort' }),
+    '403': M('403', '101', '重构差异解析器', '10/15 08:14', { st: 'reviewing', step: 5, obj: 12, objN: 48, run: 102, times: ['0:02', '0:41', '0:18', '0:01'], branch: 'refactor/diff-parser' }),
+    '404': M('404', '101', '修复跨文件引用分析中的边界条件，保留必要的调用方上下文', '10/15 14:02', { st: 'done', result: 'issues', stale: true, dur: '14m22s', commit: '9f3c2ae', reportTime: '10/15 11:47', times: ['0:02', '0:41', '0:18', '0:01', '0:06', '13:12', '0:02'], branch: 'fix/xref-boundary',
+      attempts: [att('latest', '最新报告', '10/15 11:47', '检视完成', 'report'), att('a2', '历史 2', '10/14 16:20', '已归档', 'archived'), att('a1', '历史 1', '10/14 10:05', '检视失败', 'fail')],
+      archives: { a2: [['fatal', '报告读取缺少项目范围校验', 'superseded'], ['major', '空配置会中断后续任务', 'published'], ['major', '缓存键未包含目标分支', 'published'], ['minor', '日志打印完整请求体', 'dismissed'], ['suggestion', '抽取上下文截断工具函数', 'superseded']] } }),
+    '405': M('405', '101', '整理结构化检视结果与证据引用', '10/15 08:28', { st: 'done', result: 'issues', dur: '9m05s', commit: '1c7e0d4', reportTime: '10/15 09:40', times: ['0:02', '0:30', '0:12', '0:01', '0:04', '8:14', '0:02'], attempts: [att('latest', '最新报告', '10/15 09:40', '检视完成', 'report')] }),
+    '406': M('406', '101', '优化仓库快照清理', '10/15 08:35', { st: 'failed', dur: '30m00s', times: ['0:02', '0:37', '0:21', '0:01', '0:04'], failStep: 6, attempts: [att('latest', '最新检视', '10/15 10:20', '检视失败', 'fail')] }),
+    '601': M('601', '202', '完善报告加载失败时的诊断', '10/15 08:49', { st: 'done', result: 'pass', dur: '6m12s', commit: '77ab210', reportTime: '10/15 09:01', attempts: [att('latest', '最新报告', '10/15 09:01', '未发现问题', 'pass')] }),
+    '602': M('602', '202', '升级图片资源与锁文件', '10/15 08:56', { st: 'done', result: 'empty', dur: '0m09s', commit: 'e09f3a1', reportTime: '10/15 09:05', excluded: ['pnpm-lock.yaml · 锁文件', 'public/hero.png · 图片', 'public/hero@2x.png · 图片', 'public/icons.svg · 图片'], attempts: [att('latest', '最新报告', '10/15 09:05', '无可检视的变更', 'empty')] }),
+    '603': M('603', '202', '支持逐条发送检视意见', '10/15 09:03', { st: 'stopped', stopWhy: '工具关闭时中断' }),
+    '398': M('398', '101', '迁移检视状态到追加写日志', '10/12 15:40', { st: 'done', result: 'issues', closed: true, dur: '11m40s', commit: '5b8e2c1', reportTime: '10/12 15:40', attempts: [att('latest', '最新报告', '10/12 15:40', '检视完成', 'report'), att('a1', '历史 1', '10/11 10:02', '已归档', 'archived')], archives: { a1: [['major', '追加写日志未做 fsync', 'superseded'], ['minor', '日志轮转文件名含冒号', 'dismissed']] } }),
+    '391': M('391', '101', '移除旧版诊断接口', '10/09 11:20', { st: 'done', result: 'issues', closed: true, dur: '4m02s', commit: '0aa1f93', reportTime: '10/09 11:20', attempts: [att('latest', '最新报告', '10/09 11:20', '检视完成', 'report')] }),
+    '588': M('588', '202', '日志分页与筛选', '10/10 17:05', { st: 'done', result: 'issues', closed: true, dur: '7m31s', commit: 'c41d0e8', reportTime: '10/10 17:05', attempts: [att('latest', '最新报告', '10/10 17:05', '检视完成', 'report')] })
+  };
+  const projects = [
+    { id: '101', path: 'platform/review-engine', short: 'review-engine', folder: 'platform', fetch: 'updated', at: '11:00' },
+    { id: '202', path: 'apps/internal/tools/task-console', short: 'task-console', folder: 'apps / internal / tools', fetch: 'failed', at: '09:12', err: '网络不可用' },
+    { id: '318', path: 'finance/payment-service', short: 'payment-service', folder: 'finance', fetch: 'fetching', at: '', first: true }
+  ];
+  const finds = {}; Object.keys(FIND).forEach((k) => { finds[k] = FIND[k]; });
+  const fs = JSON.parse(JSON.stringify(FS0));
+  const rules = [
+    { id: 'r1', name: '安全', files: '', scope: 'global', builtin: true, on: true, hits: 22, sent: 17, dis: 5, file: 'rules/security.md', body: '## 检查要点\n- 外部输入进入 SQL、命令或文件路径前必须校验\n- 按 ID 读取的资源必须核对所属项目\n- 日志与报告中不得出现凭据\n\n## 反例\nreturn store.get(id).body;\n\n## 正例\nif (report.projectId !== projectId) throw notFound();' },
+    { id: 'r2', name: '正确性', files: '', scope: 'global', builtin: true, on: true, hits: 41, sent: 29, dis: 12, file: 'rules/correctness.md', body: '## 检查要点\n- 边界条件：空输入、循环引用、超长输入\n- 错误分支必须释放资源与状态\n\n## 反例\nreturn root.entries[0];' },
+    { id: 'r3', name: '性能', files: '', scope: 'global', builtin: true, on: true, hits: 9, sent: 4, dis: 5, file: 'rules/performance.md', body: '## 检查要点\n- 循环内的 I/O 与网络请求\n- 大目录的逐个文件操作' },
+    { id: 'r4', name: '可维护性', files: '', scope: 'global', builtin: true, on: true, hits: 34, sent: 6, dis: 28, file: 'rules/maintainability.md', body: '## 检查要点\n- 命名表达单位与含义\n- 修复边界条件须附带回归测试' },
+    { id: 'r5', name: 'SQL 拼接', files: 'src/db/**', scope: 'global', builtin: false, on: false, hits: 0, sent: 0, dis: 0, file: 'rules/sql-concat.md', body: '## 检查要点\n- 禁止字符串拼接 SQL，一律使用参数化查询' },
+    { id: 'r6', name: 'Git 子进程超时', files: 'src/server/git.ts', scope: '101', builtin: false, on: true, hits: 3, sent: 3, dis: 0, file: 'rules/review-engine/git-timeout.md', body: '## 检查要点\n- 每个 git 子进程都必须有超时与取消信号' },
+    { id: 'r7', name: '并发安全', files: 'src/queue/**', scope: '101', builtin: false, on: true, hits: 5, sent: 4, dis: 1, file: 'rules/review-engine/concurrency.md', body: '## 检查要点\n- 共享状态的读改写必须加锁或串行化' },
+    { id: 'r8', name: '金额校验', files: 'src/refund/**', scope: '318', builtin: false, on: true, hits: 0, sent: 0, dis: 0, file: 'rules/payment-service/amount.md', body: '## 检查要点\n- 金额入参必须与订单实付、已退金额比对' }
+  ];
+  const logs = [
+    { t: '11:47:03', lvl: 'INFO', msg: 'review.progress !403 step=5/7 files=12/48' },
+    { t: '11:46:58', lvl: 'INFO', msg: 'mr.fetch project=318 status=fetching' },
+    { t: '11:46:55', lvl: 'WARN', msg: 'mr.fetch project=202 failed reason=NETWORK_UNAVAILABLE kept_previous=09:12' },
+    { t: '11:46:51', lvl: 'INFO', msg: 'mr.fetch project=101 updated open=6' },
+    { t: '11:46:50', lvl: 'INFO', msg: 'mr.fetch start projects=3 concurrency=6' },
+    { t: '11:45:16', lvl: 'INFO', msg: 'review.start !403 queue=1/2' },
+    { t: '11:44:02', lvl: 'ERROR', msg: 'review.failed !406 step=6/7 reason=OPENCODE_TIMEOUT limit=30:00 queue=stopped' },
+    { t: '11:12:40', lvl: 'WARN', msg: 'comment.publish !404 #4 result=failed reason=NETWORK_UNAVAILABLE' },
+    { t: '10:58:21', lvl: 'WARN', msg: 'comment.publish !404 #2 result=WRITE_RESULT_UNKNOWN' },
+    { t: '10:52:09', lvl: 'INFO', msg: 'server.start addr=127.0.0.1:17080 data=C:\\Users\\dev\\AppData\\Local\\ReviewX' }
+  ];
+  const view = (props && props.view) || 'mr';
+  const open = props && props.open ? String(props.open) : null;
+  return {
+    ready: true, ticks: 0, view, drawer: open, orderFs: open && fs[open] ? Object.assign({}, fs[open]) : null, tab: 'latest', menu: null, queueOpen: false, dialog: null,
+    pid: '', pidMsg: null, pidBusy: false, flash: null, netOk: false,
+    projects, removed: [], mrs, order: ['401', '402', '403', '404', '405', '406', '601', '602', '603'], closedOrder: ['398', '391', '588'],
+    queue: ['403', '402'],
+    fetch: { active: true, pending: ['318'], total: 3, done: 2, ok: 1, failed: 1, summary: '' },
+    finds, fs, sending: null, focus: {}, showDone: {}, fix: {}, code: {}, confirmBulk: null,
+    hist: { '404': true }, rules, ruleScope: 'global', ruleSel: 'r1', edit: null,
+    draft: { from: '来自 !404「空配置会中断后续任务」', title: '解析器须处理空输入', done: false },
+    logs, toast: null
+  };
+}
+function clockAt(s, extra) { const x = 11 * 3600 + 47 * 60 + 3 + (s.ticks || 0) + (extra || 0); const p = (n) => String(n).padStart(2, '0'); return p(Math.floor(x / 3600)) + ':' + p(Math.floor(x / 60) % 60) + ':' + p(x % 60); }
+function hm(s) { return clockAt(s).slice(0, 5); }
+function hl(code) {
+  const out = []; if (!code) return out;
+  const re = /(\/\/[^\n]*)|("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|\b(const|let|var|function|return|if|else|for|of|in|new|throw|await|async|export|import|from|class|extends|try|catch|finally|typeof|interface|type|null|undefined|true|false|this)\b|\b(\d+(?:\.\d+)?)\b|([A-Za-z_$][\w$]*)(?=\s*\()/g;
+  let last = 0; let mt;
+  const push = (txt, c) => { if (txt) out.push({ t: txt, c }); };
+  while ((mt = re.exec(code))) {
+    push(code.slice(last, mt.index), '#1f2328');
+    const c = mt[1] ? '#6e7781' : mt[2] ? '#0a3069' : mt[3] ? '#cf222e' : mt[4] ? '#0550ae' : '#8250df';
+    push(mt[0], c); last = re.lastIndex;
+  }
+  push(code.slice(last), '#1f2328');
+  return out;
+}
+function addLog(s, logs, lvl, msg) { return [{ t: clockAt(s), lvl, msg }].concat(logs || s.logs).slice(0, 80); }
+function mmss(sec) { return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
+function durOf(sec) { return Math.floor(sec / 60) + 'm' + String(sec % 60).padStart(2, '0') + 's'; }
+function toast(text) { return { text, ttl: 4 }; }
+function projOf(s, pid) { return s.projects.find((p) => p.id === pid); }
+function counts(s, iid) {
+  const m = s.mrs[iid]; const list = s.finds[iid] || []; const fs = s.fs[iid] || {};
+  let p = 0, v = 0;
+  if (m && m.result === 'issues') list.forEach((f) => { const st = fs[f.n]; if (st === 'pending') p++; if (st === 'unknown' || st === 'failed') v++; });
+  return { p, v, total: list.length };
+}
+function queuePos(s, iid) { const q = s.queue.filter((k) => s.mrs[k] && s.mrs[k].st === 'queued'); return { pos: q.indexOf(iid) + 1, n: q.length }; }
+function busy(m) { return m && (m.st === 'queued' || m.st === 'reviewing' || m.st === 'stopping'); }
+function complete(s, m, logs) {
+  const iid = m.iid; const g = GEN[iid] || 'pass';
+  const finds = Object.assign({}, s.finds); const fsAll = Object.assign({}, s.fs);
+  const prev = m.attempts.slice(); const archives = Object.assign({}, m.archives);
+  if (prev.length) {
+    const k = 'a' + (prev.length + 1);
+    const top = Object.assign({}, prev[0], { key: k, label: '历史 ' + prev.length });
+    if (top.kind === 'report') {
+      top.kind = 'archived'; top.status = '已归档';
+      archives[k] = (s.finds[iid] || []).map((f) => { const st = (s.fs[iid] || {})[f.n]; return [f.sev, f.title, (st === 'pending' || st === 'unknown' || st === 'failed') ? 'superseded' : st]; });
+    }
+    prev[0] = top;
+  }
+  const time = '10/15 ' + hm(s);
+  let result = 'issues';
+  if (g === 'pass' || g === 'empty') { result = g; finds[iid] = []; fsAll[iid] = {}; }
+  else { finds[iid] = g; const o = {}; g.forEach((f) => { o[f.n] = 'pending'; }); fsAll[iid] = o; }
+  const kind = result === 'issues' ? 'report' : result;
+  const status = result === 'issues' ? '检视完成' : (result === 'pass' ? '未发现问题' : '无可检视的变更');
+  const nm = Object.assign({}, m, { st: 'done', result, stale: false, dur: durOf(m.run || 300), commit: ['3f9a1c2', 'b7e04d1', '8c2d9fa', 'e51a7b3'][iid.length % 4], reportTime: time, attempts: [att('latest', '最新报告', time, status, kind)].concat(prev), archives });
+  return { m: nm, finds, fs: fsAll, logs: addLog(s, logs, 'INFO', 'review.done !' + iid + ' result=' + result + (result === 'issues' ? ' findings=' + g.length : '')), msg: '!' + iid + ' 检视完成 · ' + (result === 'issues' ? '发现 ' + g.length + ' 条意见' : status) };
+}
+function tick(s) {
+  const p = { ticks: (s.ticks || 0) + 1 };
+  let logs = s.logs;
+  if (s.toast) p.toast = s.toast.ttl > 1 ? { text: s.toast.text, ttl: s.toast.ttl - 1 } : null;
+  if (s.flash) p.flash = s.flash.ttl > 1 ? { pid: s.flash.pid, ttl: s.flash.ttl - 1 } : null;
+  let mrs = Object.assign({}, s.mrs); let order = s.order; let projects = s.projects;
+  if (s.fetch.active && s.fetch.pending.length) {
+    const pid = s.fetch.pending[0];
+    projects = s.projects.map((x) => Object.assign({}, x));
+    const pr = projects.find((x) => x.id === pid);
+    const f = Object.assign({}, s.fetch, { pending: s.fetch.pending.slice(1), done: s.fetch.done + 1 });
+    if (pr) {
+      if (pid === '202' && !s.netOk) { pr.fetch = 'failed'; pr.err = '网络不可用'; f.failed++; logs = addLog(s, logs, 'WARN', 'mr.fetch project=202 failed reason=NETWORK_UNAVAILABLE kept_previous=' + pr.at); }
+      else {
+        pr.fetch = 'updated'; pr.err = null; pr.at = hm(s); pr.first = false; f.ok++;
+        if (pid === '318' && !mrs['88']) {
+          mrs['88'] = M('88', '318', '升级 Netty 到 4.1.114', '10/15 10:12', { branch: 'chore/netty-4.1.114' });
+          mrs['91'] = M('91', '318', '对账任务改造为幂等', '10/15 11:30', { branch: 'feat/recon-idempotent' });
+          order = order.concat(['88', '91']);
+        }
+        logs = addLog(s, logs, 'INFO', 'mr.fetch project=' + pid + ' updated');
+      }
+    }
+    if (!f.pending.length) { f.active = false; f.summary = '已更新 ' + f.ok + '/' + f.total + ' 个项目，' + f.failed + ' 个失败 · ' + hm(s); p.toast = toast('获取完成：已更新 ' + f.ok + '/' + f.total + ' 个项目，' + f.failed + ' 个失败'); }
+    p.fetch = f; p.projects = projects; p.order = order;
+  }
+  let queue = s.queue.slice();
+  const head = queue[0];
+  if (head && mrs[head]) {
+    let m = Object.assign({}, mrs[head]);
+    if (m.st === 'queued') { m.st = 'reviewing'; m.step = 1; m.obj = 0; m.objN = m.objN || 36; m.elapsed = 0; m.run = 0; m.times = []; logs = addLog(s, logs, 'INFO', 'review.start !' + m.iid); }
+    else if (m.st === 'reviewing') {
+      m.run = (m.run || 0) + 11;
+      if (m.step <= 4) { m.times = m.times.concat([['0:02', '0:38', '0:19', '0:01'][m.step - 1]]); m.step++; m.obj = 0; }
+      else if (m.step === 5) { m.obj = Math.min(m.objN, m.obj + 9); if (m.obj >= m.objN) { m.times = m.times.concat(['0:05']); m.step = 6; m.elapsed = 0; } }
+      else if (m.step === 6) { m.elapsed += 130; m.run += 120; if (m.elapsed >= 520) { m.times = m.times.concat([mmss(m.elapsed)]); m.step = 7; m.obj = 0; } }
+      else {
+        m.times = m.times.concat(['0:01']);
+        const r = complete(s, m, logs);
+        m = r.m; logs = r.logs; p.finds = r.finds; p.fs = r.fs; p.toast = toast(r.msg); queue.shift();
+      }
+    } else if (m.st === 'stopping') {
+      m.stopT = (m.stopT || 2) - 1;
+      if (m.stopT <= 0) { const had = Boolean(m.result); m.st = had ? 'done' : 'stopped'; m.stopWhy = '已主动停止'; queue.shift(); logs = addLog(s, logs, 'INFO', 'review.stopped !' + m.iid + ' by=user'); p.toast = toast('!' + m.iid + ' 已停止' + ''); }
+      else m.stopNote = '正在停止 · 清理临时目录';
+    } else { queue.shift(); }
+    mrs[m.iid] = m;
+  }
+  p.mrs = mrs; p.queue = queue; p.logs = logs;
+  return p;
+}
+
+class Component extends DCLogic {
+  init() { if (!this._init) this._init = makeInitial(this.props); return this._init; }
+  cur() { return (this.state && this.state.ready) ? this.state : this.init(); }
+  mut(fn) { this.setState((prev) => { const base = (prev && prev.ready) ? prev : this.init(); const patch = fn(base) || {}; return Object.assign({}, base, patch); }); }
+  componentDidMount() { this._t = setInterval(() => this.mut((s) => tick(s)), 1000); }
+  componentWillUnmount() { clearInterval(this._t); }
+
+  setMr(s, iid, patch) { const mrs = Object.assign({}, s.mrs); mrs[iid] = Object.assign({}, mrs[iid], patch); return mrs; }
+  start(iid) { this.mut((s) => {
+    const m = s.mrs[iid]; if (!m || busy(m)) return {};
+    const mrs = this.setMr(s, iid, { st: 'queued' }); const queue = s.queue.concat([iid]);
+    const n = queue.filter((k) => mrs[k].st === 'queued').length;
+    return { mrs, queue, toast: toast('!' + iid + ' 已加入检视队列 · 第 ' + n + ' 位'), logs: addLog(s, null, 'INFO', 'review.enqueue !' + iid + ' position=' + n) };
+  }); }
+  stop(iid) { this.mut((s) => { const m = s.mrs[iid]; if (!m || m.st !== 'reviewing') return {}; return { mrs: this.setMr(s, iid, { st: 'stopping', stopT: 2, stopNote: '正在停止 · 终止子进程' }), logs: addLog(s, null, 'INFO', 'review.stop !' + iid + ' requested') }; }); }
+  cancel(iid) { this.mut((s) => { const m = s.mrs[iid]; if (!m || m.st !== 'queued') return {}; return { mrs: this.setMr(s, iid, { st: m.result ? 'done' : 'stopped', stopWhy: '已取消 · 尚未开始' }), queue: s.queue.filter((k) => k !== iid), toast: toast('已取消 !' + iid + ' 的排队'), logs: addLog(s, null, 'INFO', 'review.cancel !' + iid) }; }); }
+  open(iid, tab) { this.mut((x) => ({ drawer: iid, drawerClosing: false, orderFs: Object.assign({}, x.fs[iid] || {}), tab: tab || 'latest', confirmBulk: null, queueOpen: false, menu: null })); }
+  go(view) { this.mut(() => ({ view, drawer: null, queueOpen: false, menu: null })); }
+  fetchAll() { this.mut((s) => {
+    if (s.fetch.active) return {};
+    const projects = s.projects.map((x) => Object.assign({}, x, { fetch: 'fetching' }));
+    return { projects, netOk: true, fetch: { active: true, pending: projects.map((x) => x.id), total: projects.length, done: 0, ok: 0, failed: 0, summary: '' }, logs: addLog(s, null, 'INFO', 'mr.fetch start projects=' + projects.length + ' concurrency=6') };
+  }); }
+  retry(pid) { this.mut((s) => {
+    if (s.fetch.active) return {};
+    const projects = s.projects.map((x) => x.id === pid ? Object.assign({}, x, { fetch: 'fetching' }) : x);
+    return { projects, netOk: true, fetch: { active: true, pending: [pid], total: 1, done: 0, ok: 0, failed: 0, summary: '' }, logs: addLog(s, null, 'INFO', 'mr.fetch retry project=' + pid) };
+  }); }
+  setF(iid, n, v, extra) { this.mut((s) => { const fs = Object.assign({}, s.fs); fs[iid] = Object.assign({}, fs[iid], { [n]: v }); return Object.assign({ fs }, extra ? extra(s) : {}); }); }
+  send(iid, n) {
+    const s0 = this.cur(); if (s0.sending) return;
+    this.mut((s) => ({ sending: { iid, n } }));
+    setTimeout(() => this.mut((s) => {
+      const fs = Object.assign({}, s.fs); fs[iid] = Object.assign({}, fs[iid], { [n]: 'published' });
+      const focus = Object.assign({}, s.focus); delete focus[iid];
+      return { fs, focus, sending: null, toast: toast('已发布为 !' + iid + ' 的 MR 评论'), logs: addLog(s, null, 'INFO', 'comment.publish !' + iid + ' #' + n + ' result=success') };
+    }), 1100);
+  }
+  draftFrom(iid, n) { this.mut((s) => {
+    const f = (s.finds[iid] || []).find((x) => x.n === n); if (!f) return {};
+    const id = 'r' + (s.rules.length + 10);
+    const rule = { id, name: f.title.replace(/[「」]/g, '') + ' · 草稿', files: f.loc.indexOf('/') > 0 ? f.loc.split(':')[0] : '', scope: 'global', builtin: false, on: false, draft: true, hits: 0, sent: 0, dis: 0, file: 'rules/drafts/' + id + '.md', body: '## 检查要点\n- ' + f.solution + '\n\n## 反例\n' + (f.code || '（补充反例代码）') };
+    return { rules: s.rules.concat([rule]), ruleSel: id, ruleScope: 'global', edit: null, view: 'rules', drawer: null, toast: toast('已生成规则草稿') };
+  }); }
+  addProject() {
+    const s0 = this.cur(); const v = (s0.pid || '').trim();
+    if (s0.pidBusy) return;
+    if (!v) { this.mut(() => ({ pidMsg: { text: '请输入 Project ID', tone: 'bad' } })); return; }
+    if (!/^[1-9]\d*$/.test(v)) { this.mut(() => ({ pidMsg: { text: 'Project ID 应为正整数', tone: 'bad' } })); return; }
+    const ex = s0.projects.find((p) => p.id === v);
+    if (ex) { this.mut(() => ({ pidMsg: { text: '该项目已在关注列表中：' + ex.path + '（' + v + '）', tone: 'info' }, flash: { pid: v, ttl: 4 } })); return; }
+    this.mut(() => ({ pidBusy: true, pidMsg: { text: '校验中…', tone: 'muted' } }));
+    setTimeout(() => this.mut((s) => {
+      if (v === '999') return { pidBusy: false, pidMsg: { text: '项目不存在或无访问权限', tone: 'bad' }, logs: addLog(s, null, 'WARN', 'project.add id=999 failed reason=NOT_FOUND_OR_FORBIDDEN') };
+      const back = s.removed.find((p) => p.id === v);
+      if (back) {
+        const mrs = Object.assign({}, s.mrs); let n = 0; Object.keys(mrs).forEach((k) => { if (mrs[k].pid === v && mrs[k].removed) { mrs[k] = Object.assign({}, mrs[k], { removed: false }); if (mrs[k].attempts.length) n += mrs[k].attempts.length; } });
+        return { pidBusy: false, pid: '', projects: s.projects.concat([Object.assign({}, back, { fetch: 'never' })]), removed: s.removed.filter((p) => p.id !== v), mrs, pidMsg: { text: '已恢复关注 ' + back.path + '，已恢复 ' + n + ' 份历史报告', tone: 'ok' }, logs: addLog(s, null, 'INFO', 'project.restore id=' + v) };
+      }
+      const np = { id: v, path: 'apps/data/etl-runner', short: 'etl-runner', folder: 'apps / data', fetch: 'never', at: '' };
+      return { pidBusy: false, pid: '', projects: s.projects.concat([np]), pidMsg: { text: '已添加 ' + np.path + '（' + v + '）', tone: 'ok' }, logs: addLog(s, null, 'INFO', 'project.add id=' + v + ' path=' + np.path) };
+    }), 900);
+  }
+  confirmRemove() { this.mut((s) => {
+    const pid = s.dialog; const pr = projOf(s, pid); if (!pr) return { dialog: null };
+    const mrs = Object.assign({}, s.mrs); let queue = s.queue.slice();
+    Object.keys(mrs).forEach((k) => { const m = mrs[k]; if (m.pid !== pid) return; const nm = Object.assign({}, m, { removed: true }); if (busy(m)) { nm.st = m.result ? 'done' : 'stopped'; nm.stopWhy = '项目已移除'; } mrs[k] = nm; });
+    queue = queue.filter((k) => mrs[k].pid !== pid);
+    return { dialog: null, mrs, queue, projects: s.projects.filter((p) => p.id !== pid), removed: s.removed.concat([pr]), drawer: (s.drawer && mrs[s.drawer] && mrs[s.drawer].pid === pid) ? null : s.drawer, toast: toast('已移除 ' + pr.short + ''), logs: addLog(s, null, 'INFO', 'project.remove id=' + pid + ' cache=deleted') };
+  }); }
+
+  renderVals() {
+    const s = this.cur();
+    const self = this;
+    const projects = s.projects;
+    const openOrder = s.order.filter((k) => s.mrs[k] && !s.mrs[k].removed && projOf(s, s.mrs[k].pid));
+    let pendingTotal = 0, verifyTotal = 0;
+    openOrder.forEach((k) => { const c = counts(s, k); pendingTotal += c.p; verifyTotal += c.v; });
+    const queuedTotal = s.queue.filter((k) => s.mrs[k] && s.mrs[k].st === 'queued').length;
+    const nextIid = openOrder.find((k) => counts(s, k).p > 0 && (projOf(s, s.mrs[k].pid) || {}).fetch !== 'failed');
+    const enabledRules = s.rules.filter((r) => r.on && !r.draft).length;
+
+    const navDef = [
+      ['mr', '检视队列', IC.branch, pendingTotal ? pendingTotal + ' 待处理' : '', '#eaf3ff', '#0059b8'],
+      ['rules', '规则配置', IC.doc, '', 'transparent', '#62686c'],
+      ['logs', '会话日志', IC.log, '', '', '']
+    ];
+    const nav = navDef.map((d) => {
+      const on = s.view === d[0];
+      return { label: d[1], icon: d[2], current: on ? 'page' : false, go: () => self.go(d[0]), bg: on ? '#ffffff' : 'transparent', bd: on ? '#e1e3e6' : 'transparent', fg: on ? '#121212' : '#62686c', fw: on ? 500 : 400, hasBadge: Boolean(d[3]), badge: d[3], badgeBg: d[4], badgeFg: d[5] };
+    });
+
+    const folders = [];
+    projects.forEach((p) => {
+      let g = folders.find((x) => x.folder === p.folder); if (!g) { g = { folder: p.folder, items: [] }; folders.push(g); }
+      const dot = { updated: '#18733f', failed: '#ac3039', fetching: '#8c9195', never: '#a3a8ad' }[p.fetch];
+      const label = { updated: '已更新', failed: '获取失败', fetching: '获取中', never: '尚未获取' }[p.fetch];
+      g.items.push({ id: p.id, name: p.short, dot, label, spin: p.fetch === 'fetching', bg: (s.flash && s.flash.pid === p.id) ? '#eaf3ff' : 'transparent',
+        go: () => { self.mut(() => ({ view: 'mr', drawer: null, menu: null })); setTimeout(() => { const el = document.getElementById('grp-' + p.id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 30); },
+        menuOpen: s.menu === p.id, menuAttr: s.menu === p.id ? 'true' : 'false', menuLabel: p.short + ' 更多操作',
+        toggleMenu: () => self.mut((x) => ({ menu: x.menu === p.id ? null : p.id })),
+        openCodeHub: () => self.mut((x) => ({ menu: null, toast: toast('已在浏览器打开 CodeHub 项目 #' + p.id) })),
+        clearCache: () => self.mut((x) => ({ menu: null, toast: toast('已清除 ' + p.short + ' 的代码缓存'), logs: addLog(x, null, 'INFO', 'cache.clear project=' + p.id) })),
+        askRemove: () => self.mut(() => ({ menu: null, dialog: p.id })) });
+    });
+
+    const pidMsg = s.pidMsg;
+    const toneColor = { bad: '#ac3039', info: '#0059b8', ok: '#18733f', muted: '#62686c' };
+
+    const fetching = s.fetch.active;
+    const hdr = { pending: pendingTotal, verify: verifyTotal, queued: queuedTotal, fetching, fetchDisabled: fetching, fetchLabel: fetching ? '刷新中…' : '刷新 MR',
+      fetchText: fetching ? '获取中 · 项目 ' + s.fetch.done + '/' + s.fetch.total + ' · ' + s.fetch.failed + ' 个失败' : (s.fetch.summary || '') };
+
+    const SEGBLUE = '#007cff';
+    const cardOf = (m, staleGroup) => {
+      const units = Array.from(m.title).reduce((n, ch) => n + (/[\u2E80-\uFFEF]/.test(ch) ? 1 : 0.56), 0) * 17;
+      const titleLast = units <= 470 && units / 470 > 0.9 ? 'justify' : 'auto';
+      const tm = '更新于 ' + m.updated + (m.dur ? ' · 耗时 ' + m.dur : '');
+      const c = counts(s, m.iid);
+      const vm = { iid: m.iid, title: m.title, titleLast, open: () => self.open(m.iid), openCodeHub: () => self.mut(() => ({ toast: toast('已在浏览器打开 CodeHub MR !' + m.iid) })), linkLabel: '在 CodeHub 打开 MR !' + m.iid,
+        border: '1px solid #e3e6e9', bg: '#f7f8fa', shadow: 'none', opacity: staleGroup ? '0.55' : '1',
+        status: '', stFg: '#62686c', stW: 500, stSpin: false, stDot: true, meta: '更新于 ' + m.updated, metaFg: '#62686c', staleTag: false,
+        hasProgress: false, segs: [], progressLabel: '', hasBtn: false, btnCls: 'btn-s', btnLabel: '', btnClick: null, btnDisabled: false };
+      const btn = (cls, label, fn, dis) => Object.assign(vm, { hasBtn: true, btnCls: cls, btnLabel: label, btnClick: fn, btnDisabled: Boolean(dis) });
+      if (m.st === 'unreviewed') { vm.status = '未检视'; btn('btn-s', '开始检视', () => self.start(m.iid)); }
+      else if (m.st === 'queued') { const q = queuePos(s, m.iid); Object.assign(vm, { status: '排队 ' + q.pos + '/' + q.n }); btn('btn-q', '取消排队', () => self.cancel(m.iid)); }
+      else if (m.st === 'reviewing' || m.st === 'stopping') {
+        let detail = '';
+        if (m.step === 5) detail = ' · ' + m.obj + '/' + m.objN + ' 个文件';
+        if (m.step === 6) detail = ' · ' + mmss(m.elapsed) + ' / 30:00';
+        const frac = m.step === 5 ? m.obj / (m.objN || 1) : (m.step === 6 ? Math.min(1, m.elapsed / 600) : 0.5);
+        Object.assign(vm, { status: m.st === 'stopping' ? '停止中' : '检视中 ' + m.step + '/7', stFg: m.st === 'stopping' ? '#62686c' : '#3b3f42', stSpin: true, stDot: false,
+          meta: m.st === 'stopping' ? (m.stopNote || '正在停止') : STEPS[m.step - 1] + detail, hasProgress: true, segs: Array.from({ length: 7 }, (_, j) => ({ c: j + 1 < m.step ? '#3b3f42' : (j + 1 === m.step ? '#9aa0a6' : '#e1e3e6'), a: (j + 1 === m.step && m.st === 'reviewing') ? 'rxbreathe 1.6s ease-in-out infinite' : 'none' })), progressLabel: '步骤 ' + m.step + '/7', bg: '#ffffff' });
+        if (m.st === 'reviewing') btn('btn-q', '停止', () => self.stop(m.iid));
+      }
+      else if (m.st === 'stopped') { Object.assign(vm, { status: '已停止', meta: m.stopWhy || '已停止' }); btn('btn-s', '重新检视', () => self.start(m.iid)); }
+      else if (m.st === 'failed') { Object.assign(vm, { status: '检视失败', stFg: '#ac3039', bg: staleGroup ? vm.bg : '#fff8f8', border: staleGroup ? vm.border : '1px solid #efc9cc', meta: '步骤 ' + m.failStep + '/7 超时' }); btn('btn-s', '重新检视', () => self.start(m.iid)); }
+      else if (m.st === 'done') {
+        if (m.result === 'issues') {
+          if (c.p > 0) {
+            const isNext = m.iid === nextIid && !staleGroup;
+            Object.assign(vm, { status: c.p + ' 条待处理', stFg: '#0059b8', stW: 600, meta: (c.v ? c.v + ' 条需核对 · ' : '') + tm, staleTag: m.stale });
+            if (isNext) Object.assign(vm, { border: '1.5px solid #0059b8', bg: '#f4f8fe', shadow: 'none' });
+            btn(isNext ? 'btn-p' : 'btn-s', '处理意见', () => self.open(m.iid));
+          } else if (c.v > 0) { Object.assign(vm, { status: c.v + ' 条需核对', stFg: '#9a4a08', meta: tm, staleTag: m.stale }); btn('btn-s', '去核对', () => self.open(m.iid)); }
+          else Object.assign(vm, { status: '已处理完', stFg: '#18733f', meta: tm });
+        } else if (m.result === 'pass') Object.assign(vm, { status: '未发现问题', stFg: '#18733f', meta: tm });
+        else Object.assign(vm, { status: '无可检视的变更', meta: '已排除 ' + m.excluded.length + ' 个文件' });
+      }
+      if (staleGroup) vm.hasBtn = false;
+      vm.timeLine = tm; vm.sub = vm.meta.indexOf('更新于') === 0 ? '' : vm.meta.replace(' · ' + tm, '').replace(tm, '');
+      vm.compact = false;
+      return vm;
+    };
+    const groups = projects.map((p) => {
+      const rank = (m) => { const c = counts(s, m.iid); if (c.p) return 0; if (c.v) return 1; return ({ failed: 1.5, reviewing: 2, stopping: 2, queued: 3, unreviewed: 5, stopped: 6 })[m.st] || 7; };
+      const ms = openOrder.filter((k) => s.mrs[k].pid === p.id).map((k) => s.mrs[k]).map((m, i) => [m, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map((x) => x[0]);
+      const staleGroup = p.fetch === 'failed';
+      const pill = { updated: ['#e3f9ec', '#18733f', '已更新'], failed: ['#fff0f1', '#ac3039', '获取失败' + (p.err ? ' · ' + p.err : '')], fetching: ['#eef0f2', '#3b3f42', '获取中'], never: ['#eef0f2', '#62686c', '尚未获取'] }[p.fetch];
+      let right = '';
+      if (p.fetch === 'updated') right = '获取于 2026/10/15 ' + p.at;
+      if (p.fetch === 'failed') right = '显示 ' + p.at + ' 的数据';
+      if (p.fetch === 'fetching') right = p.first ? '首次获取' : '获取中…';
+      return { anchor: 'grp-' + p.id, name: p.short, showPill: p.fetch !== 'updated', pillBg: pill[0], pillFg: pill[1], pillLabel: pill[2], spin: p.fetch === 'fetching', dot: p.fetch !== 'fetching', right,
+        failBanner: staleGroup, err: p.err || '获取失败', errHint: '', retry: () => self.retry(p.id), retryDisabled: fetching, canRetry: !fetching, showRetry: staleGroup && !fetching,
+        never: p.fetch === 'never', skeleton: p.fetch === 'fetching' && !ms.length, emptyOpen: p.fetch === 'updated' && !ms.length,
+        hasRows: ms.some((m) => cardOf(m, staleGroup).compact), cards: ms.map((m) => cardOf(m, staleGroup)).filter((v) => !v.compact), rows: ms.map((m) => cardOf(m, staleGroup)).filter((v) => v.compact).map((v, i) => Object.assign(v, { bt: i ? '1px solid #eceef0' : '0' })) };
+    });
+
+    const qItems = [];
+    s.queue.forEach((k) => { const m = s.mrs[k]; if (!m) return; const pr = projOf(s, m.pid) || { short: '' }; const run = m.st !== 'queued'; const q = queuePos(s, k);
+      qItems.push({ iid: k, title: m.title, project: pr.short, bg: '#eef0f2', fg: run ? '#3b3f42' : '#62686c', spin: run, label: run ? (m.st === 'stopping' ? '停止中' : '检视中') : '排队中', sub: run ? '步骤 ' + m.step + '/7 ' + STEPS[m.step - 1] : '队列第 ' + q.pos + '/' + q.n + ' 位', open: () => self.open(k) }); });
+    openOrder.forEach((k) => { const c = counts(s, k); const m = s.mrs[k]; if (busy(m) || (!c.p && !c.v)) return; const pr = projOf(s, m.pid) || { short: '' };
+      qItems.push({ iid: k, title: m.title, project: pr.short, bg: c.p ? '#eaf3ff' : '#eef0f2', fg: c.p ? '#0059b8' : '#3b3f42', spin: false, label: c.p ? c.p + ' 条待处理' : c.v + ' 需核对', sub: '检视完成', open: () => self.open(k) }); });
+    const runningN = s.queue.filter((k) => s.mrs[k] && s.mrs[k].st !== 'queued').length;
+
+    // drawer
+    let d = {};
+    const dm = s.drawer ? s.mrs[s.drawer] : null;
+    if (dm) d = this.drawerVM(s, dm);
+
+    // rules
+    const scopes = [['global', '全局']].concat(projects.map((p) => [p.id, p.short]));
+    const ruleRows = s.rules.filter((r) => r.scope === s.ruleScope);
+    const selRule = s.rules.find((r) => r.id === s.ruleSel);
+    const ed = s.edit && s.edit.id === s.ruleSel ? s.edit : (selRule ? { id: selRule.id, name: selRule.name, files: selRule.files, body: selRule.body } : null);
+    const mkPick = (key, cur, opts, onPick, locked) => { const q = (s.scopeQ || '').trim().toLowerCase(); const shown = opts.filter((o) => !q || o.label.toLowerCase().indexOf(q) >= 0); const curO = opts.find((o) => o.v === cur);
+      return { label: curO ? curO.label : '', locked: Boolean(locked), open: s.scopeMenu === key, openAttr: s.scopeMenu === key ? 'true' : 'false', q: s.scopeQ || '', none: !shown.length,
+        toggle: () => self.mut((x) => ({ scopeMenu: x.scopeMenu === key ? null : key, scopeQ: '' })), onQ: (e) => { const v = e.target.value; self.mut(() => ({ scopeQ: v })); },
+        opts: shown.map((o) => ({ label: o.label, hint: o.hint || '', bg: o.v === cur ? '#f0f2f4' : 'transparent', fw: o.v === cur ? 600 : 400, selAttr: o.v === cur ? 'true' : 'false', pick: () => onPick(o.v) })) }; };
+    const fileFor = (sc, f) => { const base = f.split('/').pop(); const pr = projects.find((p) => p.id === sc); return 'rules/' + (pr ? pr.short + '/' : '') + base; };
+    const setEd = (field) => (e) => { const val = e.target.value; self.mut((x) => { const base = (x.edit && x.edit.id === x.ruleSel) ? x.edit : (() => { const r = x.rules.find((y) => y.id === x.ruleSel); return { id: r.id, name: r.name, files: r.files, body: r.body }; })(); return { edit: Object.assign({}, base, { [field]: val }) }; }); };
+    const rules = {
+      openDir: () => self.mut(() => ({ toast: toast('已在资源管理器打开 …\\ReviewX\\rules') })),
+      newRule: () => self.mut((x) => { const id = 'r' + (x.rules.length + 20); const r = { id, name: '未命名规则', files: '', scope: x.ruleScope, builtin: false, on: false, hits: 0, sent: 0, dis: 0, file: fileFor(x.ruleScope, id + '.md'), body: '## 检查要点\n- \n\n## 正例\n\n## 反例\n' }; return { rules: x.rules.concat([r]), ruleSel: id, edit: null }; }),
+      filterPick: mkPick('filter', s.ruleScope, scopes.map((sc) => ({ v: sc[0], label: sc[0] === 'global' ? '全局' : sc[1], hint: s.rules.filter((r) => r.scope === sc[0]).length + ' 条规则' })), (v) => self.mut(() => ({ ruleScope: v, scopeMenu: null, scopeQ: '' }))),
+      scopes: scopes.map((sc) => { const sel = s.ruleScope === sc[0]; const n = s.rules.filter((r) => r.scope === sc[0]).length; return { v: sc[0], label: (sc[0] === 'global' ? '全局' : sc[1]) + ' · ' + n + ' 条规则', sel: sel ? 'true' : 'false', bg: sel ? '#ffffff' : 'transparent', bd: sel ? '#e1e3e6' : 'transparent', fg: sel ? '#121212' : '#62686c', go: () => self.mut(() => ({ ruleScope: sc[0] })) }; }),
+      hasDraft: !s.draft.done && !s.rules.some((r) => r.fromBanner), draftFrom: s.draft.from,
+      openDraft: () => self.mut((x) => { const id = 'r' + (x.rules.length + 30); const r = { id, name: x.draft.title, files: 'src/config/**', scope: 'global', builtin: false, on: false, draft: true, fromBanner: true, hits: 0, sent: 0, dis: 0, file: 'rules/drafts/' + id + '.md', body: '## 检查要点\n- 解析器必须先处理空输入与仅注释输入\n- 异常需转为可处理的结果，不能中断后续任务\n\n## 反例\nconst root = yaml.parse(source);\nreturn root.entries[0];' }; return { rules: x.rules.concat([r]), ruleSel: id, ruleScope: 'global', edit: null }; }),
+      rows: ruleRows.map((r) => { const tot = r.sent + r.dis; const rate = tot ? Math.round(r.sent * 100 / tot) : null;
+        return { name: r.name, builtin: Boolean(r.builtin), draft: Boolean(r.draft), files: r.files || '全部', stats: r.on || r.hits ? r.hits + ' / ' + r.sent + ' / ' + r.dis : '—', rate: rate === null ? '—' : rate + '%', rateW: (rate || 0) + '%', rateC: rate === null ? '#e1e3e6' : (rate < 30 ? '#9a4a08' : (rate < 60 ? '#8c9195' : '#18733f')), rateFg: rate !== null && rate < 30 ? '#9a4a08' : '#121212',
+          onAttr: r.on ? 'true' : 'false', switchLabel: '启用 ' + r.name, swBg: r.on ? '#121212' : '#c6c9cc', knob: r.on ? '17px' : '3px', bg: r.id === s.ruleSel ? '#f5f9ff' : '#ffffff', fg: r.on ? '#121212' : '#62686c',
+          toggle: () => self.mut((x) => ({ rules: x.rules.map((y) => y.id === r.id ? Object.assign({}, y, { on: !y.on, draft: false }) : y), toast: toast((r.on ? '已停用' : '已启用') + '规则「' + r.name + '」') })),
+          select: () => self.mut(() => ({ ruleSel: r.id, edit: null })) }; }),
+      noRows: !ruleRows.length,
+      ed: { has: Boolean(selRule && ed) }
+    };
+    if (selRule && ed) {
+      const isDraft = Boolean(selRule.draft);
+      Object.assign(rules.ed, { title: ed.name || '未命名规则', name: ed.name, files: ed.files, body: ed.body, path: selRule.file,
+        pill: isDraft ? '草稿 · 未启用' : (selRule.on ? '已启用' : '已停用'),
+        scopeLocked: Boolean(selRule.builtin), scopeVal: selRule.scope, scopeNote: selRule.builtin ? '内置规则固定为全局' : '',
+        scopeOpts: scopes.map((sc) => { const on = selRule.scope === sc[0]; return { v: sc[0], label: sc[0] === 'global' ? '全局 · 所有项目' : sc[1], on: on ? 'true' : 'false', bg: on ? '#121212' : '#ffffff', fg: on ? '#ffffff' : '#3b3f42', bd: on ? '#121212' : '#c6c9cc',
+          pick: () => self.mut((x) => ({ scopeMenu: null, scopeQ: '', rules: x.rules.map((y) => y.id === selRule.id ? Object.assign({}, y, { scope: sc[0], file: fileFor(sc[0], y.file) }) : y), ruleScope: sc[0], toast: toast('「' + selRule.name + '」已关联到' + (sc[0] === 'global' ? '全局' : ' ' + sc[1])), logs: addLog(x, null, 'INFO', 'rule.scope id=' + selRule.id + ' scope=' + sc[0]) })) }; }), pillBg: isDraft ? '#eaf3ff' : (selRule.on ? '#e3f9ec' : '#eef0f2'), pillFg: isDraft ? '#0059b8' : (selRule.on ? '#18733f' : '#62686c'),
+        onName: setEd('name'), onFiles: setEd('files'), onBody: setEd('body'), noDelete: Boolean(selRule.builtin), saveLabel: isDraft ? '确认并启用' : '保存',
+        copy: () => self.mut((x) => { const id = 'r' + (x.rules.length + 40); const r = Object.assign({}, selRule, { id, name: selRule.name + ' 副本', builtin: false, draft: false, on: false, hits: 0, sent: 0, dis: 0, file: 'rules/' + id + '.md' }); return { rules: x.rules.concat([r]), ruleSel: id, edit: null, toast: toast('已复制为「' + r.name + '」') }; }),
+        del: () => self.mut((x) => ({ rules: x.rules.filter((y) => y.id !== selRule.id), ruleSel: (x.rules.find((y) => y.id !== selRule.id && y.scope === x.ruleScope) || {}).id || null, edit: null, toast: toast('已删除规则「' + selRule.name + '」') })),
+        cancel: () => self.mut(() => ({ edit: null })),
+        save: () => self.mut((x) => { const e = (x.edit && x.edit.id === selRule.id) ? x.edit : ed; return { rules: x.rules.map((y) => y.id === selRule.id ? Object.assign({}, y, { name: e.name, files: e.files, body: e.body }, isDraft ? { draft: false, on: true } : {}) : y), edit: null, draft: isDraft && selRule.fromBanner ? Object.assign({}, x.draft, { done: true }) : x.draft, toast: toast(isDraft ? '规则已启用' : '已保存到 ' + selRule.file), logs: addLog(x, null, 'INFO', 'rule.save id=' + selRule.id) }; }) });
+      rules.ed.scopePick = mkPick('editor', selRule.scope, rules.ed.scopeOpts.map((o) => ({ v: o.v, label: o.label })), (v) => { const o = rules.ed.scopeOpts.find((x) => x.v === v); if (o) o.pick(); }, rules.ed.scopeLocked);
+    }
+
+    const lvl = { INFO: ['#eef0f2', '#59636e', '#ffffff', 'transparent'], WARN: ['#fff3e8', '#9a4a08', '#fffcf8', '#e0a96b'], ERROR: ['#fbdde0', '#ac3039', '#fff0f1', '#ac3039'] };
+    const logs = { path: 'C:\\Users\\dev\\AppData\\Local\\ReviewX\\logs\\2026-10-15.log', copy: () => self.mut(() => ({ toast: toast('已复制日志路径') })),
+      entries: s.logs.map((l) => ({ t: l.t, lvl: l.lvl, msg: l.msg, lvBg: lvl[l.lvl][0], lvFg: lvl[l.lvl][1], bg: lvl[l.lvl][2], edge: lvl[l.lvl][3] })) };
+
+    const dpr = s.dialog ? projOf(s, s.dialog) : null;
+    const dlgTasks = dpr ? s.queue.filter((k) => s.mrs[k] && s.mrs[k].pid === dpr.id).map((k) => ({ iid: k, title: s.mrs[k].title, effect: s.mrs[k].st === 'queued' ? '排队中 → 移出队列' : '检视中 → 停止' })) : [];
+
+    return {
+      isMr: s.view === 'mr', isRules: s.view === 'rules', isLogs: s.view === 'logs',
+      nav, projectCount: projects.length, sideGroups: folders,
+      pid: s.pid, onPid: (e) => { const v = e.target.value; self.mut(() => ({ pid: v, pidMsg: null })); }, onPidKey: (e) => { if (e.key === 'Enter') self.addProject(); }, addProject: () => self.addProject(),
+      pidBusy: s.pidBusy, pidIdle: !s.pidBusy, pidBtn: s.pidBusy ? '校验中' : '添加', pidDisabled: s.pidBusy, pidInvalid: pidMsg && pidMsg.tone === 'bad' ? 'true' : 'false', pidBorder: pidMsg && pidMsg.tone === 'bad' ? '#ac3039' : '#c6c9cc',
+      hasPidMsg: Boolean(pidMsg), pidMsg: pidMsg ? pidMsg.text : '', pidMsgColor: pidMsg ? toneColor[pidMsg.tone] : '#62686c',
+      hdr, fetchAll: () => self.fetchAll(),
+      nextPending: () => { if (nextIid) self.open(nextIid); else self.mut(() => ({ toast: toast('没有待处理的 MR') })); },
+      queueOpen: s.queueOpen, queueAttr: s.queueOpen ? 'true' : 'false', queueChevron: s.queueOpen ? 'rotate(180deg)' : 'none', queueBusy: runningN > 0, queueLabel: (runningN + queuedTotal) ? '运行中 ' + runningN + ' · 排队 ' + queuedTotal : '队列空闲', toggleQueue: () => self.mut((x) => ({ queueOpen: !x.queueOpen, menu: null })),
+      queueItems: qItems, queueEmpty: !qItems.length, queueSummary: '执行中 ' + runningN + ' · 排队 ' + queuedTotal + ' · 待处理 ' + pendingTotal,
+      noProjects: !projects.length, groups, rules, logs,
+      drawerOpen: Boolean(dm), scrimCls: s.drawerClosing ? 'is-closing' : '', d,
+      dialogOpen: Boolean(dpr), dlg: dpr ? { name: dpr.short, hasTasks: dlgTasks.length > 0, noTasks: !dlgTasks.length, tasks: dlgTasks, confirmLabel: dlgTasks.length ? '停止任务并移除' : '移除', cancel: () => self.mut(() => ({ dialog: null })), confirm: () => self.confirmRemove() } : {},
+      toastShow: Boolean(s.toast), toastText: s.toast ? s.toast.text : ''
+    };
+  }
+
+  drawerVM(s, m) {
+    const self = this; const iid = m.iid;
+    const pr = projOf(s, m.pid) || s.removed.find((p) => p.id === m.pid) || { path: '' };
+    const d = { title: m.title, path: pr.path, iid, branch: m.branch, closed: m.closed, close: () => { if (s.drawerClosing) return; const reduce = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; self.mut(() => ({ drawerClosing: true })); setTimeout(() => self.mut(() => ({ drawer: null, confirmBulk: null, drawerClosing: false })), reduce ? 0 : 180); }, openCodeHub: () => self.mut(() => ({ toast: toast('已在浏览器打开 CodeHub MR !' + iid) })),
+      start: () => self.start(iid), rerun: () => self.start(iid), rerunDisabled: busy(m) || m.closed, stop: () => self.stop(iid), cancel: () => self.cancel(iid), goLogs: () => self.go('logs') };
+    const tabKey = m.attempts.some((a) => a.key === s.tab) ? s.tab : 'latest';
+    d.hasTabs = m.attempts.length > 1;
+    d.tabs = m.attempts.map((a, i) => { const sel = a.key === tabKey; return { label: (i === 0 ? a.label + ' · ' + a.time.slice(6) : a.label + ' · ' + a.status), sel: sel ? 'true' : 'false', bg: sel ? '#ffffff' : 'transparent', bd: sel ? '#e1e3e6' : 'transparent', fw: sel ? 600 : 400, fg: sel ? '#121212' : '#62686c', go: () => self.mut(() => ({ tab: a.key })) }; });
+    const tab = m.attempts.find((a) => a.key === tabKey);
+    const viewingOld = tab && tab.key !== 'latest';
+    const flags = ['vUnreviewed', 'vQueued', 'vRunning', 'vFailed', 'vStopped', 'vConclusion', 'vArchived', 'vArchiveFail', 'vReport', 'hasActivity'];
+    flags.forEach((f) => { d[f] = false; });
+    if (viewingOld) {
+      if (tab.kind === 'archived') { d.vArchived = true; const SEVA = { fatal: ['Fatal', '#c62f3a', '#ffffff', '#c62f3a'], major: ['Major', '#fdebdc', '#a14a0b', '#f2c49d'], minor: ['Minor', '#fff6d6', '#7a5b00', '#ecd68c'], suggestion: ['Suggestion', '#eaf1f8', '#3d5a80', '#c9d8ea'] }; d.archFinds = (m.archives[tab.key] || []).map((r) => { const f = ARCH_LOOKUP[r[1]] || F(0, r[0], '', r[1], '', '', '', '', '', '', '', '', []); const sv = SEVA[r[0]] || SEVA.minor; const st = FST[r[2]] || FST.dismissed; return { title: r[1], sevLabel: sv[0], sevBg: sv[1], sevFg: sv[2], sevBd: sv[3], stLabel: st[0], stFg: '#8c9195', textColor: '#62686c', summary: f.summary, loc: f.loc || '未定位到具体文件', ruleText: f.rule ? '规则 · ' + f.rule : '', hasCode: Boolean(f.code), code: f.code, codeTok: hl(f.code), fixTok: hl(f.fix), consequence: f.consequence, scope: f.scope, trigger: f.trigger, solution: f.solution, hasFix: Boolean(f.fix), fix: f.fix, prevention: f.prevention || [] }; }); }
+      else d.vArchiveFail = true;
+      return d;
+    }
+    const hasReport = Boolean(m.result);
+    if (hasReport && busy(m)) {
+      d.hasActivity = true;
+      if (m.st === 'queued') { const q = queuePos(s, iid); Object.assign(d, { actPill: '新检视排队中', actBg: '#eef0f2', actFg: '#62686c', actSpin: false, actText: '队列第 ' + q.pos + '/' + q.n + ' 位', actHasBtn: true, actBtn: '取消排队', actClick: () => self.cancel(iid), actDisabled: false }); }
+      else Object.assign(d, { actPill: m.st === 'stopping' ? '停止中' : '新检视进行中', actBg: '#eef0f2', actFg: '#3b3f42', actSpin: true, actText: m.st === 'stopping' ? (m.stopNote || '正在停止') : '步骤 ' + m.step + '/7 ' + STEPS[m.step - 1], actHasBtn: true, actBtn: '停止', actClick: () => self.stop(iid), actDisabled: m.st === 'stopping' });
+    }
+    if (!hasReport) {
+      if (m.st === 'unreviewed') d.vUnreviewed = true;
+      else if (m.st === 'queued') { d.vQueued = true; const q = queuePos(s, iid); d.queuePos = q.pos + '/' + q.n; }
+      else if (m.st === 'reviewing' || m.st === 'stopping') {
+        d.vRunning = true;
+        Object.assign(d, { runPill: m.st === 'stopping' ? '停止中' : '检视中', runBg: '#eef0f2', runFg: m.st === 'stopping' ? '#62686c' : '#3b3f42', runText: m.st === 'stopping' ? (m.stopNote || '正在停止') : '已运行 ' + durOf(m.run || 0), stopDisabled: m.st === 'stopping' });
+        d.runSteps = STEPS.map((name, i) => { const n = i + 1; const done = n < m.step; const cur = n === m.step; let detail = '';
+          if (cur && n === 2 && !m.cached) detail = '';
+          if (cur && n === 5) detail = '　文件 ' + m.obj + '/' + m.objN;
+          if (cur && n === 6) detail = '　' + mmss(m.elapsed) + ' / 30:00';
+          if (cur && n === 7) detail = '　意见保存中';
+          return { n, name, detail, done, cur, time: done ? (m.times[i] || '') : '', fw: cur ? 600 : 400, fg: done || cur ? '#121212' : '#8c9195', dotBg: done ? '#18733f' : '#ffffff', dotBd: done ? '#18733f' : (cur ? '#3b3f42' : '#c6c9cc'), dotFg: done ? '#ffffff' : '#3b3f42' }; });
+      }
+      else if (m.st === 'failed') Object.assign(d, { vFailed: true, failTitle: '步骤 6/7 OpenCode 检视超时', failWhy: '运行超过 30 分钟上限', failProgress: '已完成步骤 1–5；步骤 6 中断；步骤 7 未执行；未生成意见。', failQueue: '已暂停', failNext: '可以拆分 MR、调大「OpenCode 超时」后重启工具，或直接重新检视。', failCode: 'OPENCODE_TIMEOUT · limit=30:00 · elapsed=30:00' });
+      else if (m.st === 'stopped') Object.assign(d, { vStopped: true, stopWhy: m.stopWhy || '已停止' });
+      return d;
+    }
+    if (m.result === 'pass' || m.result === 'empty') {
+      const pass = m.result === 'pass';
+      Object.assign(d, { vConclusion: true, conTitle: pass ? '未发现问题' : '无可检视的变更', conText: pass ? '全部变更已检视，没有意见。' : '排除后没有可检视的文件。', conBd: pass ? '#c7e5d2' : '#c6c9cc', conIconBg: pass ? '#e3f9ec' : '#eef0f2', conIconFg: pass ? '#18733f' : '#62686c', conIcon: pass ? IC.check : IC.minus, commit: m.commit, dur: m.dur });
+      return d;
+    }
+    // issues report
+    const list = s.finds[iid] || []; const fs = s.fs[iid] || {};
+    const sending = s.sending; const stale = m.stale && !m.closed;
+    const stateOf = (f) => (sending && sending.iid === iid && sending.n === f.n) ? 'sending' : fs[f.n];
+    const pl = list.filter((f) => stateOf(f) === 'pending');
+    const vc = list.filter((f) => fs[f.n] === 'unknown' || fs[f.n] === 'failed').length;
+    const SEVC = { fatal: ['Fatal', '#c62f3a', '#ffffff', '#c62f3a'], major: ['Major', '#fdebdc', '#a14a0b', '#f2c49d'], minor: ['Minor', '#fff6d6', '#7a5b00', '#ecd68c'], suggestion: ['Suggestion', '#eaf1f8', '#3d5a80', '#c9d8ea'] };
+    const NOTEC = {
+      unknown: ['14:27', '#fdf6ec', '#7a4a10'],
+      failed: ['14:30 网络不可用', '#fff5f5', '#ac3039']
+    };
+    const card = (f) => {
+      const st = stateOf(f); const sv = SEVC[f.sev]; const lab = FST[st]; const note = NOTEC[st];
+      const done = ACT.indexOf(st) < 0;
+      return Object.assign({}, f, { id: 'f-' + iid + '-' + f.n,
+        sevLabel: sv[0], sevBg: sv[1], sevFg: sv[2], sevBd: sv[3], stLabel: lab[0], stBg: lab[1], stFg: done ? '#8c9195' : lab[2],
+        ruleText: f.rule ? '规则 · ' + f.rule : '',
+        isPending: st === 'pending', isDismissed: st === 'dismissed', isUnknown: st === 'unknown', isFailed: st === 'failed', isSending: st === 'sending', dotIcon: st !== 'sending',
+        showNote: Boolean(note), note: note ? note[0] : '', noteBg: note ? note[1] : '', noteFg: note ? note[2] : '',
+        canDraft: st === 'published' || st === 'manual',
+        hasCode: Boolean(f.code), hasFix: Boolean(f.fix), codeTok: hl(f.code), fixTok: hl(f.fix), full: true, showSt: st !== 'pending', headBd: done ? '#ffffff' : '#e1e3e6',
+        sendCls: 'btn-p',
+        textColor: done ? '#62686c' : '#121212', lock: Boolean(sending),
+        dismiss: () => self.setF(iid, f.n, 'dismissed', (x) => ({ logs: addLog(x, null, 'INFO', 'finding.decide !' + iid + ' #' + f.n + ' decision=dismissed') })),
+        undo: () => self.setF(iid, f.n, 'pending', (x) => ({ logs: addLog(x, null, 'INFO', 'finding.undo !' + iid + ' #' + f.n) })),
+        markSent: () => self.setF(iid, f.n, 'manual', (x) => ({ toast: toast('已标记为已发布'), logs: addLog(x, null, 'INFO', 'finding.mark !' + iid + ' #' + f.n + ' published by=user') })),
+        markUnsent: () => self.setF(iid, f.n, 'failed', (x) => ({ toast: toast('已标记为未发布'), logs: addLog(x, null, 'INFO', 'finding.mark !' + iid + ' #' + f.n + ' not_published by=user') })),
+        send: () => self.send(iid, f.n), draft: () => self.draftFrom(iid, f.n) });
+    };
+    Object.assign(d, { vReport: true, stale, notStale: !stale, total: list.length, commit: m.commit, reportTime: m.reportTime.slice(6) || m.reportTime, dur: m.dur,
+      findings: (() => { const gk = (f) => { const st = (s.orderFs && s.orderFs[f.n]) || stateOf(f); return (st === 'pending' || st === 'sending') ? 0 : (st === 'unknown' || st === 'failed') ? 1 : 2; }; const srt = list.map((f, i) => [f, i]).sort((a, b) => gk(a[0]) - gk(b[0]) || a[1] - b[1]).map((x) => x[0]); const n = [0, 0, 0]; srt.forEach((f) => { n[gk(f)] += 1; }); const names = ['待处理', '需核对', '已处理']; return srt.map((f, i) => { const g = gk(f); return Object.assign(card(f), { groupStart: g !== 0 && (i === 0 || gk(srt[i - 1]) !== g), groupLabel: names[g] + ' · ' + n[g], groupTop: i === 0 ? '28px' : '52px', headBg: g === 2 ? '#ffffff' : (g === 1 ? '#fdf6ec' : '#f5f7fa'), gid: 'fg-' + iid + '-' + g, gDot: ['#0059b8', '#b7791f', '#c6c9cc'][g], gName: names[g], gN: String(n[g]) }); }); })(), pendingCount: pl.length, verifyCount: vc, hasPending: pl.length > 0, confirmBulk: s.confirmBulk === iid && pl.length > 0,
+      goNext: () => { const t = pl[0]; if (!t) return; const el = document.getElementById('f-' + iid + '-' + t.n); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+      askBulk: () => self.mut(() => ({ confirmBulk: iid })),
+      goPend: () => { const el = document.getElementById('fg-' + iid + '-0'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+      goVerify: () => { const el = document.getElementById('fg-' + iid + '-1'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+      cancelBulk: () => self.mut(() => ({ confirmBulk: null })),
+      doBulk: () => self.mut((x) => { const o = Object.assign({}, x.fs[iid]); Object.keys(o).forEach((k) => { if (o[k] === 'pending') o[k] = 'dismissed'; }); const fsN = Object.assign({}, x.fs, { [iid]: o }); return { fs: fsN, confirmBulk: null, toast: toast('其余意见已标为不发送'), logs: addLog(x, null, 'INFO', 'finding.bulk_dismiss !' + iid) }; }),
+      excludedList: m.excluded.map((e, i) => { const q = e.split(' · '); return { path: q[0], why: q[1] || '', bt: i ? '1px solid #eceef0' : '0' }; }), excludedCount: m.excluded.length });
+    return d;
+  }
+}
+</script>
+</body>
+</html>
