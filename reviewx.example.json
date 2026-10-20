@@ -1,0 +1,18 @@
+{
+  "port": 17080,
+  "concurrency": 6,
+  "context_limit": 262144,
+  "output_language": "中文",
+  "focus_areas": ["逻辑与状态", "边界与错误处理", "接口与一致性", "测试与体验"],
+  "shard_ratio": 0.2,
+  "search_parallel": 8,
+  "verify_parallel": 4,
+  "search_wrap_seconds": 300,
+  "verify_wrap_seconds": 600,
+  "opencode_timeout": 720,
+  "reading_ratio": 0.25,
+  "safety_ratio": 0.75,
+  "codehub_command": ["codehub"],
+  "opencode_command": ["opencode"],
+  "git_command": ["git"]
+}

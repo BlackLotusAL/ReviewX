@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reviewx"
+version = "0.1.0"
+description = "本机 CodeHub AI 代码检视工作台"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+reviewx = "reviewx.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["reviewx*"]
+
+[tool.setuptools.package-data]
+reviewx = ["web/*", "web/assets/*"]

@@ -34,3 +34,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# ReviewX local runtime / generated assets
+__pycache__/
+*.py[cod]
+*.egg-info/
+/.venv/
+/reviewx/web/
+/.reviewx*/
+/test-results/
+/playwright-report/
+/artifacts/
