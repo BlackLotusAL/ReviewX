@@ -280,7 +280,9 @@ class Service:
             except OSError:
                 self.log.log("WARN", "检视副本清理失败，重启后会再次清理", owner=aid)
             if attempt["status"] == "stopping":
-                attempt.update(status="stopped", message="主动停止不计为故障，没有生成可发布的意见", ended_at=now())
+                # Shutdown interrupts are not user stops (R13).
+                message = "ReviewX 关闭时中断" if self.closed else "主动停止不计为故障，没有生成可发布的意见"
+                attempt.update(status="stopped", message=message, ended_at=now())
                 self.store.attempt(attempt)
             self.cancellations.pop(aid, None)
 
@@ -297,22 +299,30 @@ class Service:
         return report, finding, self.store.states(rid).get(fid, {"state": "pending"})["state"]
 
     def decide(self, rid, fid, action):
-        # Fail immediately on overlapping user actions, never enqueue sends silently.
+        allowed = {"dismiss": ("pending",), "undo": ("dismissed",), "confirm-published": ("unknown",),
+                   "confirm-unpublished": ("unknown",), "send": ("pending", "failed")}
+        if action not in allowed:
+            raise AppError("当前意见状态不允许此操作", "CONFLICT", 409)
+        if action != "send":
+            # Local-only decisions never wait on a CLI send (R03 only serializes sends).
+            # self.lock is also held while a new report is saved, so archiving cannot race this.
+            with self.lock:
+                _, _, state = self.finding(rid, fid)
+                if state not in allowed[action]:
+                    raise AppError("当前意见状态不允许此操作", "CONFLICT", 409)
+                new_state = {"dismiss": "dismissed", "undo": "pending", "confirm-published": "manual", "confirm-unpublished": "failed"}[action]
+                self.store.event(rid, fid, new_state, manual=action.startswith("confirm"),
+                                 decision="dismiss" if action == "dismiss" else "send" if action.startswith("confirm") else None)
+            self.log.log("INFO", "意见处理记录已追加", report_id=rid, finding_id=fid, action=action)
+            return
+        # Fail immediately on overlapping sends, never enqueue sends silently.
         if not self.publish_lock.acquire(blocking=False):
             raise AppError("已有意见发送中，请等待结果", "BUSY", 409)
         try:
             with self.lock:
                 report, finding, state = self.finding(rid, fid)
-                allowed = {"dismiss": ("pending",), "undo": ("dismissed",), "confirm-published": ("unknown",),
-                           "confirm-unpublished": ("unknown",), "send": ("pending", "failed")}
-                if action not in allowed or state not in allowed[action]:
+                if state not in allowed[action]:
                     raise AppError("当前意见状态不允许此操作", "CONFLICT", 409)
-                if action != "send":
-                    new_state = {"dismiss": "dismissed", "undo": "pending", "confirm-published": "manual", "confirm-unpublished": "failed"}[action]
-                    self.store.event(rid, fid, new_state, manual=action.startswith("confirm"),
-                                     decision="dismiss" if action == "dismiss" else "send" if action.startswith("confirm") else None)
-                    self.log.log("INFO", "意见处理记录已追加", report_id=rid, finding_id=fid, action=action)
-                    return
                 self.store.event(rid, fid, "sending", decision="send")
                 self.sending = {"report_id": rid, "finding_id": fid, "project_id": report["project_id"]}
             try:
@@ -331,7 +341,7 @@ class Service:
     def dismiss_remaining(self, rid, confirmed):
         if confirmed is not True:
             raise AppError("请确认其余全部不发送")
-        with self.publish_lock, self.lock, self.store.lock, self.store.db:
+        with self.lock, self.store.lock, self.store.db:
             report = self.store.report(rid)
             states = self.store.states(rid)
             for finding in report["findings"]:

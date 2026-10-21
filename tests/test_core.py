@@ -335,6 +335,16 @@ class ValidationCase(unittest.TestCase):
         self.assertEqual(len(parts), 2)
         self.assertEqual({k: v for p in parts for k, v in p.items()}, diffs)
 
+    def test_shards_keep_directories_together(self):
+        diffs = {"src/db/a": "a" * 40, "src/db/b": "b" * 40, "web/x": "x" * 40, "web/y": "y" * 40}
+        parts = split_diffs(diffs, 200, 100)
+        self.assertEqual(sorted(sorted(p) for p in parts), [["src/db/a", "src/db/b"], ["web/x", "web/y"]])
+
+    def test_candidates_do_not_chain_merge(self):
+        c = dict(severity="minor", title="疑点", suspicion="原因", evidence="a.ts:1", location={"path": "a.ts", "start_line": 10})
+        merged = merge_candidates([{**c, "title": str(n), "location": {"path": "a.ts", "start_line": n}} for n in (10, 13, 16, 19)])
+        self.assertEqual([m["location"]["start_line"] for m in merged], [10, 16])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,11 +14,17 @@ class Git:
         (root / "cache").mkdir(exist_ok=True)
         (root / "tmp").mkdir(exist_ok=True)
 
-    def run(self, args, owner, cancel, cwd=None, binary=False):
+    def run(self, args, owner, cancel, cwd=None, binary=False, timeout=180):
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
-        code, out, err = self.processes.run([*self.config["git_command"], "-c", "core.longpaths=true",
-                                           "-c", "core.hooksPath=NUL" if os.name == "nt" else "core.hooksPath=/dev/null",
-                                           *args], owner, cwd, env, cancel, timeout=180)
+        try:
+            code, out, err = self.processes.run([*self.config["git_command"], "-c", "core.longpaths=true",
+                                               "-c", "core.hooksPath=NUL" if os.name == "nt" else "core.hooksPath=/dev/null",
+                                               *args], owner, cwd, env, cancel, timeout=timeout)
+        except AppError as exc:
+            # A slow large repository is not an environment failure: fail this review only (R17).
+            if exc.code == "TIMEOUT":
+                raise AppError("Git 操作超时，仓库较大或网络较慢，请稍后重新检视", "GIT_TIMEOUT") from exc
+            raise
         if code:
             error = err.decode("utf-8", "replace").lower()
             if any(x in error for x in ("authentication", "permission denied", "could not read username", "host key verification")):
@@ -65,7 +71,7 @@ class Git:
         (cache / "info/attributes").write_text("* -export-ignore -export-subst\n", encoding="utf-8")
         ref = "refs/reviewx/" + side
         self.run(["fetch", "--no-tags", "--filter=blob:none", "--force", "--", url,
-                  f"+refs/heads/{branch}:{ref}"], owner, cancel, cache)
+                  f"+refs/heads/{branch}:{ref}"], owner, cancel, cache, timeout=600)
         return self.run(["rev-parse", "--verify", ref + "^{commit}"], owner, cancel, cache)
 
     def snapshot(self, project, source, target, owner, cancel, progress):
@@ -92,7 +98,7 @@ class Git:
         copy = inside(self.root / "tmp", owner)
         copy.mkdir()
         # Export tracked files without .git, symlinks, executable project config, or credentials.
-        archive = self.run(["archive", "--format=tar", source], owner, cancel, cache, binary=True)
+        archive = self.run(["archive", "--format=tar", source], owner, cancel, cache, binary=True, timeout=600)
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
             for member in tar:
                 if not member.isfile():

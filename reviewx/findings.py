@@ -67,16 +67,16 @@ def merge_candidates(candidates):
     for candidate in sorted(candidates, key=lambda c: (c["location"]["path"], c["location"].get("start_line", 0))):
         previous = result[-1] if result else None
         same = previous and previous["location"]["path"] == candidate["location"]["path"]
-        nearby = same and candidate["location"].get("start_line") and previous["location"].get("start_line") and abs(candidate["location"]["start_line"] - previous["_last_line"]) <= 3
+        # Compare with the group's first line so merging cannot chain beyond 3 lines (R10).
+        nearby = same and candidate["location"].get("start_line") and previous["location"].get("start_line") and abs(candidate["location"]["start_line"] - previous["location"]["start_line"]) <= 3
         duplicate = same and previous["title"] == candidate["title"] and previous["location"] == candidate["location"]
         if nearby or duplicate:
             previous["suspicion"] += "\n" + candidate["suspicion"]
             previous["evidence"] += "\n" + candidate["evidence"]
             previous["severity"] = min((previous["severity"], candidate["severity"]), key=SEVERITIES.index)
-            previous["_last_line"] = candidate["location"].get("start_line", 0)
         else:
-            result.append({**candidate, "id": uid(), "_last_line": candidate["location"].get("start_line", 0)})
-    return [{k: v for k, v in c.items() if k != "_last_line"} for c in result]
+            result.append({**candidate, "id": uid()})
+    return result
 
 
 def finding_order(f):

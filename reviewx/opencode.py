@@ -182,10 +182,20 @@ class MCPHandler(BaseHTTPRequestHandler):
 def split_diffs(diffs, prompt_size, threshold):
     count = max(1, math.ceil(prompt_size / threshold))
     shards = [{} for _ in range(min(count, max(1, len(diffs))))]
-    # Keep directory neighbours together when this does not unbalance the split.
-    for path, diff in sorted(diffs.items(), key=lambda x: (str(Path(x[0]).parent), -len(x[1]))):
+    target = sum(len(d) for d in diffs.values()) / len(shards)
+    # Assign whole directories as units; only a directory larger than one shard is split by file.
+    directories = {}
+    for path, diff in diffs.items():
+        directories.setdefault(str(Path(path).parent), []).append((path, diff))
+    units = []
+    for files in directories.values():
+        if sum(len(d) for _, d in files) <= target:
+            units.append(files)
+        else:
+            units.extend([item] for item in files)
+    for unit in sorted(units, key=lambda u: -sum(len(d) for _, d in u)):
         shard = min(shards, key=lambda s: sum(len(v) for v in s.values()))
-        shard[path] = diff
+        shard.update(unit)
     return shards
 
 
@@ -320,6 +330,8 @@ class OpenCode:
                     if cancel.wait(1.5):
                         raise AppError("主动停止", "CANCELLED")
                     continue
+                if not session_id and not wrapping:
+                    raise AppError("OpenCode 报错：进程在会话开始前退出，重试 2 次仍失败", "OPENCODE_ERROR")
                 if session_id and not wrapping:
                     wrapping = submission.wrapping = True
                     allowed = {"reviewx_" + x["name"] for x in submission.tools()}
