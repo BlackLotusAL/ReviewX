@@ -1,13 +1,13 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools==75.8.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "reviewx"
 version = "0.1.0"
 description = "本机 CodeHub AI 代码检视工作台"
-requires-python = ">=3.11"
-dependencies = []
+requires-python = "==3.9.11"
+dependencies = ["tomli==2.2.1"]
 
 [project.scripts]
 reviewx = "reviewx.__main__:main"

@@ -2,7 +2,7 @@ import json
 import os
 import re
 import threading
-import tomllib
+import tomli
 from datetime import datetime, timedelta, timezone
 from .security import AppError, inside, matches
 from .store import uid
@@ -49,7 +49,7 @@ class Rules:
         if not text.startswith("+++\n"):
             raise ValueError("缺少 +++ TOML 元信息")
         head, body = text[4:].split("\n+++\n", 1)
-        meta = tomllib.loads(head)
+        meta = tomli.loads(head)
         sections = dict(re.findall(r"## (检查要点|正例|反例)\n([\s\S]*?)(?=\n## (?:检查要点|正例|反例)\n|$)", body))
         data = self.validate({**meta, "points": sections.get("检查要点", "").strip(),
                               "good": sections.get("正例", "").strip(), "bad": sections.get("反例", "").strip()})
