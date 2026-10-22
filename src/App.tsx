@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { ArrowRight, Check, ChevronDown, CircleHelp, Clock3, FileText, Folder, GitPullRequest, Layers3, ListChecks, MoreHorizontal, Plus, RefreshCw, Settings2, ShieldCheck, Trash2, X } from 'lucide-react'
-import { api, ApiError, busy, time } from './api'
-import type { MR, Project, Snapshot, Rule } from './types'
+import { ArrowRight, Check, ChevronDown, FileText, Folder, GitPullRequest, Layers3, MoreHorizontal, Plus, RefreshCw, Settings2, Trash2, X } from 'lucide-react'
+import { api, busy, duration, time } from './api'
+import type { Attempt, MR, Project, Snapshot, Rule } from './types'
 import { Button, Empty, External, Modal, Pill, Progress } from './components'
 import { ReportDrawer } from './ReportDrawer'
 import { RulesView } from './RulesView'
 import { LogsView } from './LogsView'
 
 type Confirmation = { title: string; body: ReactNode; label: string; danger?: boolean; action: () => Promise<unknown> }
-export default function App() {
+export type AppView = 'queue' | 'rules' | 'logs'
+type Props = { initialView?: AppView; initialSelection?: { pid: string; iid: string } }
+export default function App({ initialView = 'queue', initialSelection }: Props) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [connection, setConnection] = useState('')
-  const [view, setView] = useState('queue')
+  const [view, setView] = useState<string>(initialView)
   const [pid, setPid] = useState(''), [pidMessage, setPidMessage] = useState('')
   const [adding, setAdding] = useState(false), [menu, setMenu] = useState<string | null>(null)
-  const [selected, setSelected] = useState<{ pid: string; iid: string } | null>(null)
+  const [selected, setSelected] = useState<{ pid: string; iid: string } | null>(initialSelection || null)
   const [queueOpen, setQueueOpen] = useState(false)
   const [toast, setToast] = useState(''), [confirm, setConfirm] = useState<Confirmation | null>(null), [confirmBusy, setConfirmBusy] = useState(false)
   const [draft, setDraft] = useState<Partial<Rule> | null>(null)
@@ -42,7 +44,6 @@ export default function App() {
   const projects = snapshot?.projects || []
   const allMRs = projects.flatMap(p => p.mrs)
   const pendingMRs = allMRs.filter(m => m.pending > 0)
-  const checkCount = allMRs.reduce((s, m) => s + m.check, 0)
   const open = (mr: MR) => setSelected({ pid: mr.project_id, iid: mr.iid })
   const add = async () => {
     if (!/^[1-9]\d*$/.test(pid)) { setPidMessage('Project ID 应为正整数'); return }
@@ -52,7 +53,7 @@ export default function App() {
     try {
       const value = await api<{ restored: number }>('/projects', { id: pid })
       setHighlight(pid); setPid(''); await refresh()
-      setToast(value.restored ? `项目已关注，已恢复 ${value.restored} 份历史报告` : '已添加关注项目，点击「获取 MR」开始')
+      setToast(value.restored ? `项目已关注，已恢复 ${value.restored} 份历史报告` : '已添加关注项目')
     } catch (e) { setPidMessage(e instanceof Error ? e.message : '添加失败') }
     finally { setAdding(false) }
   }
@@ -79,11 +80,11 @@ export default function App() {
         <section className="project-section"><h2>关注项目 <span>{projects.length || ''}</span></h2>
           <form onSubmit={e => { e.preventDefault(); void add() }} className="project-form">
             <label className="sr-only" htmlFor="project-id">Project ID</label>
-            <input id="project-id" className="field" inputMode="numeric" placeholder="Project ID，例如 512" value={pid} onChange={e => { setPid(e.target.value); setPidMessage('') }} aria-invalid={!!pidMessage} aria-describedby="project-feedback" />
+            <input id="project-id" className="field" inputMode="numeric" placeholder="Project ID" value={pid} onChange={e => { setPid(e.target.value); setPidMessage('') }} aria-invalid={!!pidMessage} aria-describedby="project-feedback" />
             <Button type="submit" loading={adding} disabled={adding || !pid.trim()} className="add-btn">{!adding && <Plus />}添加</Button>
           </form>
           {pidMessage && <p id="project-feedback" className="field-error" role="status">{pidMessage}</p>}
-          {projects.length === 0 && <div className="sidebar-empty"><Folder /><p>还没有关注项目</p><span>输入仓库的数字 Project ID</span></div>}
+          {projects.length === 0 && <div className="sidebar-empty"><Folder /><p>还没有关注项目</p></div>}
           <ul className="project-list">{projects.map(p => <li key={p.id} className={highlight === p.id ? 'highlight' : ''}>
             <div className="project-folder"><Folder size={12} />{p.full_name.includes('/') ? p.full_name.slice(0, p.full_name.lastIndexOf('/')) : 'CodeHub'}</div>
             <div className="project-side-row">
@@ -93,12 +94,12 @@ export default function App() {
             </div>
             {menu === p.id && <div className="project-menu" role="menu">
               <External url={p.web_url}>在 CodeHub 打开</External>
+              <Button variant="q" role="menuitem" disabled={snapshot.fetching} onClick={() => { setMenu(null); void run('fetch', () => act('/fetch', { project_id: p.id })) }}><RefreshCw size={14} />获取 MR</Button>
               <Button variant="q" role="menuitem" onClick={() => { setMenu(null); setConfirm({ title: '清除代码缓存', label: '清除缓存', body: <p>将清除 {p.full_name} 的本地代码缓存，下次检视会重新拉取。报告和处理记录保留。</p>, action: () => act(`/projects/${p.id}/clear-cache`, {}, '代码缓存已清除') }) }}>清除代码缓存</Button>
               <Button variant="q" role="menuitem" disabled={snapshot.sending?.project_id === p.id} className="danger-text" onClick={() => remove(p)}><Trash2 size={14} />移除项目…</Button>
             </div>}
           </li>)}</ul>
         </section>
-        <div className="sidebar-foot"><span className="local-dot" />本机运行 · 数据保存在本地<div>AI 发现问题，你决定什么发出去。</div><span className="version">ReviewX 0.1.0</span></div>
       </aside>
       <main>
         {connection && <div className="notice danger" role="alert">与本地服务的连接中断，当前显示的是上次状态。{connection}<Button variant="q" onClick={refresh}>重新连接</Button></div>}
@@ -106,24 +107,19 @@ export default function App() {
           <header className="page-header"><div><h1>检视队列</h1></div>
             <div className="toolbar">
               <div className="popover-anchor"><Button onClick={() => setQueueOpen(!queueOpen)} aria-expanded={queueOpen}>{snapshot.queue.some(a => a.status !== 'queued') ? <span className="spin" /> : <Layers3 />}检视队列{snapshot.queue.length ? ` · ${snapshot.queue.length}` : ''}<ChevronDown size={12} /></Button>
-                {queueOpen && <div className="queue-popover"><h3>当前检视队列</h3><p className="muted">全局串行执行，按加入顺序检视</p>{snapshot.queue.length === 0 ? <p className="muted">当前没有进行中或排队中的检视</p> : snapshot.queue.map((a, i) => <div className="queue-row" key={a.id}><span className="mono">!{a.iid}</span><div><strong>{projects.find(p => p.id === a.project_id)?.full_name}</strong><small>{a.status === 'queued' ? `排队中 · 第 ${snapshot.queue.filter(q => q.status === 'queued').findIndex(q => q.id === a.id) + 1}/${snapshot.queue.filter(q => q.status === 'queued').length} 位` : `步骤 ${a.step}/7 · ${a.message}`}</small></div><Button variant="q" disabled={a.status === 'stopping'} onClick={() => void run(a.id, () => act(`/reviews/${a.id}/stop`))}>{a.status === 'queued' ? '取消排队' : '停止'}</Button></div>)}</div>}
+                {queueOpen && <div className="queue-popover"><h3>当前检视队列</h3>{snapshot.queue.length === 0 ? <p className="muted">暂无检视任务</p> : snapshot.queue.map(a => <div className="queue-row" key={a.id}><span className="mono">!{a.iid}</span><div><strong>{projects.find(p => p.id === a.project_id)?.full_name}</strong><small>{a.status === 'queued' ? `排队中 · 第 ${snapshot.queue.filter(q => q.status === 'queued').findIndex(q => q.id === a.id) + 1}/${snapshot.queue.filter(q => q.status === 'queued').length} 位` : `步骤 ${a.step}/7 · ${a.message}`}</small></div><Button variant="q" disabled={a.status === 'stopping'} onClick={() => void run(a.id, () => act(`/reviews/${a.id}/stop`))}>{a.status === 'queued' ? '取消排队' : '停止'}</Button></div>)}</div>}
               </div>
               <Button disabled={!projects.length || snapshot.fetching || !!connection} loading={snapshot.fetching} onClick={() => void run('fetch', () => act('/fetch'))}>{!snapshot.fetching && <RefreshCw />}获取 MR</Button>
               <Button disabled={!pendingMRs.length} onClick={() => open(pendingMRs[0])}>下一个待处理 MR<ArrowRight /></Button>
             </div>
           </header>
-          <div className="queue-summary"><span>{projects.length} 个关注项目<span className="separator">/</span>{allMRs.length} 个开放 MR</span><span className="summary-right">{snapshot.fetching ? <><span className="spin" />项目 {snapshot.fetch_progress.done}/{snapshot.fetch_progress.total} 完成 · {snapshot.fetch_progress.failed} 个失败</> : snapshot.fetch_progress.total > 0 ? `已更新 ${snapshot.fetch_progress.done - snapshot.fetch_progress.failed}/${snapshot.fetch_progress.total} 个项目${snapshot.fetch_progress.failed ? `，${snapshot.fetch_progress.failed} 个失败` : ''}` : '手动获取，按需检视'}</span></div>
-          {pendingMRs.length > 0 && <div className="notice info review-notice"><ListChecks /><div><strong>{allMRs.reduce((s, m) => s + m.pending, 0)} 条意见等待你的决定</strong><span>来自 {pendingMRs.length} 个 MR。只有你点击发送，意见才会发布到 CodeHub。</span></div>{checkCount > 0 && <Pill tone="warning">{checkCount} 条需核对</Pill>}</div>}
-          {projects.length === 0 ? <Empty icon={<GitPullRequest />} title="从一个项目开始检视"><p>添加你关注的 CodeHub 项目，手动获取开放 MR。<br />让 AI 发现问题，由你决定哪些意见值得发送。</p><Button variant="p" onClick={() => document.getElementById('project-id')?.focus()}><Plus />添加第一个项目</Button><div className="onboarding"><span><span>01</span>添加项目</span><ArrowRight /><span><span>02</span>获取并检视 MR</span><ArrowRight /><span><span>03</span>处理检视意见</span></div><div className="setup-note"><ShieldCheck />开始前，请在终端登录 CodeHub CLI，并配置 Git 与 OpenCode。</div></Empty>
+          <div className="queue-summary"><span>{projects.length} 个关注项目<span className="separator">/</span>{allMRs.length} 个开放 MR</span>{(snapshot.fetching || snapshot.fetch_progress.total > 0) && <span className="summary-right">{snapshot.fetching ? <><span className="spin" />项目 {snapshot.fetch_progress.done}/{snapshot.fetch_progress.total} 完成 · {snapshot.fetch_progress.failed} 个失败</> : `已更新 ${snapshot.fetch_progress.done - snapshot.fetch_progress.failed}/${snapshot.fetch_progress.total} 个项目${snapshot.fetch_progress.failed ? `，${snapshot.fetch_progress.failed} 个失败` : ''}`}</span>}</div>
+          {projects.length === 0 ? <Empty icon={<GitPullRequest />} title="从一个项目开始检视"><Button variant="p" onClick={() => document.getElementById('project-id')?.focus()}><Plus />添加第一个项目</Button></Empty>
           : projects.map(p => <section key={p.id} id={`project-${p.id}`} className="project-group">
-            <div className="group-header"><div className="group-title"><Folder /><h2>{p.full_name}</h2><span className="count">{p.mrs.length}</span></div><div className="group-meta"><span>{p.fetched_at ? `获取于 ${time(p.fetched_at)}` : '尚未获取'}</span>{p.fetch_status === 'fetching' ? <Pill spin>获取中</Pill> : p.fetch_status === 'updated' ? <Pill tone="success">已更新</Pill> : p.fetch_status === 'failed' ? <Pill tone="danger">获取失败</Pill> : null}</div></div>
-            {p.fetch_status === 'failed' && <div className="notice danger">{p.error}。保留上次成功的结果。<Button variant="q" disabled={snapshot.fetching} onClick={() => void run('fetch', () => act('/fetch', { project_id: p.id }))}><RefreshCw />重新获取</Button></div>}
-            {p.mrs.length === 0 ? <div className="project-empty"><GitPullRequest /><span>{p.fetch_status === 'updated' ? '当前没有开放的 MR' : '获取项目的开放 MR，开始一次新的检视'}</span><Button onClick={() => void run('fetch', () => act('/fetch', { project_id: p.id }))} disabled={snapshot.fetching}>获取 MR</Button></div> : <>
-              <div className={`mr-grid ${p.fetch_status === 'failed' ? 'stale-group' : ''}`}>{p.mrs.filter(m => !isCompact(m)).map(m => <MRCard key={m.iid} mr={m} highlighted={pendingMRs[0] === m} snapshot={snapshot} open={() => open(m)} start={() => void startReview(m)} stop={() => void stop(m)} working={working} />)}</div>
-              {p.mrs.some(isCompact) && <details className="completed-list" open><summary><ChevronDown size={14} /><span>已完成 / 无需处理</span><span className="muted">{p.mrs.filter(isCompact).length}</span></summary><div>{p.mrs.filter(isCompact).map(m => <div className="compact-mr" key={m.iid}><span className="mono subtle">!{m.iid}</span><button className="text-button ellipsis" onClick={() => open(m)}>{m.title}</button>{m.stale && <Pill tone="caution">旧版本</Pill>}<span className="success-text"><Check size={13} />{m.conclusion === '发现问题' ? '已处理完' : m.conclusion}</span><External url={m.web_url}><span className="sr-only">打开 MR</span></External></div>)}</div></details>}
-            </>}
+            <div className="group-header"><div className="group-title"><Folder /><h2>{p.full_name}</h2><span className="count">{p.mrs.length}</span></div><div className="group-meta"><span>{p.fetched_at ? `获取于 ${time(p.fetched_at)}` : '尚未获取'}</span>{p.fetch_status === 'fetching' ? <Pill spin>获取中</Pill> : p.fetch_status === 'updated' ? <Pill tone="success">已更新</Pill> : p.fetch_status === 'failed' ? <span title={p.error || '获取失败'}><Pill tone="danger">获取失败</Pill></span> : null}</div></div>
+            {p.mrs.length === 0 ? <div className="project-empty"><GitPullRequest /><span>{p.fetch_status === 'updated' ? '当前没有开放的 MR' : p.fetch_status === 'fetching' ? '正在获取 MR…' : p.fetch_status === 'failed' ? '暂无 MR 数据' : '尚未获取 MR'}</span><Button onClick={() => void run('fetch', () => act('/fetch', { project_id: p.id }))} disabled={snapshot.fetching}>获取 MR</Button></div> :
+              <div className={`mr-grid ${p.fetch_status === 'failed' ? 'stale-group' : ''}`}>{p.mrs.map(m => <MRCard key={m.iid} mr={m} highlighted={pendingMRs[0] === m} snapshot={snapshot} open={() => open(m)} start={() => void startReview(m)} stop={() => void stop(m)} working={working} />)}</div>}
           </section>)}
-          {projects.length > 0 && <div className="page-note"><ShieldCheck />检视由你发起，意见由你确认。报告和处理记录始终保留。</div>}
         </>}
         {view === 'rules' && <RulesView projects={projects} act={act} toast={setToast} draft={draft} clearDraft={() => setDraft(null)} confirm={setConfirm} />}
         {view === 'logs' && <LogsView />}
@@ -137,18 +133,27 @@ export default function App() {
     {toast && <div className="toast" role="status">{toast}<button aria-label="关闭提示" onClick={() => setToast('')}><X size={14} /></button></div>}
   </>
 }
-function isCompact(mr: MR) { return !!mr.report_id && !mr.pending && !mr.check && !busy(mr.attempt?.status) && mr.attempt?.status !== 'failed' }
+function runtimeLabel(attempt: Attempt | null) {
+  if (!attempt) return '尚未运行'
+  if (attempt.status === 'queued' || (!attempt.started_at && attempt.status === 'stopped')) return '尚未开始'
+  const start = Date.parse(attempt.started_at || '')
+  const end = attempt.ended_at ? Date.parse(attempt.ended_at) : busy(attempt.status) ? Date.now() : NaN
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return '运行时长 —'
+  return `${busy(attempt.status) ? '已运行' : '耗时'} ${duration(Math.max(0, Math.floor((end - start) / 1000)))}`
+}
 function MRCard({ mr, highlighted, snapshot, open, start, stop, working }: { mr: MR; highlighted: boolean; snapshot: Snapshot; open: () => void; start: () => void; stop: () => void; working: string | null }) {
   const a = mr.attempt, active = busy(a?.status), failed = a?.status === 'failed'
+  const completed = !!mr.report_id && !active && !failed && a?.status !== 'stopped' && !mr.pending && !mr.check
   const queue = snapshot.queue.filter(q => q.status === 'queued')
   return <article className={`mr-card ${highlighted ? 'next-card' : ''} ${failed ? 'failed-card' : ''}`}>
-    <div className="mr-top"><span className="mono">!{mr.iid}</span>{mr.stale && <Pill tone="caution">报告基于旧版本</Pill>}{highlighted && !mr.stale && <span className="next-label">下一个待处理</span>}<External url={mr.web_url}><span className="sr-only">在 CodeHub 打开 MR !{mr.iid}</span></External></div>
+    <div className="mr-top"><span className="mr-identity"><span className="mono">!{mr.iid}</span><External url={mr.web_url}><span className="sr-only">在 CodeHub 打开 MR !{mr.iid}</span></External></span>{mr.stale && <Pill tone="caution">报告基于旧版本</Pill>}{highlighted && !mr.stale && <span className="next-label">下一个待处理</span>}</div>
     <h3><button className="text-button" onClick={open}>{mr.title}</button></h3>
-    <div className="mr-meta" title={`${mr.source_branch} → ${mr.target_branch}`}>更新于 {time(mr.updated_at)}<span>·</span><span className="mono">{mr.source_branch}</span></div>
-    {active && <Progress step={a!.step} />}
-    <div className="mr-footer"><div className={`mr-state ${failed ? 'danger-text' : mr.pending ? 'info-text' : ''}`}><span className={a?.status === 'running' ? 'spin' : 'dot'} /><span>{a?.status === 'queued' ? `排队中 · 第 ${queue.findIndex(q => q.id === a.id) + 1}/${queue.length} 位` : a?.status === 'running' ? `检视中 · 步骤 ${a.step}/7` : a?.status === 'stopping' ? '停止中…' : failed ? `检视失败 · 步骤 ${a.step}/7` : mr.pending ? `${mr.pending} 条待处理` : mr.check ? `${mr.check} 条需核对` : a?.status === 'stopped' ? '已停止' : '暂无检视记录'}</span>{mr.check > 0 && mr.pending > 0 && <small className="warning-text">{mr.check} 条需核对</small>}</div>
+    <div className="mr-details">
+      <div className="mr-meta"><span>更新于 {time(mr.updated_at)}</span><span aria-hidden="true">·</span><span className="mr-runtime">{runtimeLabel(a)}</span></div>
+      {active && <Progress step={a!.step} />}
+    </div>
+    <div className="mr-footer"><div className={`mr-state ${active ? 'mr-state-active' : ''} ${failed ? 'danger-text' : mr.pending ? 'info-text' : completed ? 'success-text' : ''}`}>{completed ? <Check size={13} /> : <span className={a?.status === 'running' ? 'spin' : 'dot'} />}<span>{a?.status === 'queued' ? `排队中 · 第 ${queue.findIndex(q => q.id === a.id) + 1}/${queue.length} 位` : a?.status === 'running' ? `检视中 · 步骤 ${a.step}/7` : a?.status === 'stopping' ? '停止中…' : failed ? `检视失败 · 步骤 ${a.step}/7` : mr.pending ? `${mr.pending} 条待处理` : mr.check ? `${mr.check} 条需核对` : a?.status === 'stopped' ? '已停止' : completed ? mr.conclusion === '发现问题' ? '已处理完' : mr.conclusion || '检视完成' : '暂无检视记录'}</span>{a?.status === 'running' ? <span className="card-progress-label" title={a.message}>{a.message}</span> : mr.check > 0 && mr.pending > 0 && <span className="warning-text">{mr.check} 条需核对</span>}</div>
       {active ? <Button disabled={a!.status === 'stopping' || working === a!.id} onClick={stop}>{a!.status === 'queued' ? '取消排队' : a!.status === 'stopping' ? '停止中…' : '停止检视'}</Button> : mr.report_id || failed ? <Button variant={highlighted ? 'p' : 's'} onClick={open}>{failed ? '查看原因' : '查看报告'}<ArrowRight size={14} /></Button> : <Button variant="p" disabled={working === `review-${mr.project_id}-${mr.iid}`} onClick={start}>开始检视<ArrowRight size={14} /></Button>}
     </div>
-    {a?.status === 'running' && <div className="card-progress-label">{a.message}</div>}
   </article>
 }

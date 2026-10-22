@@ -8,7 +8,7 @@ test('queue, report actions, history, rules and logs', async ({ page }) => {
   page.on('request', r => { if (!r.url().startsWith('http://127.0.0.1:17081')) externalRequests.push(r.url()) })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '检视队列', exact: true })).toBeVisible()
-  await expect(page.getByText('2 条意见等待你的决定')).toBeVisible()
+  await expect(page.locator('.mr-card').filter({ hasText: '完善检视报告的读取校验与错误处理' }).getByText('2 条待处理', { exact: true })).toBeVisible()
   fs.mkdirSync('artifacts', { recursive: true })
   await page.screenshot({ path: 'artifacts/queue.png', fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '完善检视报告的读取校验与错误处理', exact: true }).click()

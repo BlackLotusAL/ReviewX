@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "preview": "vite --host 127.0.0.1 --open /preview.html",
     "build": "tsc -b && vite build",
     "start": "python -m reviewx",
     "test": "python -m unittest discover -s tests -v",

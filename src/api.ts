@@ -1,8 +1,12 @@
 let csrf = ''
+export type ApiTransport = (path: string, body?: unknown, signal?: AbortSignal) => Promise<unknown>
+let transport: ApiTransport | undefined
+export function setApiTransport(value: ApiTransport) { transport = value }
 export class ApiError extends Error {
   constructor(message: string, public code?: string) { super(message) }
 }
 export async function api<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  if (transport) return await transport(path, body, signal) as T
   const response = await fetch('/api' + path, {
     method: body === undefined ? 'GET' : 'POST',
     headers: body === undefined ? {} : { 'Content-Type': 'application/json', 'X-ReviewX-CSRF': csrf },

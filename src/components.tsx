@@ -10,7 +10,7 @@ export function Pill({ tone = 'muted', children, spin = false }: { tone?: string
 }
 export function External({ url, children, className = '' }: { url: string; children?: ReactNode; className?: string }) {
   const safe = safeUrl(url)
-  return safe ? <a href={safe} target="_blank" rel="noopener noreferrer" className={`external ${className}`} onClick={e => e.stopPropagation()}>{children}<ExternalLink size={12} aria-hidden="true" /></a> : <span className="muted">{children}</span>
+  return safe ? <a href={safe} target="_blank" rel="noopener noreferrer" className={`external ${className}`} onClick={e => e.stopPropagation()}>{children}<ExternalLink size={12} aria-hidden="true" /></a> : <span className={`external muted ${className}`} aria-disabled="true">{children}<ExternalLink size={12} aria-hidden="true" /></span>
 }
 export function Progress({ step }: { step: number }) {
   return <div className="progress" role="img" aria-label={`检视进度 ${step}/7`}>{Array.from({ length: 7 }, (_, n) => <i key={n} className={n + 1 < step ? 'done' : n + 1 === step ? 'current' : ''} />)}</div>
