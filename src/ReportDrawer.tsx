@@ -18,7 +18,6 @@ export function ReportDrawer(props: Props) {
   const [tab, setTab] = useState<string>(busy(mr.attempt?.status) || ['failed', 'stopped'].includes(mr.attempt?.status || '') ? 'attempt' : 'latest')
   const [working, setWorking] = useState<string | null>(null)
   const [tick, setTick] = useState(Date.now())
-  const [expanded, setExpanded] = useState(false)
   const header = useRef<HTMLElement>(null)
   useEffect(() => {
     const node = header.current
@@ -94,8 +93,8 @@ export function ReportDrawer(props: Props) {
         <div className="report-meta"><span><Clock3 />{time(report.created_at)}</span><span className="mono" title={report.source_commit}>{report.source_commit.slice(0, 10)}</span><span title={report.model}>{report.model}</span></div>
         {report.findings.length > 0 ? <>
           <div className="report-heading"><div><h2>检视意见 <span>{report.findings.length}</span></h2>{report.latest && <p>{pending.length} 条待处理<span className="separator">·</span>{check.length} 条需到 CodeHub 核对</p>}</div><Button variant="q" disabled={busy(mr.attempt?.status)} onClick={rerun} loading={working === 'review'}><RefreshCw />重新检视</Button></div>
-          <div className="finding-toolbar"><Button variant="s" disabled={!pending.length || !report.latest} onClick={nextPending}><ArrowDown />下一条待处理</Button><Button variant="q" onClick={() => setExpanded(!expanded)}>{expanded ? '收起修复建议' : '展开全部修复建议'}</Button>{report.latest && <Button variant="q" disabled={!pending.length || !!working} onClick={() => confirm({ title: '其余全部不发送', label: `确认不发送 ${pending.length} 条`, body: <p>将剩余 {pending.length} 条意见标记为「不发送」，之后可逐条撤销。</p>, action: async () => { await act(`/reports/${report.id}/dismiss`, { confirmed: true }); await load() } })}>其余全部不发送</Button>}</div>
-          <div className="finding-list">{report.findings.map(f => <FindingCard key={f.id} finding={f} report={report} mr={mr} disabled={!!working} sendDisabled={!!working || !!snapshot.sending} expanded={expanded} working={working} action={action => void execute(f.id, `/reports/${report.id}/findings/${f.id}/action`, { action })} makeRule={makeRule} />)}</div>
+          <div className="finding-toolbar"><Button variant="s" disabled={!pending.length || !report.latest} onClick={nextPending}><ArrowDown />下一条待处理</Button>{report.latest && <Button variant="q" disabled={!pending.length || !!working} onClick={() => confirm({ title: '其余全部不发送', label: `确认不发送 ${pending.length} 条`, body: <p>将剩余 {pending.length} 条意见标记为「不发送」，之后可逐条撤销。</p>, action: async () => { await act(`/reports/${report.id}/dismiss`, { confirmed: true }); await load() } })}>其余全部不发送</Button>}</div>
+          <div className="finding-list">{report.findings.map(f => <FindingCard key={f.id} finding={f} report={report} mr={mr} disabled={!!working} sendDisabled={!!working || !!snapshot.sending} working={working} action={action => void execute(f.id, `/reports/${report.id}/findings/${f.id}/action`, { action })} makeRule={makeRule} />)}</div>
         </> : <div className="conclusion-panel"><div className="conclusion-icon"><CheckCheck /></div><h2>{report.conclusion}</h2>{report.conclusion === '无可检视的变更' && <p>未执行 AI 检视。</p>}<div><Button onClick={rerun} disabled={busy(mr.attempt?.status)}><RefreshCw />重新检视</Button><External url={mr.web_url}>在 CodeHub 查看</External></div></div>}
         <div className="report-appendix"><details><summary><ChevronDown size={14} />本次使用的规则<span>{report.rules.length}</span></summary>{report.rules.map(r => <div className="rule-snapshot" key={r.id}><strong>{r.name}</strong><span className="mono muted">{r.files.join(', ') || '全部文件'}</span><p className="pre-wrap">{r.points}</p>{r.good && <><b>正例</b><p className="pre-wrap">{r.good}</p></>}{r.bad && <><b>反例</b><p className="pre-wrap">{r.bad}</p></>}</div>)}{report.rules.length === 0 && <p className="muted">没有匹配本次变更的启用规则。</p>}{report.invalid_rules.map(r => <p className="danger-text" key={r.name}>已跳过格式错误规则：{r.name} · {r.reason}</p>)}</details><details><summary><ChevronDown size={14} />排除文件<span>{report.excluded.length}</span></summary>{report.excluded.map(f => <div className="excluded-file" key={f.path}><code>{f.path}</code><span>{f.reason}</span></div>)}{!report.excluded.length && <p className="muted">没有排除文件。</p>}</details></div>
       </>}
@@ -103,7 +102,7 @@ export function ReportDrawer(props: Props) {
   </Modal>
 }
 function GitPullRequestIcon() { return <GitBranch size={13} aria-hidden="true" /> }
-function FindingCard({ finding: f, report, mr, disabled, sendDisabled, expanded, working, action, makeRule }: { finding: Finding; report: Report; mr: MR; disabled: boolean; sendDisabled: boolean; expanded: boolean; working: string | null; action: (s: string) => void; makeRule: (r: Partial<Rule>) => void }) {
+function FindingCard({ finding: f, report, mr, disabled, sendDisabled, working, action, makeRule }: { finding: Finding; report: Report; mr: MR; disabled: boolean; sendDisabled: boolean; working: string | null; action: (s: string) => void; makeRule: (r: Partial<Rule>) => void }) {
   const state = f.handling.state
   const handled = ['published', 'manual', 'dismissed', 'superseded'].includes(state)
   const location = `${f.location.path || '无法定位到具体文件'}${f.location.start_line ? `:${f.location.start_line}${f.location.end_line && f.location.end_line !== f.location.start_line ? `-${f.location.end_line}` : ''}` : ''}`
@@ -121,7 +120,7 @@ function FindingCard({ finding: f, report, mr, disabled, sendDisabled, expanded,
       <h4>问题位置</h4><code className="location">{location}</code>
       {f.related_code && <CodeBlock {...f.related_code} />}
       <h4>影响分析</h4><ul><li><strong>直接后果：</strong>{plainText(f.impact.consequence)}</li><li><strong>影响范围：</strong>{plainText(f.impact.scope)}</li><li><strong>触发条件：</strong>{plainText(f.impact.trigger)}</li></ul>
-      <details className="solution" open={expanded || !handled}><summary><ChevronDown size={14} />查看修复建议</summary><h4>解决方案</h4>{f.solutions.map((s, i) => <div key={i}><p className="pre-wrap">{plainText(s.description)}</p>{s.code && <CodeBlock {...s.code} />}</div>)}{!!f.prevention?.length && <><h4>预防措施</h4><ul>{f.prevention.map((p, i) => <li key={i}>{plainText(p)}</li>)}</ul></>}</details>
+      <details className="solution" open><summary><ChevronDown size={14} />查看修复建议</summary><h4>解决方案</h4>{f.solutions.map((s, i) => <div key={i}><p className="pre-wrap">{plainText(s.description)}</p>{s.code && <CodeBlock {...s.code} />}</div>)}{!!f.prevention?.length && <><h4>预防措施</h4><ul>{f.prevention.map((p, i) => <li key={i}>{plainText(p)}</li>)}</ul></>}</details>
       {(state === 'published' || state === 'manual') && <Button variant="q" className="derive-rule" onClick={() => makeRule({ name: `${f.title} · 规则`, scope: report.project_id, enabled: false, files: f.location.path ? [f.location.path] : [], points: f.summary, good: f.solutions.map(s => s.description + (s.code ? `\n${s.code.code}` : '')).join('\n'), bad: f.related_code?.code || f.summary })}><Plus size={14} />沉淀为规则草稿</Button>}
       {!!f.history.length && <details className="handling-history"><summary><History size={13} />处理记录 · {f.history.length}</summary>{f.history.map((h, i) => <div key={i}><span>{labels[h.state]}</span><time>{time(h.at)}</time>{h.message && <p>{h.message}</p>}</div>)}</details>}
     </div>
