@@ -209,11 +209,6 @@ class OpenCode:
         self.mcp.shutdown()
         self.mcp.server_close()
 
-    def version(self, owner, cancel):
-        code, out, _ = self.processes.run([*self.config["opencode_command"], "--version"], owner, cancel=cancel, timeout=20)
-        if code or not re.fullmatch(r"(?:v)?1\.18\.\d+(?:[-+][^\s]+)?", out.decode().strip()):
-            raise AppError("OpenCode 版本不受支持；需要 1.18.x", "UNSUPPORTED_VERSION", environment=True)
-
     def environment(self, config):
         # Repository credentials and arbitrary inherited variables never enter OpenCode.
         allowed = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR",
@@ -342,27 +337,13 @@ class OpenCode:
                         on_wrap()
                     continue
                 raise AppError("模型推理超出输出上限" if truncated else "检视未完成，未调用 finish_review", "INCOMPLETE")
-            # Export only for actual model metadata; findings are accepted exclusively via MCP.
-            if session_id and not model:
-                code, out, _ = self.processes.run([*self.config["opencode_command"], "export", session_id], owner,
-                                                 cwd=root, env=self.environment(config), cancel=cancel, timeout=20)
-                try:
-                    exported = json.loads(out)
-                    infos = [m.get("info", {}) for m in exported.get("messages", [])]
-                    info = next((i for i in infos if i.get("role") == "assistant" and i.get("modelID")), {})
-                    model = "/".join(filter(None, [info.get("providerID"), info.get("modelID")]))
-                except (ValueError, AttributeError):
-                    pass
-            if not model:
-                raise AppError("无法读取本次实际模型名称，未保存报告", "MODEL_METADATA_MISSING")
-            return submission, model
+            return submission, model or "未知"
         finally:
             submission.revoked = True
             self.mcp.sessions.pop(key, None)
             (Path(root).parent / (key + ".prompt.txt")).unlink(missing_ok=True)
 
     def review(self, root, diffs, metadata, rules, owner, cancel, progress):
-        self.version(owner, cancel)
         start, abort = time.monotonic(), threading.Event()
         base = f"{METHOD}\n输出语言：{self.config['output_language']}\n{metadata}\n规则：{dump(rules)}"
         size = len(base) + len(dump(diffs))

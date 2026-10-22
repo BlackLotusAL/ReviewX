@@ -82,7 +82,6 @@ class RuntimeCase(unittest.TestCase):
         copy = self.root / "tmp" / "copy"
         copy.mkdir(parents=True)
         try:
-            ai.version("test", threading.Event())
             return ai.session("search", copy, "中文长提示词\n" + "a" * 40000, [], "test",
                               threading.Event(), threading.Event(), time.monotonic())
         finally:
@@ -92,6 +91,21 @@ class RuntimeCase(unittest.TestCase):
         submission, model = self.run_session()
         self.assertTrue(submission.finished)
         self.assertEqual(model, "fixture/local-model")
+        self.assertEqual(list((self.root / "tmp").glob("*.prompt.txt")), [])
+
+    def test_opencode_review_completes_without_version_or_model_metadata(self):
+        self.config["opencode_command"] = [sys.executable, str(Path(__file__).parent / "fake_opencode.py"), "no-model"]
+        self.config["focus_areas"] = ["正确性"]
+        copy = self.root / "tmp" / "copy"
+        copy.mkdir(parents=True)
+        ai = OpenCode(self.config, self.processes, Diagnostics(self.root))
+        try:
+            findings, model = ai.review(copy, {"source.py": "@@ -1 +1 @@\n-old\n+new"}, "", [], "test",
+                                        threading.Event(), lambda *_: None)
+        finally:
+            ai.close()
+        self.assertEqual(findings, [])
+        self.assertEqual(model, "未知")
         self.assertEqual(list((self.root / "tmp").glob("*.prompt.txt")), [])
 
     def test_opencode_wraps_same_session_once_with_read_tools_closed(self):

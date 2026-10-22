@@ -9,7 +9,7 @@ Windows 和 Linux 均使用下方脚本部署。请先安装：
 - [Python 3.9.11](https://www.python.org/downloads/release/python-3911/)（须为此版本，并包含 pip、venv）。
 - [Node.js](https://nodejs.org/) 22 或更高版本（包含 npm）、[Git](https://git-scm.com/)。
 - [CodeHub CLI](https://github.com/BlackLotusAL/CodeHubX)，完成登录，并确认 Git 可以访问要检视的仓库。
-- [OpenCode](https://opencode.ai/) 1.18.x，完成登录并配置默认模型。
+- [OpenCode](https://opencode.ai/)，完成登录并配置默认模型。
 
 将这些命令加入 PATH，重新打开终端。下载本仓库并解压，或使用 Git 克隆到本机。
 

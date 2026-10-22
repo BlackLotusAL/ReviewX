@@ -4,9 +4,7 @@ import os
 import sys
 import urllib.request
 
-if "--version" in sys.argv:
-    print("1.18.31")
-    sys.exit(0)
+assert "--version" not in sys.argv and "export" not in sys.argv
 config = json.loads(os.environ["OPENCODE_CONFIG_CONTENT"])
 mcp = config["mcp"]["reviewx"]
 
@@ -22,7 +20,8 @@ def rpc(method, params=None):
 assert config["permission"]["*"] == "deny"
 assert "GIT_ASKPASS" not in os.environ
 assert "--pure" in sys.argv
-print(json.dumps({"type": "step_start", "sessionID": "fixture-session", "part": {"model": "fixture/local-model"}}), flush=True)
+part = {} if "no-model" in sys.argv else {"model": "fixture/local-model"}
+print(json.dumps({"type": "step_start", "sessionID": "fixture-session", "part": part}), flush=True)
 rpc("initialize")
 tools = rpc("tools/list")["tools"]
 if "unauthorized" in sys.argv:
