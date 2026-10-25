@@ -39,6 +39,27 @@ function splitDiff(text) {
   return parts.map((p, i) => header.concat(['# ReviewX：差异第 ' + (i + 1) + '/' + parts.length + ' 部分'], p).join('\n'));
 }
 
+// Write a generated file inside the review copy without following any
+// repository-controlled symlink (a link in the path or at the target itself).
+function safeWrite(root, rel, content) {
+  const base = path.resolve(root);
+  const abs = path.resolve(base, ...rel.split('/'));
+  if (!abs.startsWith(base + path.sep)) throw new Error('生成文件路径越出检视副本：' + rel);
+  const parts = path.relative(base, abs).split(path.sep);
+  let cur = base;
+  for (let i = 0; i < parts.length; i++) {
+    cur = path.join(cur, parts[i]);
+    const st = fs.lstatSync(cur, { throwIfNoEntry: false });
+    if (st && st.isSymbolicLink()) fs.rmSync(cur, { force: true });
+    else if (st && i < parts.length - 1 && !st.isDirectory()) throw new Error('生成文件路径与仓库文件冲突：' + rel);
+    else if (st && i === parts.length - 1 && !st.isFile()) throw new Error('生成文件路径与仓库目录冲突：' + rel);
+    if (i < parts.length - 1 && !fs.lstatSync(cur, { throwIfNoEntry: false })) fs.mkdirSync(cur);
+  }
+  // 'wx' fails rather than follows if something appeared at the path meanwhile.
+  fs.rmSync(abs, { force: true });
+  fs.writeFileSync(abs, content, { flag: 'wx' });
+}
+
 function failFromCodeHub(e, step) {
   if (e instanceof Stopped || e.code === 'CANCELLED') return new Stopped();
   return new ReviewFailure({
@@ -255,7 +276,8 @@ class ReviewEngine {
       let diffFiles = [];
       if (included.length) {
         try { await this.app.git.exportTree(cacheDir, srcSha, copy, signal); } catch (e) { if (e instanceof GitError) throw failFromGit(e, 5); throw e; }
-        const diffRoot = path.join(copy, '.reviewx-diff');
+        // The repo may ship its own .reviewx-diff; generated files replace it.
+        fs.rmSync(path.join(copy, '.reviewx-diff'), { recursive: true, force: true });
         for (const f of included) {
           check();
           let text;
@@ -264,9 +286,7 @@ class ReviewEngine {
           f.diffFiles = [];
           parts.forEach((p, i) => {
             const rel = '.reviewx-diff/' + f.path + (parts.length > 1 ? '.' + (i + 1) : '') + '.diff';
-            const abs = path.join(copy, ...rel.split('/'));
-            ensureDir(path.dirname(abs));
-            fs.writeFileSync(abs, p);
+            safeWrite(copy, rel, p);
             f.diffFiles.push(rel);
             diffFiles.push(rel);
           });
@@ -275,8 +295,9 @@ class ReviewEngine {
         }
         // Keep glob/grep away from excluded files too.
         const ignoreFile = path.join(copy, '.ignore');
-        const prev = fs.existsSync(ignoreFile) ? fs.readFileSync(ignoreFile, 'utf8') + '\n' : '';
-        fs.writeFileSync(ignoreFile, prev + cfg.excludeFileTypes.map((p) => (p.startsWith('.') ? '*' + p : p)).join('\n') + '\n');
+        const ist = fs.lstatSync(ignoreFile, { throwIfNoEntry: false });
+        const prev = ist && ist.isFile() ? fs.readFileSync(ignoreFile, 'utf8') + '\n' : '';
+        safeWrite(copy, '.ignore', prev + cfg.excludeFileTypes.map((p) => (p.startsWith('.') ? '*' + p : p)).join('\n') + '\n');
       }
       check();
 
@@ -458,4 +479,4 @@ class ReviewEngine {
   }
 }
 
-module.exports = { ReviewEngine, STEPS, pickCloneUrl, splitDiff, SEV_RANK };
+module.exports = { ReviewEngine, STEPS, pickCloneUrl, splitDiff, safeWrite, SEV_RANK };

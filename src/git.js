@@ -125,7 +125,8 @@ class Git {
     ensureDir(dest);
     const indexFile = dest + '.index';
     try {
-      await this.git(['--git-dir', dir, '--work-tree', dest, 'checkout', '-f', sha, '--', '.'], { signal, env: { GIT_INDEX_FILE: indexFile } });
+      // core.symlinks=false: repository symlinks become plain files holding the link text.
+      await this.git(['-c', 'core.symlinks=false', '--git-dir', dir, '--work-tree', dest, 'checkout', '-f', sha, '--', '.'], { signal, env: { GIT_INDEX_FILE: indexFile } });
     } finally {
       fs.rmSync(indexFile, { force: true });
     }

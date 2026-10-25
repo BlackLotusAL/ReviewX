@@ -35,9 +35,18 @@ function writeJSONAtomic(file, data) {
 // Append one JSON record per line and fsync, so records survive crashes.
 function appendJsonl(file, record) {
   ensureDir(path.dirname(file));
-  const fd = fs.openSync(file, 'a');
+  const fd = fs.openSync(file, 'a+');
   try {
-    fs.writeSync(fd, JSON.stringify(record) + '\n');
+    // A crash can leave a partial last line. Start the new record on a fresh
+    // line so only the torn fragment is skipped by readJsonl.
+    const size = fs.fstatSync(fd).size;
+    let prefix = '';
+    if (size > 0) {
+      const last = Buffer.alloc(1);
+      fs.readSync(fd, last, 0, 1, size - 1);
+      if (last[0] !== 0x0a) prefix = '\n';
+    }
+    fs.writeSync(fd, prefix + JSON.stringify(record) + '\n');
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);

@@ -880,7 +880,8 @@
       if (S.drawer) {
         const m = s.mrs.find((x) => x.pid === S.drawer.pid && x.iid === S.drawer.iid);
         const rev = m ? m.rev : -2;
-        if (!S.detail || rev !== S.detailRev || (S.detail.open !== Boolean(m))) loadDetail();
+        const metaChanged = S.detail && m && (m.stale !== S.detail.stale || m.updatedAt !== (S.detail.mr && S.detail.mr.updatedAt));
+        if (!S.detail || rev !== S.detailRev || (S.detail.open !== Boolean(m)) || metaChanged) loadDetail();
       }
       if (S.view === 'rules' && S.rules && s.drafts.length !== (S.rules.filter((r) => r.draft && !r.error).length)) loadRules(true);
       render();

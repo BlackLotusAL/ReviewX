@@ -122,7 +122,7 @@ class App {
   async addProject(raw) {
     const id = String(raw == null ? '' : raw).trim();
     if (!isPositiveIntString(id)) return { ok: false, tone: 'bad', text: 'Project ID 应为正整数' };
-    const list = this.projectsAll();
+    let list = this.projectsAll();
     const exists = list.find((p) => p.id === id && !p.removed);
     if (exists) return { ok: false, tone: 'info', text: '该项目已在关注列表中：' + exists.path + '（' + id + '）', flash: id };
     let repo;
@@ -133,6 +133,11 @@ class App {
       this.logger.warn('project.add id=' + id + ' failed reason=' + (e.code || '') + ' ' + reason);
       return { ok: false, tone: 'bad', text: reason };
     }
+    // Other additions or removals may have saved the list while we waited:
+    // re-read it, and do the read-check-save without awaiting in between.
+    list = this.projectsAll();
+    const added = list.find((p) => p.id === id && !p.removed);
+    if (added) return { ok: false, tone: 'info', text: '该项目已在关注列表中：' + added.path + '（' + id + '）', flash: id };
     const order = list.reduce((m, p) => Math.max(m, p.order || 0), 0) + 1;
     const fullName = repo.full_name || ('project-' + id);
     const prev = list.find((p) => p.id === id);
@@ -164,6 +169,7 @@ class App {
     pid = String(pid);
     const p = this.project(pid);
     if (!p) throw new Error('项目不在关注列表中');
+    if (this.removing.has(pid)) throw new Error('该项目正在移除');
     if (this.sending && this.sending.pid === pid) throw new Error('该项目有评论正在发送，请等发送结束后再移除');
     this.removing.add(pid);
     this.changed();
@@ -226,6 +232,9 @@ class App {
       // Atomic per project: replaced only after the list and every detail succeeded.
       this.store.saveFetch(pid, { at, mrs });
       this.fetchState[pid] = { status: 'updated', lastSuccessAt: at };
+      // MR metadata (update time, staleness) changed: invalidate open drawers.
+      this.rev++;
+      for (const m of mrs) this.mrRev[pid + '/' + m.iid] = this.rev;
       this.logger.info('mr.fetch project=' + pid + ' updated open=' + mrs.length);
       return true;
     } catch (e) {

@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const { StringDecoder } = require('string_decoder');
 
 const isWin = process.platform === 'win32';
 const children = new Set();
@@ -109,10 +110,12 @@ function run(resolved, args, opts = {}) {
     const out = []; const err = [];
     let timedOut = false; let aborted = false; let settled = false;
     let lineBuf = '';
+    // A chunk can end inside a multibyte character; the decoder carries it over.
+    const decoder = new StringDecoder('utf8');
     child.stdout.on('data', (b) => {
       out.push(b);
       if (opts.onLine) {
-        lineBuf += b.toString('utf8');
+        lineBuf += decoder.write(b);
         let i;
         while ((i = lineBuf.indexOf('\n')) >= 0) {
           const line = lineBuf.slice(0, i).replace(/\r$/, '');
@@ -142,6 +145,7 @@ function run(resolved, args, opts = {}) {
       children.delete(child);
       if (timer) clearTimeout(timer);
       if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
+      if (opts.onLine) lineBuf += decoder.end();
       if (opts.onLine && lineBuf.trim()) opts.onLine(lineBuf.replace(/\r$/, ''));
       resolve({
         code,
