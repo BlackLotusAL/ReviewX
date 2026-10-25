@@ -1,0 +1,23 @@
+{
+  "name": "reviewx",
+  "version": "1.0.0",
+  "description": "运行在本机的 CodeHub 辅助检视工具：AI 负责找问题，用户决定什么发出去。",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "bin": {
+    "reviewx": "bin/reviewx.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "public"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node bin/reviewx.js",
+    "dev": "node dev/start-dev.js",
+    "test": "node --test test/*.test.js"
+  }
+}
