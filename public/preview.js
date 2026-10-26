@@ -92,6 +92,9 @@
   };
 
   let st; let listeners = []; let timer = null;
+  // Bumped on every reset; callbacks scheduled for an older session do nothing.
+  let gen = 0;
+  function later(fn, ms) { const g = gen; return setTimeout(() => { if (g === gen) fn(); }, ms); }
 
   // ---------- seed data ----------
   function seed() {
@@ -331,23 +334,39 @@
     return l.path + (l.start_line ? ':' + l.start_line + (l.end_line && l.end_line !== l.start_line ? '-' + l.end_line : '') : '');
   }
 
-  function rulesView() {
-    // Base sample stats plus whatever happened in this preview session.
-    const extra = {};
+  // Per rule name: hits / sent / dismissed over every report in this session.
+  function ruleCounts() {
+    const out = {};
     for (const key of Object.keys(st.reports)) {
       st.reports[key].forEach((r) => {
-        if (!r.preview) return;
         const stt = states(key, r.id);
         for (const f of r.findings) {
           if (!f.rule) continue;
           const k = f.rule;
-          extra[k] = extra[k] || { hits: 0, sent: 0, dismissed: 0 };
-          extra[k].hits++;
+          out[k] = out[k] || { hits: 0, sent: 0, dismissed: 0 };
+          out[k].hits++;
           const x = stateOf(stt, key, r.id, f.id).state;
-          if (SENT.includes(x)) extra[k].sent++; else if (x === 'dismissed') extra[k].dismissed++;
+          if (SENT.includes(x)) out[k].sent++; else if (x === 'dismissed') out[k].dismissed++;
         }
       });
     }
+    return out;
+  }
+
+  function rulesView() {
+    // Sample base stats plus the change since the session started, so
+    // decisions on the seeded reports count too without double-counting them.
+    const now = ruleCounts();
+    const zero = { hits: 0, sent: 0, dismissed: 0 };
+    const extra = {};
+    for (const k of Object.keys(now)) {
+      const b = st.baselineCounts[k] || zero;
+      extra[k] = { hits: now[k].hits - b.hits, sent: now[k].sent - b.sent, dismissed: now[k].dismissed - b.dismissed };
+    }
+    return rulesWith(extra);
+  }
+
+  function rulesWith(extra) {
     return st.rules.map((r) => {
       const e = extra[r.name] || { hits: 0, sent: 0, dismissed: 0 };
       const o = Object.assign({}, r, { stats: { hits: r.base.hits + e.hits, sent: r.base.sent + e.sent, dismissed: r.base.dismissed + e.dismissed } });
@@ -377,7 +396,7 @@
     changed();
     list.forEach((pid, i) => {
       // The first project alone, then the rest in parallel.
-      setTimeout(() => {
+      later(() => {
         if (!project(pid)) { st.fetch.done++; } else if (st.failOnce[pid]) {
           st.failOnce[pid] = false;
           st.fetchState[pid] = { status: 'failed', error: '网络不可用', lastSuccessAt: st.fetched[pid] ? st.fetched[pid].at : null };
@@ -561,7 +580,7 @@
     st.sending = { key, pid: b.pid, iid: b.iid, reportId: r.id, fid: b.fid };
     log('INFO', 'comment.publish !' + b.iid + ' ' + b.fid + ' start');
     changed(key);
-    setTimeout(() => {
+    later(() => {
       (st.records[key] = st.records[key] || []).push({ a: 'result', reportId: r.id, fid: b.fid, result: 'published', at: Date.now() });
       st.sending = null;
       log('INFO', 'comment.publish !' + b.iid + ' ' + b.fid + ' result=published');
@@ -645,8 +664,10 @@
     for (const j of st.queue.slice()) if (j.pid === pid && j.status === 'queued') cancel(pid, j.iid, '项目已移除');
     const running = st.queue.find((j) => j.pid === pid);
     if (running) stop(pid, running.iid, '项目已移除');
+    const g = gen;
     return new Promise((resolve) => {
       const wait = () => {
+        if (g !== gen) { resolve({ text: '已恢复初始示例数据' }); return; }
         if (st.queue.some((j) => j.pid === pid)) { setTimeout(wait, 200); return; }
         p.removed = true;
         delete st.removing[pid];
@@ -743,7 +764,9 @@
   }
 
   function start() {
+    gen++;
     st = seed();
+    st.baselineCounts = ruleCounts();
     if (timer) clearInterval(timer);
     timer = setInterval(tick, 250);
   }

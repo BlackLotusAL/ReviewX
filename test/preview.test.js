@@ -54,6 +54,48 @@ function loadPreview() {
   return { be: window.ReviewXPreview, stop: () => timers.forEach(clearInterval) };
 }
 
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('preview reset cancels a fetch and a send that are still in flight', async () => {
+  const { be, stop } = loadPreview();
+  try {
+    const before = await be.request('GET', '/api/state');
+    await be.request('POST', '/api/fetch', {});
+    const d = await be.request('GET', '/api/mr/101/404');
+    const pend = d.reports[0].findings.find((f) => f.state === 'pending');
+    await be.request('POST', '/api/findings/send', { pid: '101', iid: '404', reportId: d.reports[0].id, fid: pend.id });
+    be.reset();
+    await wait(3500);
+    const s = await be.request('GET', '/api/state');
+    const counters = (f) => ({ active: f.active, total: f.total, done: f.done, ok: f.ok, failed: f.failed, summary: f.summary });
+    assert.deepEqual(counters(s.fetch), counters(before.fetch));
+    assert.equal(s.projects.find((p) => p.id === '318').fetch.status, 'never');
+    assert.ok(!s.mrs.some((m) => m.pid === '318'));
+    assert.equal(s.mrs.find((m) => m.iid === '404').pending, 2);
+    assert.equal(s.sending, null);
+  } finally {
+    stop();
+  }
+});
+
+test('preview rule stats count decisions on the seeded reports', async () => {
+  const { be, stop } = loadPreview();
+  try {
+    const stat = async (name) => (await be.request('GET', '/api/rules')).rules.find((r) => r.name === name).stats;
+    const base = await stat('正确性');
+    const d = await be.request('GET', '/api/mr/101/404');
+    const f = d.reports[0].findings.find((x) => x.state === 'pending' && x.rule === '正确性');
+    const body = { pid: '101', iid: '404', reportId: d.reports[0].id, fid: f.id };
+    await be.request('POST', '/api/findings/dismiss', body);
+    assert.equal((await stat('正确性')).dismissed, base.dismissed + 1);
+    assert.equal((await stat('正确性')).hits, base.hits);
+    await be.request('POST', '/api/findings/undo', body);
+    assert.deepEqual(await stat('正确性'), base);
+  } finally {
+    stop();
+  }
+});
+
 test('preview backend: sample data, decisions and project validation', async () => {
   const { be, stop } = loadPreview();
   try {
