@@ -390,7 +390,7 @@
     h += sec('问题描述') + '<ul><li>严重级别：' + SEV_NAME[f.severity] + '</li>' +
       (f.tags && f.tags.length ? '<li>标签：' + f.tags.map((t) => '<code>#' + esc(t) + '</code>').join(' ') + '</li>' : '') +
       '<li>简述：' + plain(f.summary) + '</li></ul>';
-    h += '<p class="sec"><strong>问题位置</strong>：<code>' + esc(f.loc) + '</code>' + (f.rule ? '<span style="margin-left: 8px; font-size: 12px; color: #59636e; background: #f0f2f4; padding: 2px 8px; border-radius: 6px">规则 · ' + esc(f.rule) + '</span>' : '') + '</p>';
+    h += '<p class="sec"><strong>问题位置</strong>：<code>' + esc(f.loc) + '</code></p>';
     if (f.related_code) h += '<pre><code>' + hl(f.related_code.code) + '</code></pre>';
     h += sec('影响分析') + '<ul><li><strong>直接后果</strong>：' + plain(f.impact.consequence) + '</li><li><strong>影响范围</strong>：' + plain(f.impact.scope) + '</li><li><strong>触发条件</strong>：' + plain(f.impact.trigger) + '</li></ul>';
     h += sec('解决方案');
