@@ -138,7 +138,8 @@ function createServer(app) {
 
       if (req.method !== 'GET') return send(res, 405, {});
       // Static files: only from public/, never anything else on disk.
-      const rel = pathname === '/' ? 'index.html' : pathname.slice(1);
+      // /preview: the same UI on an in-browser sample backend (public/preview.js).
+      const rel = pathname === '/' ? 'index.html' : (pathname === '/preview' || pathname === '/preview/') ? 'preview.html' : pathname.slice(1);
       const file = path.resolve(PUBLIC, rel);
       if (!file.startsWith(PUBLIC + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

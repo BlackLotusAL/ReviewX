@@ -57,7 +57,11 @@
     return out + esc(code.slice(last));
   }
 
+  // Preview mode (/preview) swaps the HTTP backend for an in-browser simulation.
+  const PREVIEW = window.ReviewXPreview || null;
+
   async function api(method, url, body) {
+    if (PREVIEW) return PREVIEW.request(method, url, body ? JSON.parse(JSON.stringify(body)) : undefined);
     const res = await fetch(url, { method, headers: Object.assign({ 'X-ReviewX': '1' }, body ? { 'Content-Type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin' });
     let j = {};
     try { j = await res.json(); } catch { /* empty */ }
@@ -123,6 +127,7 @@
       return;
     }
     const html = '<div>' + (S.connected ? '' : '<div class="conn" role="alert">与 ReviewX 服务的连接已断开，正在重连…（服务停止后请在终端重新运行 reviewx）</div>') +
+      (PREVIEW ? '<div class="preview-bar" role="note"><b>预览模式</b><span>使用示例数据，所有操作只在本页面里模拟：不会连接 CodeHub、Git 或 OpenCode，也不会写入任何本机文件。刷新页面即恢复初始数据。</span><button type="button" class="btn btn-s" style="min-height: 30px; padding: 0 12px; font-size: 12px" data-act="previewReset">重置示例数据</button></div>' : '') +
       '<div class="layout">' + sidebar() + '<main class="main">' + (S.view === 'mr' ? viewMr() : S.view === 'rules' ? viewRules() : viewLogs()) + '</main></div>' +
       drawer() + dialog() + (S.toast ? '<div class="toast" role="status">' + esc(S.toast.text) + '</div>' : '') + '</div>';
     const tpl = document.createElement('template');
@@ -831,7 +836,8 @@
     },
     // logs
     copyLogPath: async () => { try { await navigator.clipboard.writeText(S.logPath || S.srv.logPath); toast('已复制日志路径'); } catch { toast('复制失败，请手动选择路径'); } },
-    logErrors: () => { S.logErrorsOnly = !S.logErrorsOnly; render(); }
+    logErrors: () => { S.logErrorsOnly = !S.logErrorsOnly; render(); },
+    previewReset: () => { if (PREVIEW) { PREVIEW.reset(); S.drawer = null; S.detail = null; S.dialog = null; S.rules = null; S.ruleSel = null; S.edit = null; S.pidMsg = null; S.logs = []; if (S.view === 'rules') loadRules(false); loadLogs(); toast('已恢复初始示例数据'); } }
   };
 
   document.addEventListener('click', (e) => {
@@ -872,10 +878,7 @@
   });
 
   // ---------- live updates ----------
-  function connect() {
-    const es = new EventSource('/api/events');
-    es.addEventListener('state', (ev) => {
-      const s = JSON.parse(ev.data);
+  function onState(s) {
       S.srv = s; S.connected = true; S.clockSkew = s.now - Date.now();
       if (S.drawer) {
         const m = s.mrs.find((x) => x.pid === S.drawer.pid && x.iid === S.drawer.iid);
@@ -885,9 +888,18 @@
       }
       if (S.view === 'rules' && S.rules && s.drafts.length !== (S.rules.filter((r) => r.draft && !r.error).length)) loadRules(true);
       render();
-    });
+  }
+  function onLog(l) { S.logs.unshift(l); if (S.logs.length > 500) S.logs.pop(); if (S.view === 'logs') render(); }
+
+  function connect() {
+    if (PREVIEW) {
+      PREVIEW.subscribe((type, d) => { if (type === 'state') onState(d); else if (type === 'toast') toast(d.text); else if (type === 'log') onLog(d); });
+      return;
+    }
+    const es = new EventSource('/api/events');
+    es.addEventListener('state', (ev) => onState(JSON.parse(ev.data)));
     es.addEventListener('toast', (ev) => toast(JSON.parse(ev.data).text));
-    es.addEventListener('log', (ev) => { const l = JSON.parse(ev.data); S.logs.unshift(l); if (S.logs.length > 500) S.logs.pop(); if (S.view === 'logs') render(); });
+    es.addEventListener('log', (ev) => onLog(JSON.parse(ev.data)));
     es.onopen = () => { S.connected = true; if (S.view === 'logs') loadLogs(); render(); };
     es.onerror = () => { S.connected = false; render(); };
   }
