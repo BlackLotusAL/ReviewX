@@ -64,3 +64,6 @@ details[open] .chev{transform:rotate(90deg)}
 .title2{display:-webkit-box;width:100%;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-weight:600;text-align:left}
 .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:20;max-width:calc(100% - 32px);box-sizing:border-box;padding:11px 18px;border-radius:999px;background:#121212;color:#fff;font-size:13px;box-shadow:0 8px 24px rgba(18,18,18,.25)}
 .conn{position:fixed;top:0;left:0;right:0;z-index:30;padding:8px 16px;background:#ac3039;color:#fff;font-size:13px;text-align:center}
+.preview-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:8px clamp(16px,3vw,28px);background:#121212;color:#e8ebed;font-size:12.5px;line-height:1.5}
+.preview-bar b{color:#fff;font-weight:600;padding:1px 8px;border-radius:999px;background:#007cff}
+.preview-bar span{flex:1 1 320px}
