@@ -96,6 +96,32 @@ test('preview rule stats count decisions on the seeded reports', async () => {
   }
 });
 
+test('preview findings only name rules used by the review', { timeout: 60000 }, async () => {
+  const { be, stop } = loadPreview();
+  try {
+    // Clear the queue so !401 runs right away.
+    await be.request('POST', '/api/reviews/cancel', { pid: '101', iid: '402' });
+    await be.request('POST', '/api/reviews/stop', { pid: '101', iid: '403' });
+    await be.request('POST', '/api/rules/toggle', { id: 'global/correctness.md' });
+    const hitsBefore = (await be.request('GET', '/api/rules')).rules.find((r) => r.name === '正确性').stats.hits;
+    await be.request('POST', '/api/reviews', { pid: '101', iid: '401' });
+    let d;
+    for (let i = 0; i < 80; i++) {
+      await wait(500);
+      d = await be.request('GET', '/api/mr/101/401');
+      if (d.reports.length) break;
+    }
+    const rep = d.reports[0];
+    assert.ok(rep, 'review finished');
+    assert.ok(!rep.rules.includes('正确性'));
+    assert.ok(rep.findings.length > 0);
+    for (const f of rep.findings) assert.ok(!f.rule || rep.rules.includes(f.rule), f.title + ' names unused rule ' + f.rule);
+    assert.equal((await be.request('GET', '/api/rules')).rules.find((r) => r.name === '正确性').stats.hits, hitsBefore);
+  } finally {
+    stop();
+  }
+});
+
 test('preview backend: sample data, decisions and project validation', async () => {
   const { be, stop } = loadPreview();
   try {

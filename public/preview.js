@@ -272,7 +272,7 @@
     return { pending, verify, total: latest ? latest.findings.length : 0 };
   }
   const lastAttempt = (key) => (st.attempts[key] || []).find((a) => ['failed', 'stopped', 'completed'].includes(a.status)) || null;
-  const jobView = (j) => { const o = Object.assign({}, j); delete o.plan; delete o.found; delete o.stopAt; return o; };
+  const jobView = (j) => { const o = Object.assign({}, j); delete o.plan; delete o.found; delete o.stopAt; delete o.rules; return o; };
 
   function snapshot() {
     const projects = active().map((p) => ({ id: p.id, path: p.path, short: shortName(p.path), folder: folderOf(p.path), webUrl: p.webUrl, fetch: st.fetchState[p.id] || { status: 'never' }, removing: Boolean(st.removing[p.id]) }));
@@ -459,7 +459,7 @@
     const now = Date.now();
     if (j.step) j.times[j.step - 1] = now - j.stepStartedAt;
     j.step = n; j.stepStartedAt = now; j.obj = 0;
-    if (n === 5) j.objN = j.plan.files;
+    if (n === 5) { j.objN = j.plan.files; j.rules = rulesFor(j.pid); }
     if (n === 7) { j.objN = j.found.length; j.obj = j.found.length; }
   }
 
@@ -471,11 +471,22 @@
     const now = Date.now();
     j.times[6] = now - j.stepStartedAt;
     const excluded = j.plan.excluded ? j.plan.excluded.map((x) => ({ path: x[0], reason: x[1] })) : EXCL.slice(0, 1 + (Number(j.iid) % 3));
-    const r = { id: nid('rp'), preview: true, createdAt: now, conclusion, model: conclusion === 'empty' ? null : MODEL, sourceSha: hex(), mrUpdatedAt: m.updatedAt, durationMs: now - j.startedAt, rules: rulesFor(j.pid), skippedRules: j.pid === '101' ? [{ name: 'naming-old', reason: '缺少开头的 --- 元信息块' }] : [], excluded, changedFiles: j.plan.files, findings };
+    const r = { id: nid('rp'), preview: true, createdAt: now, conclusion, model: conclusion === 'empty' ? null : MODEL, sourceSha: hex(), mrUpdatedAt: m.updatedAt, durationMs: now - j.startedAt, rules: usedRules(j), skippedRules: j.pid === '101' ? [{ name: 'naming-old', reason: '缺少开头的 --- 元信息块' }] : [], excluded, changedFiles: j.plan.files, findings };
     (st.reports[key] = st.reports[key] || []).unshift(r);
     endJob(j, 'completed', { reportId: r.id, conclusion });
     log('INFO', 'review.done !' + j.iid + ' project=' + j.pid + ' result=' + conclusion + ' findings=' + findings.length + ' model=' + (r.model || '-') + ' duration=' + Math.round(r.durationMs / 1000) + 's');
     toast('!' + j.iid + ' 检视完成 · ' + (conclusion === 'issues' ? '发现 ' + findings.length + ' 条意见' : conclusion === 'pass' ? '未发现问题' : '无可检视的变更'));
+  }
+
+  // Rules are read once per review (step 5 on the server) and kept for it.
+  function usedRules(j) { if (!j.rules) j.rules = rulesFor(j.pid); return j.rules; }
+
+  // A finding can only name a rule used by this review; otherwise it is left
+  // unattributed, as report_finding validation does on the server.
+  function findingFor(j, key) {
+    const f = clone(LIB[key]);
+    if (f.rule && !usedRules(j).includes(f.rule)) { f.tags = f.tags.filter((t) => t !== f.rule); f.rule = ''; }
+    return f;
   }
 
   function rulesFor(pid) { return st.rules.filter((r) => r.enabled && !r.error && !r.draft && (r.scope === 'global' || r.scope === pid)).map((r) => r.name); }
@@ -532,9 +543,9 @@
       const want = Math.min(defs.length, Math.floor((el / total) * (defs.length + 1)));
       let dirty = false;
       if (read !== j.diffRead) { j.diffRead = read; dirty = true; }
-      while (j.found.length < want) { j.found.push(clone(LIB[defs[j.found.length]])); j.findings = j.found.length; dirty = true; }
+      while (j.found.length < want) { j.found.push(findingFor(j, defs[j.found.length])); j.findings = j.found.length; dirty = true; }
       if (el >= total) {
-        while (j.found.length < defs.length) j.found.push(clone(LIB[defs[j.found.length]]));
+        while (j.found.length < defs.length) j.found.push(findingFor(j, defs[j.found.length]));
         j.findings = j.found.length; j.diffRead = j.diffN; j.phase = null;
         setStep(j, 7); dirty = true;
       }
