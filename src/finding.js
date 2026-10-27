@@ -23,9 +23,9 @@ function inputSchema(ruleNames) {
     type: 'object',
     properties: {
       severity: { type: 'string', enum: SEVERITIES, description: '严重程度：fatal 致命 / major 严重 / minor 一般 / suggestion 建议' },
-      title: { type: 'string', description: '问题标题，一句话' },
+      title: { type: 'string', description: '问题标题：一个短语点明问题本身，不超过 25 个字（英文不超过 12 个单词），不写原因和后果' },
       tags: { type: 'array', items: { type: 'string' }, description: '标签，如 正确性、安全' },
-      summary: { type: 'string', description: '简述：引入问题的修改、触发条件和后果' },
+      summary: { type: 'string', description: '简述：一两句话说明哪处修改出了什么问题，不超过 60 个字（英文不超过 30 个单词）。后果、影响范围和触发条件写在 impact 里，修改建议写在 solutions 里，这里不要重复，也不要贴代码' },
       location: {
         type: 'object',
         properties: {

@@ -213,3 +213,19 @@ test('proc: npm .cmd shim resolves to a direct command', () => {
   assert.equal(r.cmd, process.execPath);
   assert.equal(r.prefix[0], path.join(dir, 'node_modules', 'x', 'cli.js'));
 });
+
+test('prompt and tool schema ask for a short title and summary', () => {
+  const { inputSchema } = require('../src/finding');
+  const { ReviewEngine } = require('../src/review');
+  const props = inputSchema([]).properties;
+  assert.match(props.title.description, /不超过 25 个字/);
+  assert.match(props.summary.description, /不超过 60 个字/);
+  assert.match(props.summary.description, /impact/);
+  const prompt = ReviewEngine.prototype.buildPrompt.call({}, {
+    mr: { title: 't', source_branch: 'a', target_branch: 'b' }, commits: [],
+    included: [{ path: 'a.js', add: 1, del: 0, diffFiles: ['.reviewx-diff/a.js.diff'] }], excluded: [], rules: [], lang: '中文'
+  });
+  assert.match(prompt, /## 写法要求（务必简短）/);
+  assert.match(prompt, /title：.*不超过 25 个字/);
+  assert.match(prompt, /summary：.*不超过 60 个字/);
+});
