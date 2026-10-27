@@ -11,16 +11,7 @@ const { resolveCommand, run, killTree } = require('./proc');
 const { sleep } = require('./util');
 const { ReviewFailure, Stopped } = require('./failure');
 
-const MIN_VERSION = [1, 18, 0];
 const READ_TOOLS = ['read', 'glob', 'grep'];
-
-function versionOk(v) {
-  const m = /(\d+)\.(\d+)\.(\d+)/.exec(v || '');
-  if (!m) return false;
-  const p = m.slice(1).map(Number);
-  for (let i = 0; i < 3; i++) { if (p[i] > MIN_VERSION[i]) return true; if (p[i] < MIN_VERSION[i]) return false; }
-  return true;
-}
 
 // Environment for OpenCode: no repository credentials, Git config or related variables (R06).
 function cleanEnv() {
@@ -79,22 +70,8 @@ class OpenCode {
 
   cmd() {
     const r = resolveCommand(this.spec);
-    if (!r) throw new ReviewFailure({ step: 6, kind: 'env', code: 'OPENCODE_MISSING', title: '步骤 6/7 未找到 OpenCode', reason: '没有找到 OpenCode 命令', next: '安装 OpenCode 1.18 或以上版本，确认终端里能运行 opencode，然后重新检视。' });
+    if (!r) throw new ReviewFailure({ step: 6, kind: 'env', code: 'OPENCODE_MISSING', title: '步骤 6/7 未找到 OpenCode', reason: '没有找到 OpenCode 命令', next: '安装 OpenCode，确认终端里能运行 opencode，然后重新检视。' });
     return r;
-  }
-
-  async version() {
-    const r = await run(this.cmd(), ['--version'], { timeoutMs: 60000, env: cleanEnv() });
-    return (r.stdout || r.stderr).trim();
-  }
-
-  async checkVersion() {
-    let v = '';
-    try { v = await this.version(); } catch (e) { v = ''; }
-    if (!versionOk(v)) {
-      throw new ReviewFailure({ step: 6, kind: 'env', code: 'OPENCODE_VERSION', title: '步骤 6/7 OpenCode 版本不受支持', reason: '当前 OpenCode 版本为 ' + (v || '未知') + '，需要 1.18 或以上版本才能保证只读限制', next: '升级 OpenCode（npm i -g opencode-ai@latest）后重新检视。' });
-    }
-    return v;
   }
 
   async modelOf(sessionId, cwd) {
@@ -175,6 +152,7 @@ class OpenCode {
       try {
         return await run(this.cmd(), args, { cwd: opts.copyDir, env, signal: phaseCtl.signal, onLine: onEvent, onSpawn: (c) => { child = c; } });
       } catch (e) {
+        if (e instanceof ReviewFailure) throw e; // e.g. OpenCode not installed (environment-level)
         throw new ReviewFailure({ step: 6, kind: 'ai', code: 'OPENCODE_ERROR', title: '步骤 6/7 OpenCode 报错', reason: '无法启动 OpenCode：' + e.message, next: '确认终端里能运行 opencode 后重新检视。' });
       } finally {
         clearTimeout(timer);
@@ -237,4 +215,4 @@ class OpenCode {
   }
 }
 
-module.exports = { OpenCode, versionOk, buildConfig, cleanEnv };
+module.exports = { OpenCode, buildConfig, cleanEnv };

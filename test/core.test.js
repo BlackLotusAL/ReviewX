@@ -12,7 +12,7 @@ const { Store, findingStates } = require('../src/store');
 const { redact } = require('../src/logger');
 const { matchExcluded, classify } = require('../src/git');
 const { McpHub } = require('../src/mcp');
-const { versionOk, buildConfig, cleanEnv } = require('../src/opencode');
+const { OpenCode, buildConfig, cleanEnv } = require('../src/opencode');
 const { splitDiff, pickCloneUrl } = require('../src/review');
 const { parseCmdShim } = require('../src/proc');
 
@@ -166,11 +166,16 @@ test('mcp: initialize, list tools, submit and finish', async () => {
   assert.equal((await hub.handle('nope', { jsonrpc: '2.0', id: 5, method: 'ping' })).status, 404);
 });
 
-test('opencode: version gate, read-only config, clean environment', () => {
-  assert.ok(versionOk('1.18.0'));
-  assert.ok(versionOk('opencode 2.0.1'));
-  assert.ok(!versionOk('1.17.9'));
-  assert.ok(!versionOk(''));
+test('opencode: missing command is an environment-level failure', async () => {
+  const oc = new OpenCode({ opencodeCommand: path.join(tmp(), 'no-such-opencode') }, { warn() {}, info() {} });
+  const tracker = { diffFiles: new Set(), read: new Set(), finished: false, wrapUp: false };
+  await assert.rejects(
+    oc.review({ copyDir: tmp(), taskFile: 'task.md', mcpUrl: 'http://127.0.0.1:1/mcp/x', excludes: [], wrapUpMs: 60000, timeoutMs: 120000, signal: new AbortController().signal, tracker, onProgress() {}, rawLog() {} }),
+    (e) => e.code === 'OPENCODE_MISSING' && e.kind === 'env' && e.stopsQueue
+  );
+});
+
+test('opencode: read-only config, clean environment', () => {
   const c = buildConfig({ mcpUrl: 'http://127.0.0.1:1/mcp/x', excludes: ['.png', 'go.sum'], wrapUp: false });
   assert.equal(c.permission['*'], 'deny');
   assert.equal(c.permission.read['*.png'], 'deny');
