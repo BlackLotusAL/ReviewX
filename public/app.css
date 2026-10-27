@@ -67,3 +67,6 @@ details[open] .chev{transform:rotate(90deg)}
 .preview-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:8px clamp(16px,3vw,28px);background:#121212;color:#e8ebed;font-size:12.5px;line-height:1.5}
 .preview-bar b{color:#fff;font-weight:600;padding:1px 8px;border-radius:999px;background:#007cff}
 .preview-bar span{flex:1 1 320px}
+.md p.sec{margin:16px 0 6px;color:#1f2328}
+.md>p.sec:first-child{margin-top:0}
+.md ul+p.sec,.md pre+p.sec,.md p+p.sec{margin-top:16px}

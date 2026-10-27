@@ -382,18 +382,23 @@
     return h;
   }
 
+  // Same sections and order as the MR comment template (src/finding.js renderComment).
+  const SEV_NAME = { fatal: 'Fatal', major: 'Major', minor: 'Minor', suggestion: 'Suggestion' };
   function findingBody(f, textColor) {
-    let h = '<div class="md" style="padding: 18px 22px 20px; color: ' + textColor + '"><p>' + plain(f.summary) + '</p>';
-    h += '<p><span class="lbl">问题位置</span><code>' + esc(f.loc) + '</code>' + (f.rule ? '<span style="margin-left: 8px; font-size: 12px; color: #59636e; background: #f0f2f4; padding: 2px 8px; border-radius: 6px">规则 · ' + esc(f.rule) + '</span>' : '') +
-      (f.tags && f.tags.length ? f.tags.map((t) => '<span style="margin-left: 6px; font-size: 12px; color: #59636e">#' + esc(t) + '</span>').join('') : '') + '</p>';
+    const sec = (name) => '<p class="sec"><strong>' + name + '</strong>：</p>';
+    let h = '<div class="md" style="padding: 18px 22px 20px; color: ' + textColor + '">';
+    h += sec('问题描述') + '<ul><li>严重级别：' + SEV_NAME[f.severity] + '</li>' +
+      (f.tags && f.tags.length ? '<li>标签：' + f.tags.map((t) => '<code>#' + esc(t) + '</code>').join(' ') + '</li>' : '') +
+      '<li>简述：' + plain(f.summary) + '</li></ul>';
+    h += '<p class="sec"><strong>问题位置</strong>：<code>' + esc(f.loc) + '</code></p>';
     if (f.related_code) h += '<pre><code>' + hl(f.related_code.code) + '</code></pre>';
-    h += '<h4>影响分析</h4><ul><li><span style="color: #59636e">直接后果：</span>' + plain(f.impact.consequence) + '</li><li><span style="color: #59636e">影响范围：</span>' + plain(f.impact.scope) + '</li><li><span style="color: #59636e">触发条件：</span>' + plain(f.impact.trigger) + '</li></ul>';
-    h += '<h4>解决方案</h4>';
+    h += sec('影响分析') + '<ul><li><strong>直接后果</strong>：' + plain(f.impact.consequence) + '</li><li><strong>影响范围</strong>：' + plain(f.impact.scope) + '</li><li><strong>触发条件</strong>：' + plain(f.impact.trigger) + '</li></ul>';
+    h += sec('解决方案');
     f.solutions.forEach((s, i) => {
       h += '<p>' + (f.solutions.length > 1 ? (i + 1) + '. ' : '') + plain(s.description) + '</p>';
       if (s.code) h += '<pre><code>' + hl(s.code.code) + '</code></pre>';
     });
-    if (f.prevention && f.prevention.length) h += '<h4>预防措施</h4><ul>' + f.prevention.map((p) => '<li>' + plain(p) + '</li>').join('') + '</ul>';
+    if (f.prevention && f.prevention.length) h += sec('预防措施') + '<ul>' + f.prevention.map((p) => '<li>' + plain(p) + '</li>').join('') + '</ul>';
     return h + '</div>';
   }
 
