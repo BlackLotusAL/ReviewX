@@ -311,8 +311,6 @@ class ReviewEngine {
       } else {
         this.setStep(job, 6);
         job.phase = 'review';
-        await this.app.opencode.checkVersion();
-        check();
         const ruleNames = ruleSel.used.map((r) => r.name);
         const token = this.app.mcp.open({
           ruleNames,

@@ -17,7 +17,7 @@
 | Node.js 22+ | 运行 ReviewX |
 | [CodeHub CLI](https://github.com/BlackLotusAL/CodeHubX) | 已登录（`codehub auth login`），终端里能运行 `codehub` |
 | Git | 已配置好访问代码仓库的凭据（凭据管理器或 SSH 密钥） |
-| OpenCode 1.18+ | 已配置默认模型，终端里能运行 `opencode` |
+| OpenCode | 已配置默认模型，终端里能运行 `opencode` |
 
 ReviewX 不接收、不保存任何凭据：CodeHub 凭据由 CLI 保存在 Credential Helper，Git 凭据用本机已有配置，模型认证由 OpenCode 自己负责。
 
@@ -95,7 +95,7 @@ enabled: true
 6. OpenCode 检视：AI 读完全部差异文件，用 `report_finding` 逐条提交意见，最后调用 `finish_review`
 7. 保存报告与意见
 
-排除后没有可检视的文件时跳过步骤 6，结论为「无可检视的变更」。失败时报告页说明影响、原因、失败步骤和下一步；环境级错误（CLI 未登录、Git 认证失败、网络不可用、OpenCode 版本过低）和步骤 6–7 的失败会停止整个队列。
+排除后没有可检视的文件时跳过步骤 6，结论为「无可检视的变更」。失败时报告页说明影响、原因、失败步骤和下一步；环境级错误（CLI 未登录、Git 认证失败、网络不可用、未安装 OpenCode）和步骤 6–7 的失败会停止整个队列。
 
 ## 开发
 
