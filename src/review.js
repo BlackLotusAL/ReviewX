@@ -459,6 +459,11 @@ class ReviewEngine {
       '- 不设最低严重程度和数量上限，fatal、major、minor、suggestion 四级意见全部提交。',
       '- severity：fatal 会导致数据损坏、安全漏洞或服务不可用；major 功能错误或明显缺陷；minor 局部问题或边界情况；suggestion 可维护性等改进建议。',
       '- rule：意见属于上面某条规则时，填写该规则名；不属于任何规则时留空。', '');
+    L.push('## 写法要求（务必简短）',
+      '- title：一个短语点明问题本身，不超过 25 个字（英文不超过 12 个单词），不写原因和后果。例：「报告读取缺少项目归属校验」。',
+      '- summary：一两句话说明哪处修改出了什么问题，不超过 60 个字（英文不超过 30 个单词）。例：「readReport 删除了 projectId 校验，缓存键也不含项目，可读到其他项目的报告。」',
+      '- 每个字段只写自己的内容：后果、影响范围、触发条件写在 impact，修改建议写在 solutions，代码放在 related_code 或 solutions 的 code 里；summary 里不要重复这些，也不要贴代码。',
+      '- impact 的三项和 solutions 的说明也尽量各用一句话。', '');
     L.push('## 输出语言', '意见用' + lang + '书写；代码、标识符、文件路径和错误信息保持原文。');
     return L.join('\n') + '\n';
   }
