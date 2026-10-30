@@ -7,7 +7,7 @@
   const STEPS = ['读取 MR 信息', '拉取源分支', '拉取目标分支', '校验 MR 未变化', '生成变更快照', 'OpenCode 检视', '保存报告与意见'];
   const STEP_MS = [1200, 2200, 1600, 900, 0, 14000, 700];
   const FILE_MS = 220;
-  const LIMIT_MS = 13 * 60000;
+  const LIMIT_MS = 60 * 60000;
   const MODEL = 'deepseek/deepseek-chat（示例）';
   const SEV_RANK = { fatal: 0, major: 1, minor: 2, suggestion: 3 };
   const SENT = ['published', 'manual', 'failed', 'unknown', 'sending'];
@@ -79,7 +79,7 @@
 
   const FAILS = {
     gitAuth: { step: 3, kind: 'env', code: 'GIT_AUTH', title: '步骤 3/7 拉取目标分支失败', reason: 'Git 认证失败', next: '在终端用 git 拉取一次该仓库，确认本机凭据管理器或 SSH 密钥可用后重新检视。', detail: "fatal: Authentication failed for 'https://codehub.example.com/platform/review-engine.git/'（预览示例）" },
-    timeout: { step: 6, kind: 'ai', code: 'OPENCODE_TIMEOUT', title: '步骤 6/7 超时', reason: '步骤 6 总时长超过「OpenCode 超时」（13 分钟）', next: '调大配置项「OpenCode 超时」（opencodeTimeoutMinutes）后重启 ReviewX，再重新检视。', detail: 'elapsed=780s' }
+    timeout: { step: 6, kind: 'ai', code: 'OPENCODE_TIMEOUT', title: '步骤 6/7 超时', reason: '步骤 6 总时长超过「OpenCode 超时」（60 分钟）', next: '调大配置项「OpenCode 超时」（opencodeTimeoutMinutes）后重启 ReviewX，再重新检视。', detail: 'elapsed=3600s' }
   };
 
   const EXCL = [{ path: 'pnpm-lock.yaml', reason: '锁文件' }, { path: 'public/logo.svg', reason: '图片' }, { path: 'public/fonts/inter.woff2', reason: '字体' }];
@@ -189,7 +189,7 @@
     L(1501, 'WARN', 'mr.fetch project=202 failed reason=NETWORK_ERROR kept_previous=' + hms(new Date(now - 3 * 60 * MIN)));
     L(1502, 'INFO', 'mr.fetch project=101 updated open=8');
     L(1503, 'INFO', 'mr.fetch start projects=3 concurrency=6');
-    L(5400, 'ERROR', 'review.failed !406 project=101 step=6/7 code=OPENCODE_TIMEOUT reason=步骤 6 总时长超过「OpenCode 超时」（13 分钟） queue=stopped');
+    L(5400, 'ERROR', 'review.failed !406 project=101 step=6/7 code=OPENCODE_TIMEOUT reason=步骤 6 总时长超过「OpenCode 超时」（60 分钟） queue=stopped');
     L(7200, 'WARN', 'comment.publish !404 f4 result=failed reason=网络不可用');
     L(7300, 'WARN', 'comment.publish !404 f2 result=unknown reason=发送结果未知');
     L(12000, 'INFO', 'server.start addr=127.0.0.1:17080 data=' + DATA_DIR + ' version=1.0.0（预览）');
