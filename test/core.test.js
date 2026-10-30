@@ -33,7 +33,12 @@ test('config: defaults written, bad values rejected with field name', () => {
   const file = path.join(dir, 'config.json');
   const cfg = loadConfig(file);
   assert.equal(cfg.port, 17080);
+  assert.equal(cfg.opencodeTimeoutMinutes, 60);
+  assert.equal(cfg.wrapUpMinutes, 50);
   assert.ok(fs.existsSync(file));
+  // The starter file pins no values, so later default changes still apply.
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8'))), ['//']);
+  assert.equal(loadConfig(file).opencodeTimeoutMinutes, 60);
   fs.writeFileSync(file, JSON.stringify({ concurrency: 0 }));
   assert.throws(() => loadConfig(file), (e) => e instanceof ConfigError && /并发数/.test(e.message));
   fs.writeFileSync(file, JSON.stringify({ nope: 1 }));

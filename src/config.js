@@ -38,8 +38,8 @@ function defaults() {
     concurrency: 6,
     excludeFileTypes: DEFAULT_EXCLUDES.slice(),
     outputLanguage: '中文',
-    wrapUpMinutes: 10,
-    opencodeTimeoutMinutes: 13,
+    wrapUpMinutes: 50,
+    opencodeTimeoutMinutes: 60,
     codehubCommand: 'codehub',
     opencodeCommand: 'opencode',
     gitCommand: 'git',
@@ -70,6 +70,10 @@ function cmdCheck(v) {
 
 class ConfigError extends Error {}
 
+const STARTER = {
+  '//': 'ReviewX 配置文件。只写需要修改的配置项，未写的项使用默认值；可用的配置项见 README「配置」一节。修改后重启 ReviewX 生效。'
+};
+
 function loadConfig(configPath) {
   const file = configPath || process.env.REVIEWX_CONFIG || defaultConfigPath();
   const cfg = defaults();
@@ -96,10 +100,11 @@ function loadConfig(configPath) {
       throw new ConfigError('配置文件格式错误：「收尾时间」（wrapUpMinutes）应小于「OpenCode 超时」（opencodeTimeoutMinutes）：' + file);
     }
   } else {
-    // First run: write the defaults so the user can find and edit them.
+    // First run: create a starter file the user can find. It lists no values,
+    // so items left out keep following ReviewX's defaults across upgrades.
     try {
       ensureDir(path.dirname(file));
-      fs.writeFileSync(file, JSON.stringify(defaults(), null, 2) + '\n');
+      fs.writeFileSync(file, JSON.stringify(STARTER, null, 2) + '\n');
     } catch { /* not fatal */ }
   }
   cfg.dataDir = path.resolve(cfg.dataDir);
