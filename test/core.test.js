@@ -33,12 +33,21 @@ test('config: defaults written, bad values rejected with field name', () => {
   const file = path.join(dir, 'config.json');
   const cfg = loadConfig(file);
   assert.equal(cfg.port, 17080);
-  assert.equal(cfg.opencodeTimeoutMinutes, 60);
+  assert.equal(cfg.reviewTimeoutMinutes, 60);
+  assert.equal(cfg.autoFetch, true);
+  assert.equal(cfg.autoFetchIntervalMinutes, 60);
+  assert.deepEqual(cfg.skipKeywords, ['WIP', 'Draft']);
+  assert.equal(cfg.stopQueueOnFailure, false);
   assert.equal(cfg.wrapUpMinutes, 50);
   assert.ok(fs.existsSync(file));
   // The starter file pins no values, so later default changes still apply.
   assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8'))), ['//']);
-  assert.equal(loadConfig(file).opencodeTimeoutMinutes, 60);
+  assert.equal(loadConfig(file).reviewTimeoutMinutes, 60);
+  // The old name is still accepted.
+  fs.writeFileSync(file, JSON.stringify({ opencodeTimeoutMinutes: 90, wrapUpMinutes: 80 }));
+  assert.equal(loadConfig(file).reviewTimeoutMinutes, 90);
+  fs.writeFileSync(file, JSON.stringify({ autoFetchIntervalMinutes: 3 }));
+  assert.throws(() => loadConfig(file), /获取间隔/);
   fs.writeFileSync(file, JSON.stringify({ concurrency: 0 }));
   assert.throws(() => loadConfig(file), (e) => e instanceof ConfigError && /并发数/.test(e.message));
   fs.writeFileSync(file, JSON.stringify({ nope: 1 }));
@@ -176,7 +185,7 @@ test('opencode: missing command is an environment-level failure', async () => {
   const tracker = { diffFiles: new Set(), read: new Set(), finished: false, wrapUp: false };
   await assert.rejects(
     oc.review({ copyDir: tmp(), taskFile: 'task.md', mcpUrl: 'http://127.0.0.1:1/mcp/x', excludes: [], wrapUpMs: 60000, timeoutMs: 120000, signal: new AbortController().signal, tracker, onProgress() {}, rawLog() {} }),
-    (e) => e.code === 'OPENCODE_MISSING' && e.kind === 'env' && e.stopsQueue
+    (e) => e.code === 'OPENCODE_MISSING' && e.kind === 'env'
   );
 });
 

@@ -6,7 +6,7 @@ const path = require('path');
 const { ensureDir, rmrf, newId } = require('./util');
 const { CodeHubError } = require('./codehub');
 const { GitError, matchExcluded, KIND_LABEL } = require('./git');
-const { ReviewFailure, Stopped } = require('./failure');
+const { ReviewFailure, Stopped, timeoutFailure } = require('./failure');
 const { validateFinding, sortFindings, SEV_RANK } = require('./finding');
 const { redact } = require('./logger');
 
@@ -111,16 +111,18 @@ class ReviewEngine {
     if (n) this.log.info('review.recover interrupted=' + n);
   }
 
-  enqueue(pid, iid) {
+  // trigger: 'manual' (user clicked) or 'auto' (R28 auto review)
+  enqueue(pid, iid, trigger) {
     pid = String(pid); iid = String(iid);
+    trigger = trigger === 'auto' ? 'auto' : 'manual';
     if (this.find(pid, iid)) throw new Error('该 MR 已有检视在排队或进行中');
     const mr = this.app.openMr(pid, iid);
     if (!mr) throw new Error('该 MR 不在最近一次获取的开放 MR 列表中');
-    const job = { id: newId('rv'), pid, iid, title: mr.title, status: 'queued', queuedAt: Date.now(), step: 0, times: [], findings: [], abort: new AbortController() };
-    this.store.appendAttempt(pid, iid, { t: 'queued', id: job.id, at: job.queuedAt });
+    const job = { id: newId('rv'), pid, iid, title: mr.title, trigger, status: 'queued', queuedAt: Date.now(), step: 0, times: [], findings: [], abort: new AbortController() };
+    this.store.appendAttempt(pid, iid, { t: 'queued', id: job.id, at: job.queuedAt, trigger });
     this.jobs.push(job);
     const pos = this.jobs.filter((j) => j.status === 'queued').length;
-    this.log.info('review.enqueue !' + iid + ' project=' + pid + ' position=' + pos);
+    this.log.info('review.enqueue !' + iid + ' project=' + pid + ' position=' + pos + ' trigger=' + trigger);
     this.app.changed(pid, iid);
     setImmediate(() => this.pump());
     return { position: pos, total: pos };
@@ -170,7 +172,7 @@ class ReviewEngine {
     if (this.pumping) return;
     this.pumping = true;
     try {
-      while (this.jobs.length && this.jobs[0].status === 'queued') {
+      while (this.jobs.length && this.jobs[0].status === 'queued' && !this.app.isPaused()) {
         const job = this.jobs[0];
         let resolveDone;
         job.done = new Promise((r) => { resolveDone = r; });
@@ -180,6 +182,7 @@ class ReviewEngine {
           this.jobs = this.jobs.filter((x) => x !== job);
           resolveDone();
           this.app.changed(job.pid, job.iid);
+          this.app.onReviewEnded(job.pid, job.iid);
         }
       }
     } finally {
@@ -199,9 +202,13 @@ class ReviewEngine {
   async execute(job) {
     const { pid, iid } = job;
     const signal = job.abort.signal;
-    const cfg = this.app.cfg;
+    // A review runs with the settings it started with (R26).
+    const cfg = Object.assign({}, this.app.cfg, { excludeFileTypes: this.app.cfg.excludeFileTypes.slice() });
     job.status = 'running';
     job.startedAt = Date.now();
+    job.limitMs = cfg.reviewTimeoutMinutes * 60000;
+    // R11: the only timeout of a review, from step 1 to the saved report.
+    const timeoutTimer = setTimeout(() => { job.timedOut = true; job.abort.abort(); }, job.limitMs);
     this.store.appendAttempt(pid, iid, { t: 'started', id: job.id, at: job.startedAt });
     this.log.info('review.start !' + iid + ' project=' + pid);
     const work = path.join(this.store.tmpDir(), job.id);
@@ -339,7 +346,8 @@ class ReviewEngine {
         try {
           const r = await this.app.opencode.review({
             copyDir: copy, taskFile, mcpUrl: this.app.mcpUrl(token), excludes: cfg.excludeFileTypes,
-            wrapUpMs: cfg.wrapUpMinutes * 60000, timeoutMs: cfg.opencodeTimeoutMinutes * 60000, signal, tracker,
+            startedAt: job.startedAt, wrapAt: job.startedAt + cfg.wrapUpMinutes * 60000, deadline: job.startedAt + job.limitMs,
+            timeoutMinutes: cfg.reviewTimeoutMinutes, signal, tracker,
             onProgress: () => { job.phase = tracker.wrapUp ? 'wrapup' : 'review'; this.app.changed(pid, iid); }, rawLog
           });
           model = await this.app.opencode.modelOf(r.sessionId, copy);
@@ -380,6 +388,7 @@ class ReviewEngine {
         excluded,
         conclusion,
         findings,
+        trigger: job.trigger,
         startedAt: job.startedAt,
         createdAt: now,
         durationMs: now - job.startedAt,
@@ -393,8 +402,10 @@ class ReviewEngine {
       }
       this.log.info('review.done !' + iid + ' project=' + pid + ' result=' + conclusion + ' findings=' + findings.length + ' model=' + (report.model || '-') + ' duration=' + Math.round(report.durationMs / 1000) + 's');
       this.app.notify('!' + iid + ' 检视完成 · ' + (conclusion === 'issues' ? '发现 ' + findings.length + ' 条意见' : conclusion === 'pass' ? '未发现问题' : '无可检视的变更'));
-    } catch (e) {
-      const stopped = e instanceof Stopped || signal.aborted;
+    } catch (err) {
+      let e = err;
+      if (job.timedOut && !(e instanceof ReviewFailure && e.code === 'REVIEW_TIMEOUT')) e = timeoutFailure(job.step || 1, cfg.reviewTimeoutMinutes, Date.now() - job.startedAt);
+      const stopped = !job.timedOut && (e instanceof Stopped || signal.aborted);
       if (stopped) {
         job.stopNote = '正在停止 · 清理临时目录';
         this.app.changed(pid, iid);
@@ -405,20 +416,31 @@ class ReviewEngine {
       } else {
         const f = e instanceof ReviewFailure ? e : new ReviewFailure({ step: job.step || 1, kind: job.step >= 6 ? 'ai' : 'step', code: 'INTERNAL', title: '步骤 ' + (job.step || 1) + '/7 ' + STEPS[(job.step || 1) - 1] + '失败', reason: 'ReviewX 内部错误：' + e.message, next: '查看会话日志后重新检视。', detail: e.stack });
         if (job.step && job.stepStartedAt) job.times[job.step - 1] = null;
+        // R17: environment errors always stop the queue and pause all automation;
+        // step 6–7 failures stop it only when「失败时停止队列」is on.
+        const env = f.kind === 'env';
+        const stopsQueue = env || (f.kind === 'ai' && cfg.stopQueueOnFailure);
         const info = f.toJSON();
+        info.stopsQueue = stopsQueue;
+        info.pausesAutomation = env;
         info.completedSteps = Math.max(0, f.step - 1);
         info.findingsSubmitted = job.findings.length;
         this.store.appendAttempt(pid, iid, { t: 'ended', id: job.id, at: Date.now(), status: 'failed', failure: info, steps: job.times.slice() });
-        this.log.error('review.failed !' + iid + ' project=' + pid + ' step=' + f.step + '/7 code=' + f.code + ' reason=' + f.reason + ' queue=' + (f.stopsQueue ? 'stopped' : 'continue') + (f.detail ? '\n' + redact(f.detail) : ''));
+        this.log.error('review.failed !' + iid + ' project=' + pid + ' step=' + f.step + '/7 code=' + f.code + ' reason=' + f.reason + ' queue=' + (stopsQueue ? 'stopped' : 'continue') + (env ? ' automation=paused' : '') + (f.detail ? '\n' + redact(f.detail) : ''));
         if (raw.length) this.log.error('review.raw_output !' + iid + '\n' + redact(raw.join('\n')).slice(0, 200000));
-        if (f.stopsQueue) {
-          for (const j of this.jobs.slice()) if (j !== job && j.status === 'queued') this.cancel(j.pid, j.iid, '队列已停止：!' + iid + ' 检视失败');
-        }
+        if (stopsQueue) this.stopQueue(env ? '队列已停止 · ' + f.reason : '队列已停止：!' + iid + ' 检视失败', job);
+        if (env) this.app.pauseAutomation({ reason: f.reason, next: f.next, code: f.code, source: '!' + iid + ' ' + f.title });
         this.app.notify('!' + iid + ' 检视失败 · ' + f.title.replace(/^步骤 \d\/7 /, ''));
       }
     } finally {
+      clearTimeout(timeoutTimer);
       await rmrf(work).catch((err) => this.log.warn('review.cleanup failed dir=' + work + ' ' + err.message));
     }
+  }
+
+  // Queued reviews become "stopped"; the running one (if any) finishes.
+  stopQueue(reason, except) {
+    for (const j of this.jobs.slice()) if (j !== except && j.status === 'queued') this.cancel(j.pid, j.iid, reason);
   }
 
   buildPrompt({ mr, commits, included, excluded, rules, lang }) {
@@ -476,8 +498,8 @@ class ReviewEngine {
       obj: j.obj || 0, objN: j.objN || 0,
       diffRead: j.tracker ? j.tracker.read.size : 0, diffN: j.diffN || 0, findings: j.findings.length,
       phase: j.tracker && j.tracker.wrapUp ? 'wrapup' : (j.phase || null),
-      stopNote: j.stopNote || null,
-      limitMs: this.app.cfg.opencodeTimeoutMinutes * 60000
+      stopNote: j.stopNote || null, trigger: j.trigger,
+      limitMs: j.limitMs || this.app.cfg.reviewTimeoutMinutes * 60000
     }));
   }
 }

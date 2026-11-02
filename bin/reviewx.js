@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const { loadConfig, localDataDir, ConfigError } = require('../src/config');
+const { loadConfig, reviewxHome, ConfigError } = require('../src/config');
 const { StoreError } = require('../src/store');
 const { App, openExternal } = require('../src/app');
 const { createServer } = require('../src/server');
@@ -57,7 +57,8 @@ async function main() {
   }
 
   // Single instance per machine.
-  const lockDir = ensureDir(process.env.REVIEWX_LOCK_DIR || path.join(localDataDir(), 'ReviewX'));
+  // All ReviewX files live next to the config file or in the data directory (R13).
+  const lockDir = ensureDir(process.env.REVIEWX_LOCK_DIR || reviewxHome());
   const lockFile = path.join(lockDir, 'instance.json');
   let lock = null;
   try { lock = JSON.parse(fs.readFileSync(lockFile, 'utf8')); } catch { /* none */ }
@@ -96,7 +97,7 @@ async function main() {
     console.log('  访问地址：' + url);
     console.log('  诊断日志：' + app.logger.currentPath());
     console.log('  配置文件：' + cfg.configPath);
-    console.log('  数据目录：' + cfg.dataDir);
+    console.log('  数据目录：' + cfg.dataDir + (cfg.legacyDataDir ? '（沿用旧版本的默认位置；要改用 %APPDATA%\\ReviewX，请移动数据后在配置文件中设置 dataDir）' : ''));
     console.log('按 Ctrl+C 停止服务。');
     if (args.open && !openExternal(url)) console.log('无法自动打开浏览器，请手动访问上面的地址。');
   });
@@ -107,6 +108,7 @@ async function main() {
     stopping = true;
     console.log('\n正在停止 ReviewX…');
     app.logger.info('server.stop');
+    app.automation.stop();
     const done = app.engine.stopAll().catch(() => {});
     await Promise.race([done, new Promise((r) => setTimeout(r, 8000))]);
     killAll();

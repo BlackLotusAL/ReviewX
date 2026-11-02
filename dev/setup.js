@@ -167,7 +167,7 @@ function main() {
     dataDir: path.join(MOCK, 'data'),
     codehubCommand: [process.execPath, path.join(__dirname, 'mock-codehub.js')],
     wrapUpMinutes: 6,
-    opencodeTimeoutMinutes: 9
+    reviewTimeoutMinutes: 9
   };
   fs.writeFileSync(path.join(MOCK, 'config.json'), JSON.stringify(config, null, 2));
   console.log('sandbox ready: ' + MOCK);

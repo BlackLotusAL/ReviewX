@@ -12,6 +12,8 @@ const { OpenCode } = require('./opencode');
 const { Rules } = require('./rules');
 const { McpHub } = require('./mcp');
 const { ReviewEngine, pickCloneUrl } = require('./review');
+const { Automation } = require('./automation');
+const { saveSettings, editableValues, DEFAULT_EXCLUDES } = require('./config');
 const { renderComment, locText } = require('./finding');
 const { rmrf, isPositiveIntString, localTime, pad2 } = require('./util');
 
@@ -43,8 +45,9 @@ class App {
     this.rules = new Rules(this.store.rulesDir());
     this.mcp = new McpHub();
     this.engine = new ReviewEngine(this);
+    this.automation = new Automation(this);
     this.fetchState = {}; // pid → {status, error, startedAt}
-    this.fetch = { active: false, total: 0, done: 0, ok: 0, failed: 0, summary: '', finishedAt: null };
+    this.fetch = { active: false, total: 0, done: 0, ok: 0, failed: 0, summary: '', finishedAt: null, mode: null };
     this.sending = null;
     this.removing = new Set();
     this.rev = 0;
@@ -68,6 +71,35 @@ class App {
       const f = this.store.loadFetch(p.id);
       this.fetchState[p.id] = f ? { status: 'updated', lastSuccessAt: f.at } : { status: 'never' };
     }
+    this.automation.load();
+    this.automation.start();
+  }
+
+  // ---- automation hooks (R17, R27, R28) ----
+  isPaused() { return this.automation.isPaused(); }
+  pauseAutomation(info) { this.automation.pause(info); }
+  onReviewEnded(pid, iid) { this.automation.onReviewEnded(pid, iid); }
+
+  // ---- settings (R26) ----
+  settingsView() {
+    return {
+      values: editableValues(this.cfg),
+      readonly: { port: this.cfg.port, dataDir: this.cfg.dataDir },
+      configPath: this.cfg.configPath,
+      defaults: { excludeFileTypes: DEFAULT_EXCLUDES.slice() }
+    };
+  }
+
+  saveSettings(input) {
+    const prev = editableValues(this.cfg);
+    const r = saveSettings(this.cfg.configPath, prev, input || {});
+    if (!r.ok) return r;
+    Object.assign(this.cfg, r.values);
+    this.codehub.sem.max = this.cfg.concurrency;
+    this.automation.onSettingsChanged(prev);
+    this.logger.info('settings.save changed=' + (r.changed.join(',') || 'none'));
+    this.changed();
+    return { ok: true, changed: r.changed, values: editableValues(this.cfg) };
   }
 
   // R08: comments that were being sent when ReviewX closed become "unknown".
@@ -236,31 +268,41 @@ class App {
       this.rev++;
       for (const m of mrs) this.mrRev[pid + '/' + m.iid] = this.rev;
       this.logger.info('mr.fetch project=' + pid + ' updated open=' + mrs.length);
-      return true;
+      return { ok: true, pid };
     } catch (e) {
       const prev = this.store.loadFetch(pid);
       const reason = e instanceof CodeHubError ? e.reason : e.message;
       this.fetchState[pid] = { status: 'failed', error: reason, lastSuccessAt: prev ? prev.at : null };
       this.logger.warn('mr.fetch project=' + pid + ' failed reason=' + (e.code || 'ERROR') + ' kept_previous=' + (prev ? localTime(new Date(prev.at)) : 'none'));
-      return false;
+      const code = e.code || 'ERROR';
+      const env = ['AUTH_ERROR', 'CONFIG_ERROR', 'CLI_MISSING'].includes(code);
+      const next = code === 'AUTH_ERROR' ? '请在终端运行 codehub auth login 重新登录 CodeHub CLI，然后点击「恢复」。'
+        : code === 'CLI_MISSING' ? '请安装 CodeHub CLI 并确认终端里能运行 codehub，然后点击「恢复」。'
+          : code === 'CONFIG_ERROR' ? '请运行 codehub config init 并检查 CLI 配置，然后点击「恢复」。'
+            : '恢复网络后点击「恢复」。';
+      return { ok: false, pid, code, reason, env, next };
     } finally {
       this.changed();
     }
   }
 
-  startFetch(pids) {
+  // mode: 'manual' (button) or 'auto' (R27 timer)
+  startFetch(pids, mode) {
+    mode = mode === 'auto' ? 'auto' : 'manual';
     if (this.fetch.active) throw new Error('正在获取 MR，请稍候');
     const all = this.activeProjects().map((p) => p.id);
     const list = pids && pids.length ? all.filter((id) => pids.includes(id)) : all;
     if (!list.length) throw new Error('没有关注项目');
-    this.fetch = { active: true, total: list.length, done: 0, ok: 0, failed: 0, summary: '', finishedAt: null };
-    this.logger.info('mr.fetch start projects=' + list.length + ' concurrency=' + this.cfg.concurrency);
+    this.fetch = { active: true, total: list.length, done: 0, ok: 0, failed: 0, summary: '', finishedAt: null, mode };
+    this.logger.info('mr.fetch start projects=' + list.length + ' concurrency=' + this.cfg.concurrency + ' mode=' + mode);
     for (const pid of list) this.fetchState[pid] = Object.assign({}, this.fetchState[pid], { status: 'fetching' });
     this.changed();
+    const results = [];
     const one = async (pid) => {
-      const ok = await this.fetchProject(pid);
+      const r = await this.fetchProject(pid);
+      results.push(r);
       this.fetch.done++;
-      if (ok) this.fetch.ok++; else this.fetch.failed++;
+      if (r.ok) this.fetch.ok++; else this.fetch.failed++;
       this.changed();
     };
     (async () => {
@@ -271,8 +313,9 @@ class App {
       f.active = false;
       f.finishedAt = Date.now();
       f.summary = '已更新 ' + f.ok + '/' + f.total + ' 个项目，' + f.failed + ' 个失败';
-      this.logger.info('mr.fetch done ok=' + f.ok + ' failed=' + f.failed);
-      this.notify('获取完成：' + f.summary);
+      this.logger.info('mr.fetch done ok=' + f.ok + ' failed=' + f.failed + ' mode=' + mode);
+      if (mode === 'manual' || f.failed) this.notify((mode === 'auto' ? '自动获取完成：' : '获取完成：') + f.summary);
+      this.automation.onFetchDone(mode, results, !(pids && pids.length));
       this.changed();
     })().catch((e) => {
       this.fetch.active = false;
@@ -418,6 +461,8 @@ class App {
       excludedCount: latest ? latest.excluded.length : 0,
       last: lastAttempt ? { status: lastAttempt.status, at: lastAttempt.endedAt, failure: lastAttempt.failure ? { title: lastAttempt.failure.title, step: lastAttempt.failure.step } : null, stopReason: lastAttempt.stopReason || null } : null,
       lastNewer: Boolean(lastAttempt && latest && lastAttempt.status !== 'completed' && lastAttempt.endedAt > latest.createdAt),
+      // How the review shown on the card was started (R28): 'manual' | 'auto'
+      trigger: job ? job.trigger : latest ? (latest.trigger || 'manual') : lastAttempt ? (lastAttempt.trigger || 'manual') : null,
       rev: this.mrRev[pid + '/' + iid] || 0
     };
   }
@@ -438,7 +483,7 @@ class App {
     return {
       version: VERSION, rev: this.rev, now: Date.now(),
       dataDir: this.cfg.dataDir, logPath: this.logger.currentPath(), configPath: this.cfg.configPath, rulesDir: this.rules.dir,
-      projects, mrs, queue: jobs, fetch: this.fetch, sending: this.sending,
+      projects, mrs, queue: jobs, fetch: this.fetch, sending: this.sending, automation: this.automation.view(),
       drafts: drafts.map((d) => ({ id: d.id, name: d.name, source: d.source }))
     };
   }
@@ -454,7 +499,7 @@ class App {
       const st = findingStates(info.records, r.id);
       const isLatest = idx === 0;
       return {
-        id: r.id, latest: isLatest, createdAt: r.createdAt, conclusion: r.conclusion, model: r.model,
+        id: r.id, latest: isLatest, createdAt: r.createdAt, conclusion: r.conclusion, model: r.model, trigger: r.trigger || 'manual',
         sourceSha: r.sourceSha, mrUpdatedAt: r.mrUpdatedAt, durationMs: r.durationMs,
         rules: r.rules.map((x) => x.name), skippedRules: r.skippedRules || [], excluded: r.excluded,
         changedFiles: r.changedFiles.length,

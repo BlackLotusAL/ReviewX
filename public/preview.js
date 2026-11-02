@@ -11,7 +11,10 @@
   const MODEL = 'deepseek/deepseek-chat（示例）';
   const SEV_RANK = { fatal: 0, major: 1, minor: 2, suggestion: 3 };
   const SENT = ['published', 'manual', 'failed', 'unknown', 'sending'];
-  const DATA_DIR = 'C:\\Users\\dev\\AppData\\Local\\ReviewX';
+  // R13: config file and data both default to %APPDATA%\ReviewX.
+  const DATA_DIR = 'C:\\Users\\dev\\AppData\\Roaming\\ReviewX';
+  const CONFIG_PATH = DATA_DIR + '\\config.json';
+  const DEFAULT_EXCLUDES = ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'Cargo.lock', 'go.sum', 'poetry.lock', 'Pipfile.lock', 'composer.lock', 'Gemfile.lock', '.min.js', '.min.css', '.map', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.svg', '.ttf', '.otf', '.woff', '.woff2', '.eot'];
   const MIN = 60000;
 
   const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -79,7 +82,7 @@
 
   const FAILS = {
     gitAuth: { step: 3, kind: 'env', code: 'GIT_AUTH', title: '步骤 3/7 拉取目标分支失败', reason: 'Git 认证失败', next: '在终端用 git 拉取一次该仓库，确认本机凭据管理器或 SSH 密钥可用后重新检视。', detail: "fatal: Authentication failed for 'https://codehub.example.com/platform/review-engine.git/'（预览示例）" },
-    timeout: { step: 6, kind: 'ai', code: 'OPENCODE_TIMEOUT', title: '步骤 6/7 超时', reason: '步骤 6 总时长超过「OpenCode 超时」（60 分钟）', next: '调大配置项「OpenCode 超时」（opencodeTimeoutMinutes）后重启 ReviewX，再重新检视。', detail: 'elapsed=3600s' }
+    timeout: { step: 6, kind: 'ai', code: 'REVIEW_TIMEOUT', title: '步骤 6/7 超时', reason: '检视总时长超过「检视超时」（60 分钟），已终止该检视的全部子进程', next: '大 MR 需要更长时间时，在「设置」中调大「检视超时」和「收尾时间」后重新检视。', detail: 'elapsed=3600s limit=60m' }
   };
 
   const EXCL = [{ path: 'pnpm-lock.yaml', reason: '锁文件' }, { path: 'public/logo.svg', reason: '图片' }, { path: 'public/fonts/inter.woff2', reason: '字体' }];
@@ -123,13 +126,18 @@
           mr('603', '支持逐条发送检视意见', 'feat/send-one', 'zhao.liu', 7.2 * 60 * MIN)
         ],
         318: [
-          mr('88', '升级 Netty 到 4.1.114', 'chore/netty-4.1.114', 'sun.ba', 3 * 60 * MIN),
+          mr('88', 'WIP: 升级 Netty 到 4.1.114', 'chore/netty-4.1.114', 'sun.ba', 3 * 60 * MIN),
           mr('91', '对账任务改造为幂等', 'feat/recon-idempotent', 'zhou.jiu', 2 * 60 * MIN),
           mr('95', '退款支持多次部分退款', 'feat/partial-refund', 'wu.shi', 50 * MIN)
         ]
       },
       fetched: {}, fetchState: {}, failOnce: { 202: true },
-      fetch: { active: false, total: 3, done: 3, ok: 2, failed: 1, summary: '已更新 2/3 个项目，1 个失败', finishedAt: now - 25 * MIN },
+      fetch: { active: false, total: 3, done: 3, ok: 2, failed: 1, summary: '已更新 2/3 个项目，1 个失败', finishedAt: now - 25 * MIN, mode: 'auto' },
+      settings: {
+        values: { autoFetch: true, autoFetchIntervalMinutes: 60, autoReviewNewMr: true, autoReviewNewVersion: true, skipKeywords: ['WIP', 'Draft'], stopQueueOnFailure: false, reviewTimeoutMinutes: 60, wrapUpMinutes: 50, outputLanguage: '中文', concurrency: 6, excludeFileTypes: DEFAULT_EXCLUDES.slice() },
+        readonly: { port: 17080, dataDir: DATA_DIR }, configPath: CONFIG_PATH, defaults: { excludeFileTypes: DEFAULT_EXCLUDES.slice() }
+      },
+      auto: { paused: null, lastFetch: { at: now - 25 * MIN, mode: 'auto' }, nextFetchAt: now + 35 * MIN, seen: {}, handled: {} },
       attempts: {}, reports: {}, records: {},
       queue: [], sending: null, removing: {},
       rules: [], logs: []
@@ -167,8 +175,11 @@
     attempt(s, '202/603', { status: 'stopped', stopReason: 'ReviewX 关闭时中断', endedAt: now - 5 * 60 * MIN });
 
     // A review already running and one waiting behind it.
+    // Baseline: what is in the MR list now is not auto-reviewed (R28).
+    for (const pid of Object.keys(s.fetched)) for (const m of s.fetched[pid].mrs) { s.auto.seen[pid + '/' + m.iid] = true; s.auto.handled[pid + '/' + m.iid] = m.updatedAt; }
+    s.reports['101/404'][0].trigger = 'auto';
     s.queue.push(job(s, '101', '403', { status: 'running', step: 5, startedAt: now - 5200, stepStartedAt: now - 1500, times: [1100, 2100, 1500, 800], obj: 7 }));
-    s.queue.push(job(s, '101', '402', {}));
+    s.queue.push(job(s, '101', '402', { trigger: 'auto' }));
 
     s.rules = [
       rule('global/security.md', 'global', '安全', '', true, true, RULE_BODY.security, { hits: 22, sent: 17, dismissed: 5 }),
@@ -216,7 +227,9 @@
     const plan = PLANS[key] || { files: 4 + (Number(iid) % 9), findings: [['emptyConf', 'pending'], ['cacheKey'], [], ['logBody', 'truncate']][Number(iid) % 4] };
     const j = Object.assign({ id: nid('rv'), pid, iid, title: m.title || '!' + iid, status: 'queued', queuedAt: Date.now(), step: 0, times: [], obj: 0, objN: 0, diffRead: 0, diffN: 0, findings: 0, phase: null, stopNote: null, limitMs: LIMIT_MS, plan, found: [] }, extra || {});
     if (j.status === 'running') { j.objN = plan.files; j.diffN = plan.files; }
-    const a = attempt(s, key, { status: j.status === 'queued' ? 'queued' : 'running', queuedAt: j.queuedAt });
+    j.trigger = j.trigger === 'auto' ? 'auto' : 'manual';
+    j.limitMs = (s.settings ? s.settings.values.reviewTimeoutMinutes : 60) * 60000;
+    const a = attempt(s, key, { status: j.status === 'queued' ? 'queued' : 'running', queuedAt: j.queuedAt, trigger: j.trigger });
     j.id = a.id;
     return j;
   }
@@ -295,6 +308,7 @@
           excludedCount: latest ? latest.excluded.length : 0,
           last: la ? { status: la.status, at: la.endedAt, failure: la.failure ? { title: la.failure.title, step: la.failure.step } : null, stopReason: la.stopReason || null } : null,
           lastNewer: Boolean(la && latest && la.status !== 'completed' && la.endedAt > latest.createdAt),
+          trigger: j ? j.trigger : latest ? (latest.trigger || 'manual') : la ? (la.trigger || 'manual') : null,
           rev: st.mrRev[key] || 0
         });
       }
@@ -302,7 +316,7 @@
     return {
       version: '1.0.0（预览）', rev: st.rev, now: Date.now(), preview: true,
       dataDir: DATA_DIR, logPath: DATA_DIR + '\\logs\\' + new Date().toISOString().slice(0, 10) + '.log', configPath: 'C:\\Users\\dev\\AppData\\Roaming\\ReviewX\\config.json', rulesDir: DATA_DIR + '\\rules',
-      projects, mrs, queue: st.queue.map(jobView), fetch: st.fetch, sending: st.sending ? { pid: st.sending.pid, iid: st.sending.iid, reportId: st.sending.reportId, fid: st.sending.fid } : null,
+      projects, mrs, queue: st.queue.map(jobView), fetch: st.fetch, automation: automationView(), sending: st.sending ? { pid: st.sending.pid, iid: st.sending.iid, reportId: st.sending.reportId, fid: st.sending.fid } : null,
       drafts: st.rules.filter((r) => r.draft && !r.error).map((r) => ({ id: r.id, name: r.name, source: r.source }))
     };
   }
@@ -316,7 +330,7 @@
     const reports = reps.map((r, idx) => {
       const stt = states(key, r.id);
       return {
-        id: r.id, latest: idx === 0, createdAt: r.createdAt, conclusion: r.conclusion, model: r.model, sourceSha: r.sourceSha, mrUpdatedAt: r.mrUpdatedAt, durationMs: r.durationMs,
+        id: r.id, latest: idx === 0, trigger: r.trigger || 'manual', createdAt: r.createdAt, conclusion: r.conclusion, model: r.model, sourceSha: r.sourceSha, mrUpdatedAt: r.mrUpdatedAt, durationMs: r.durationMs,
         rules: r.rules, skippedRules: r.skippedRules, excluded: r.excluded, changedFiles: r.changedFiles,
         findings: r.findings.map((f) => {
           let s = stateOf(stt, key, r.id, f.id);
@@ -380,18 +394,91 @@
     const f = st.fetch;
     f.active = false; f.finishedAt = Date.now();
     f.summary = '已更新 ' + f.ok + '/' + f.total + ' 个项目，' + f.failed + ' 个失败';
-    log('INFO', 'mr.fetch done ok=' + f.ok + ' failed=' + f.failed);
-    toast('获取完成：' + f.summary);
+    log('INFO', 'mr.fetch done ok=' + f.ok + ' failed=' + f.failed + ' mode=' + f.mode);
+    st.auto.lastFetch = { at: f.finishedAt, mode: f.mode };
+    st.auto.nextFetchAt = f.finishedAt + st.settings.values.autoFetchIntervalMinutes * 60000;
+    toast((f.mode === 'auto' ? '自动获取完成：' : '获取完成：') + f.summary);
+    autoReview();
     changed();
   }
 
-  function startFetch(pids) {
+  // R28: queue new MRs and new versions after each fetch.
+  function autoReview() {
+    const V = st.settings.values; const A = st.auto;
+    if (!(V.autoReviewNewMr || V.autoReviewNewVersion) || A.paused) return;
+    const queued = [];
+    for (const p of active()) {
+      for (const m of openMrs(p.id)) {
+        const key = p.id + '/' + m.iid;
+        const t = m.title.toLowerCase();
+        if (V.skipKeywords.some((w) => t.includes(w.toLowerCase()))) {
+          if (!A.seen[key]) log('INFO', 'review.auto_skip !' + m.iid + ' project=' + p.id + ' reason=keyword');
+          continue;
+        }
+        const firstSeen = !A.seen[key];
+        A.seen[key] = true;
+        if (A.handled[key] === m.updatedAt) continue;
+        const latest = (st.reports[key] || [])[0];
+        const isNew = firstSeen && !(st.attempts[key] || []).length;
+        const isNewVer = Boolean(latest && latest.mrUpdatedAt !== m.updatedAt);
+        if (!((V.autoReviewNewMr && isNew) || (V.autoReviewNewVersion && isNewVer))) continue;
+        if (st.queue.some((j) => j.pid === p.id && j.iid === m.iid)) continue;
+        enqueue(p.id, m.iid, 'auto');
+        A.handled[key] = m.updatedAt;
+        queued.push('!' + m.iid);
+      }
+    }
+    if (queued.length) toast('已自动加入检视队列：' + queued.join('、'));
+  }
+
+  function automationView() {
+    const V = st.settings.values; const A = st.auto;
+    return { paused: A.paused, autoFetch: V.autoFetch, intervalMinutes: V.autoFetchIntervalMinutes, nextFetchAt: V.autoFetch && !A.paused ? A.nextFetchAt : null, lastFetch: A.lastFetch, autoReview: V.autoReviewNewMr || V.autoReviewNewVersion };
+  }
+
+  function pauseAutomation(info) {
+    if (st.auto.paused) return;
+    st.auto.paused = Object.assign({ at: Date.now() }, info);
+    log('ERROR', 'automation.paused code=' + info.code + ' reason=' + info.reason);
+    changed();
+  }
+
+  // R26: same checks as src/config.js.
+  function saveSettings(input) {
+    const cur = st.settings.values; const v = Object.assign({}, cur, input || {});
+    const errors = {};
+    const int = (x, min, max) => Number.isInteger(x) && x >= min && x <= max;
+    for (const k of Object.keys(input || {})) if (!(k in cur)) errors[k] = k === 'port' || k === 'dataDir' ? '只能在配置文件中修改' : '未知配置项';
+    if (!int(v.autoFetchIntervalMinutes, 5, 10080)) errors.autoFetchIntervalMinutes = '须为不小于 5 的整数';
+    if (!int(v.reviewTimeoutMinutes, 1, 1440)) errors.reviewTimeoutMinutes = '须为正整数';
+    if (!int(v.wrapUpMinutes, 1, 1440)) errors.wrapUpMinutes = '须为正整数';
+    else if (!errors.reviewTimeoutMinutes && v.wrapUpMinutes >= v.reviewTimeoutMinutes) errors.wrapUpMinutes = '须小于检视超时（' + v.reviewTimeoutMinutes + ' 分钟）';
+    if (!int(v.concurrency, 1, 64)) errors.concurrency = '须为正整数（不超过 64）';
+    if (!Array.isArray(v.excludeFileTypes) || v.excludeFileTypes.some((x) => typeof x !== 'string' || !x.trim() || /[\/\\\s]/.test(x))) errors.excludeFileTypes = '只匹配文件名，不能包含目录或空格';
+    if (!Array.isArray(v.skipKeywords) || v.skipKeywords.some((x) => typeof x !== 'string' || !x.trim())) errors.skipKeywords = '须为非空字符串组成的列表';
+    if (typeof v.outputLanguage !== 'string' || !v.outputLanguage.trim()) errors.outputLanguage = '须为非空字符串';
+    if (Object.keys(errors).length) { const e = new Error('设置不合法，未保存'); e.data = { errors }; throw e; }
+    const changedKeys = Object.keys(cur).filter((k) => JSON.stringify(cur[k]) !== JSON.stringify(v[k]));
+    if ((v.autoReviewNewMr && !cur.autoReviewNewMr) || (v.autoReviewNewVersion && !cur.autoReviewNewVersion)) {
+      for (const p of active()) for (const m of openMrs(p.id)) { st.auto.seen[p.id + '/' + m.iid] = true; st.auto.handled[p.id + '/' + m.iid] = m.updatedAt; }
+      log('INFO', 'automation.baseline');
+    }
+    st.settings.values = v;
+    if (cur.autoFetchIntervalMinutes !== v.autoFetchIntervalMinutes || (!cur.autoFetch && v.autoFetch)) {
+      st.auto.nextFetchAt = Math.max((st.auto.lastFetch ? st.auto.lastFetch.at : Date.now()) + v.autoFetchIntervalMinutes * 60000, Date.now() + 60000);
+    }
+    log('INFO', 'settings.save changed=' + (changedKeys.join(',') || 'none'));
+    changed();
+    return { ok: true, changed: changedKeys, values: clone(v) };
+  }
+
+  function startFetch(pids, mode) {
     if (st.fetch.active) throw new Error('正在获取 MR，请稍候');
     const all = active().map((p) => p.id);
     const list = pids ? all.filter((x) => pids.includes(x)) : all;
     if (!list.length) throw new Error('没有关注项目');
-    st.fetch = { active: true, total: list.length, done: 0, ok: 0, failed: 0, summary: '', finishedAt: null };
-    log('INFO', 'mr.fetch start projects=' + list.length + ' concurrency=6');
+    st.fetch = { active: true, total: list.length, done: 0, ok: 0, failed: 0, summary: '', finishedAt: null, mode: mode === 'auto' ? 'auto' : 'manual' };
+    log('INFO', 'mr.fetch start projects=' + list.length + ' concurrency=' + st.settings.values.concurrency + ' mode=' + st.fetch.mode);
     list.forEach((pid) => { st.fetchState[pid] = Object.assign({}, st.fetchState[pid], { status: 'fetching' }); });
     changed();
     list.forEach((pid, i) => {
@@ -418,14 +505,14 @@
     });
   }
 
-  function enqueue(pid, iid) {
+  function enqueue(pid, iid, trigger) {
     const key = pid + '/' + iid;
     if (st.queue.some((j) => j.pid === pid && j.iid === iid)) throw new Error('该 MR 已有检视在排队或进行中');
     if (!openMr(pid, iid)) throw new Error('该 MR 不在最近一次获取的开放 MR 列表中');
-    const j = job(st, pid, iid, {});
+    const j = job(st, pid, iid, { trigger });
     st.queue.push(j);
     const pos = st.queue.filter((x) => x.status === 'queued').length;
-    log('INFO', 'review.enqueue !' + iid + ' project=' + pid + ' position=' + pos);
+    log('INFO', 'review.enqueue !' + iid + ' project=' + pid + ' position=' + pos + ' trigger=' + j.trigger);
     changed(key);
     return { position: pos, total: pos };
   }
@@ -471,7 +558,7 @@
     const now = Date.now();
     j.times[6] = now - j.stepStartedAt;
     const excluded = j.plan.excluded ? j.plan.excluded.map((x) => ({ path: x[0], reason: x[1] })) : EXCL.slice(0, 1 + (Number(j.iid) % 3));
-    const r = { id: nid('rp'), preview: true, createdAt: now, conclusion, model: conclusion === 'empty' ? null : MODEL, sourceSha: hex(), mrUpdatedAt: m.updatedAt, durationMs: now - j.startedAt, rules: usedRules(j), skippedRules: j.pid === '101' ? [{ name: 'naming-old', reason: '缺少开头的 --- 元信息块' }] : [], excluded, changedFiles: j.plan.files, findings };
+    const r = { id: nid('rp'), preview: true, trigger: j.trigger, createdAt: now, conclusion, model: conclusion === 'empty' ? null : MODEL, sourceSha: hex(), mrUpdatedAt: m.updatedAt, durationMs: now - j.startedAt, rules: usedRules(j), skippedRules: j.pid === '101' ? [{ name: 'naming-old', reason: '缺少开头的 --- 元信息块' }] : [], excluded, changedFiles: j.plan.files, findings };
     (st.reports[key] = st.reports[key] || []).unshift(r);
     endJob(j, 'completed', { reportId: r.id, conclusion });
     log('INFO', 'review.done !' + j.iid + ' project=' + j.pid + ' result=' + conclusion + ' findings=' + findings.length + ' model=' + (r.model || '-') + ' duration=' + Math.round(r.durationMs / 1000) + 's');
@@ -492,17 +579,26 @@
   function rulesFor(pid) { return st.rules.filter((r) => r.enabled && !r.error && !r.draft && (r.scope === 'global' || r.scope === pid)).map((r) => r.name); }
 
   function fail(j, def) {
-    const failure = Object.assign({ completedSteps: def.step - 1, findingsSubmitted: j.found.length, stopsQueue: def.kind === 'env' || def.kind === 'ai', unread: null }, def);
+    const env = def.kind === 'env';
+    const stopsQueue = env || (def.kind === 'ai' && st.settings.values.stopQueueOnFailure);
+    const failure = Object.assign({ completedSteps: def.step - 1, findingsSubmitted: j.found.length, stopsQueue, pausesAutomation: env, unread: null }, def);
     j.times[j.step - 1] = null;
     endJob(j, 'failed', { failure });
-    log('ERROR', 'review.failed !' + j.iid + ' project=' + j.pid + ' step=' + def.step + '/7 code=' + def.code + ' reason=' + def.reason + ' queue=' + (failure.stopsQueue ? 'stopped' : 'continue'));
-    if (failure.stopsQueue) for (const q of st.queue.slice()) if (q.status === 'queued') cancel(q.pid, q.iid, '队列已停止：!' + j.iid + ' 检视失败');
+    log('ERROR', 'review.failed !' + j.iid + ' project=' + j.pid + ' step=' + def.step + '/7 code=' + def.code + ' reason=' + def.reason + ' queue=' + (stopsQueue ? 'stopped' : 'continue') + (env ? ' automation=paused' : ''));
+    if (stopsQueue) for (const q of st.queue.slice()) if (q.status === 'queued') cancel(q.pid, q.iid, env ? '队列已停止 · ' + def.reason : '队列已停止：!' + j.iid + ' 检视失败');
+    if (env) pauseAutomation({ reason: def.reason, next: def.next, code: def.code, source: '!' + j.iid + ' ' + def.title });
     toast('!' + j.iid + ' 检视失败 · ' + def.title.replace(/^步骤 \d\/7 /, ''));
   }
 
   function tick() {
+    const V = st.settings.values;
+    if (V.autoFetch && !st.auto.paused && st.auto.nextFetchAt && Date.now() >= st.auto.nextFetchAt && !st.fetch.active) {
+      st.auto.nextFetchAt = Date.now() + V.autoFetchIntervalMinutes * 60000;
+      try { startFetch(null, 'auto'); } catch { /* no projects */ }
+    }
     const j = st.queue[0];
     if (!j) return;
+    if (j.status === 'queued' && st.auto.paused) return;
     const now = Date.now();
     const key = j.pid + '/' + j.iid;
     if (j.status === 'queued') {
@@ -740,7 +836,11 @@
       return { text: '已清除 ' + shortName(p.path) + ' 的代码缓存，下次检视时重建' };
     }],
     ['POST', /^\/api\/projects\/(\d+)\/open$/, (m) => { const p = project(m[1]); return { text: '预览模式不会打开浏览器。实际会打开 ' + (p ? p.webUrl : 'CodeHub 项目页') }; }],
-    ['POST', /^\/api\/fetch$/, (m, b) => { startFetch(b.pid ? [String(b.pid)] : null); return { ok: true }; }],
+    ['POST', /^\/api\/fetch$/, (m, b) => { startFetch(b.pid ? [String(b.pid)] : null, 'manual'); return { ok: true }; }],
+    ['GET', /^\/api\/settings$/, () => st.settings],
+    ['POST', /^\/api\/settings$/, (m, b) => saveSettings(b.values)],
+    ['POST', /^\/api\/settings\/open-dir$/, () => ({ text: '预览模式不会打开资源管理器。实际会打开 %APPDATA%\\ReviewX' })],
+    ['POST', /^\/api\/automation\/resume$/, () => { const was = Boolean(st.auto.paused); st.auto.paused = null; if (was) log('INFO', 'automation.resume by=user'); changed(); return { resumed: was }; }],
     ['POST', /^\/api\/reviews$/, (m, b) => enqueue(String(b.pid), String(b.iid))],
     ['POST', /^\/api\/reviews\/stop$/, (m, b) => { stop(String(b.pid), String(b.iid)); return { ok: true }; }],
     ['POST', /^\/api\/reviews\/cancel$/, (m, b) => { cancel(String(b.pid), String(b.iid)); return { ok: true }; }],

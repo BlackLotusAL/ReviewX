@@ -73,7 +73,7 @@ test('appendJsonl isolates a torn trailing record', () => {
 
 test('concurrent project additions both persist', async () => {
   const dir = tmp();
-  const app = new App({ dataDir: dir, port: 1, concurrency: 2, codehubCommand: 'codehub', gitCommand: 'git', opencodeCommand: 'opencode', excludeFileTypes: [], opencodeTimeoutMinutes: 2, wrapUpMinutes: 1 });
+  const app = new App({ dataDir: dir, port: 1, concurrency: 2, codehubCommand: 'codehub', gitCommand: 'git', opencodeCommand: 'opencode', excludeFileTypes: [], reviewTimeoutMinutes: 2, wrapUpMinutes: 1 });
   app.init();
   let n = 0;
   app.codehub.repoView = async (id) => { await new Promise((r) => setTimeout(r, 30 + (n++) * 10)); return { full_name: 'g/p' + id, web_url: null, clone_urls: null }; };
