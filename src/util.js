@@ -97,13 +97,25 @@ class Semaphore {
   }
   async acquire() {
     if (this.active < this.max) { this.active++; return; }
+    // The slot is taken for us in drain() before we are woken.
     await new Promise((r) => this.waiters.push(r));
-    this.active++;
   }
   release() {
     this.active--;
-    const next = this.waiters.shift();
-    if (next) next();
+    this.drain();
+  }
+  // Start waiters only while there is room under the current limit.
+  drain() {
+    while (this.active < this.max && this.waiters.length) {
+      this.active++;
+      this.waiters.shift()();
+    }
+  }
+  // A new limit applies at once: more room starts waiters now; less room lets
+  // running calls finish and starts nothing until below the new limit.
+  setMax(max) {
+    this.max = Math.max(1, max);
+    this.drain();
   }
   async use(fn) {
     await this.acquire();

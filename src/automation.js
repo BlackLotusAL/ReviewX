@@ -152,6 +152,7 @@ class Automation {
     if (!this.reviewEnabled() || this.isPaused()) return [];
     const queued = [];
     for (const p of this.app.activeProjects()) {
+      if (this.app.removing && this.app.removing.has(p.id)) continue; // being removed (R22)
       for (const m of this.app.openMrs(p.id)) {
         const key = p.id + '/' + m.iid;
         if (onlyKey && key !== onlyKey) continue;
@@ -185,6 +186,13 @@ class Automation {
   }
 
   // R28 去重: a new version that showed up during a review is queued once it ends.
+  // A project being removed gets no more deferred reviews.
+  forgetProject(pid) {
+    if (!this.state) return;
+    for (const key of Object.keys(this.state.deferred)) if (key.startsWith(pid + '/')) delete this.state.deferred[key];
+    this.save();
+  }
+
   onReviewEnded(pid, iid) {
     const key = pid + '/' + iid;
     if (!this.state || !this.state.deferred[key]) return;

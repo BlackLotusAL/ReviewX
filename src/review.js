@@ -350,7 +350,7 @@ class ReviewEngine {
             timeoutMinutes: cfg.reviewTimeoutMinutes, signal, tracker,
             onProgress: () => { job.phase = tracker.wrapUp ? 'wrapup' : 'review'; this.app.changed(pid, iid); }, rawLog
           });
-          model = await this.app.opencode.modelOf(r.sessionId, copy);
+          model = await this.app.opencode.modelOf(r.sessionId, copy, signal);
           if (!model) this.log.warn('review.model unknown !' + iid);
         } finally {
           this.app.mcp.close(token);

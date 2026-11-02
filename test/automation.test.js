@@ -224,3 +224,69 @@ test('an install that never set dataDir keeps its data in the old default locati
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 });
+
+// ---- PR #8 review fixes ----
+
+test('wrap-up keeps the configured point unless preparation used it up', () => {
+  const { effectiveWrapAt } = require('../src/opencode');
+  const now = 1000000;
+  // 2-minute timeout, 1-minute wrap-up, steps 1–5 finished at once: wrap up at minute 1.
+  assert.equal(effectiveWrapAt(now + 60000, now + 120000, now), now + 60000);
+  // Wrap-up point already passed: a few minutes to read the diff, capped at the deadline.
+  assert.equal(effectiveWrapAt(now - 1000, now + 3600000, now), now + 300000);
+  assert.equal(effectiveWrapAt(now - 1000, now + 120000, now), now + 120000);
+});
+
+test('the model export stops when the review is aborted', async () => {
+  const { OpenCode } = require('../src/opencode');
+  const script = path.join(tmp(), 'slow.js');
+  fs.writeFileSync(script, 'setTimeout(() => {}, 20000);');
+  const oc = new OpenCode({ opencodeCommand: [process.execPath, script] }, quiet);
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(), 100);
+  const t0 = Date.now();
+  assert.equal(await oc.modelOf('ses_x', tmp(), ctl.signal), null);
+  assert.ok(Date.now() - t0 < 5000);
+});
+
+test('no deferred auto review starts for a project being removed', () => {
+  const app = autoApp();
+  app.removing = new Set();
+  app.mrs[1] = [mr('1', 'a')];
+  app.automation.load();
+  app.reports['1/1'] = { mrUpdatedAt: 'a' };
+  app.attempts['1/1'] = [{ status: 'completed' }];
+  app.mrs[1][0] = mr('1', 'b');
+  app.jobs['1/1'] = { status: 'running' };
+  app.automation.autoReview(); // deferred while running
+  app.removing.add('1');
+  app.automation.forgetProject('1');
+  delete app.jobs['1/1'];
+  app.automation.onReviewEnded('1', '1');
+  assert.deepEqual(app.enq, []);
+  // Even with the deferral still recorded, a project being removed is skipped.
+  app.automation.state.deferred['1/1'] = true;
+  app.automation.onReviewEnded('1', '1');
+  assert.deepEqual(app.enq, []);
+});
+
+test('changing the CLI concurrency applies to calls already waiting', async () => {
+  const { Semaphore } = require('../src/util');
+  const sem = new Semaphore(3);
+  let running = 0; let peak = 0; const releases = [];
+  const job = () => sem.use(() => new Promise((r) => { running++; peak = Math.max(peak, running); releases.push(() => { running--; r(); }); }));
+  const all = Array.from({ length: 8 }, job);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(running, 3);
+  sem.setMax(1);
+  peak = 0;
+  // Finish the three running calls: only one waiter may start in their place.
+  for (let i = 0; i < 3; i++) { releases.shift()(); await new Promise((r) => setImmediate(r)); }
+  assert.equal(running, 1);
+  sem.setMax(4); // more room starts waiters at once
+  await new Promise((r) => setImmediate(r));
+  assert.equal(running, 4);
+  while (releases.length) { releases.shift()(); await new Promise((r) => setImmediate(r)); }
+  await Promise.all(all);
+  assert.equal(running, 0);
+});

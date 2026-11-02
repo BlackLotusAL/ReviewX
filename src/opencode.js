@@ -60,6 +60,13 @@ function buildConfig({ mcpUrl, excludes, wrapUp }) {
   };
 }
 
+// The configured wrap-up point, unless steps 1–5 already used up the time
+// before it: then the session still gets a few minutes to read the diff.
+function effectiveWrapAt(wrapAt, deadline, now) {
+  const at = wrapAt > now ? wrapAt : now + 5 * 60000;
+  return Math.min(at, deadline);
+}
+
 function isSubmitTool(name) { return /^reviewx[_-]/.test(name || '') && /(report_finding|finish_review)$/.test(name); }
 
 class OpenCode {
@@ -74,9 +81,11 @@ class OpenCode {
     return r;
   }
 
-  async modelOf(sessionId, cwd) {
+  // signal: the review's abort signal, so the export stops at the review deadline too.
+  async modelOf(sessionId, cwd, signal) {
     try {
-      const r = await run(this.cmd(), ['export', sessionId], { cwd, env: cleanEnv(), timeoutMs: 60000 });
+      const r = await run(this.cmd(), ['export', sessionId], { cwd, env: cleanEnv(), timeoutMs: 60000, signal });
+      if (r.aborted) return null;
       const j = JSON.parse(r.stdout.slice(r.stdout.indexOf('{')));
       const m = j.info && j.info.model;
       if (m && m.id) return (m.providerID ? m.providerID + '/' : '') + m.id;
@@ -100,9 +109,7 @@ class OpenCode {
   async review(opts) {
     const t0 = Date.now();
     const deadline = opts.deadline;
-    // If steps 1–5 already used up the time before the wrap-up point, still give
-    // the session a few minutes to read the diff before asking it to wrap up.
-    const wrapAt = Math.min(Math.max(opts.wrapAt, t0 + 5 * 60000), deadline);
+    const wrapAt = effectiveWrapAt(opts.wrapAt, deadline, t0);
     const tr = opts.tracker;
     let sessionId = null;
     let violation = null;
@@ -219,4 +226,4 @@ class OpenCode {
   }
 }
 
-module.exports = { OpenCode, buildConfig, cleanEnv };
+module.exports = { OpenCode, buildConfig, cleanEnv, effectiveWrapAt };

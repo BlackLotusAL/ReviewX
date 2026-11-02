@@ -95,7 +95,7 @@ class App {
     const r = saveSettings(this.cfg.configPath, prev, input || {});
     if (!r.ok) return r;
     Object.assign(this.cfg, r.values);
-    this.codehub.sem.max = this.cfg.concurrency;
+    this.codehub.sem.setMax(this.cfg.concurrency);
     this.automation.onSettingsChanged(prev);
     this.logger.info('settings.save changed=' + (r.changed.join(',') || 'none'));
     this.changed();
@@ -204,6 +204,7 @@ class App {
     if (this.removing.has(pid)) throw new Error('该项目正在移除');
     if (this.sending && this.sending.pid === pid) throw new Error('该项目有评论正在发送，请等发送结束后再移除');
     this.removing.add(pid);
+    this.automation.forgetProject(pid);
     this.changed();
     try {
       await this.engine.stopProject(pid);
