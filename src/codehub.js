@@ -47,6 +47,7 @@ class CodeHub {
 
   async call(args, opts = {}) {
     const cmd = this.resolved();
+    // Waiting for a free CLI slot is cancelled too (e.g. at the review deadline).
     return this.sem.use(async () => {
       let res;
       try {
@@ -68,7 +69,7 @@ class CodeHub {
       if (err && err.code) throw new CodeHubError(err.code, err.message, err.http_status);
       if (res.timedOut) throw new CodeHubError(args[0] === 'mr' && args[1] === 'comment' ? 'WRITE_RESULT_UNKNOWN' : 'NETWORK_ERROR', 'CLI 调用超时');
       throw new CodeHubError(res.code === 8 ? 'NETWORK_ERROR' : res.code === 3 ? 'AUTH_ERROR' : 'HTTP_ERROR', 'CLI 退出码 ' + res.code);
-    });
+    }, opts.signal).catch((e) => { throw e && e.name === 'AbortError' ? new CodeHubError('CANCELLED') : e; });
   }
 
   repoView(pid, o) { return this.call(['repo', 'view', String(pid)], o); }

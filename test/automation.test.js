@@ -290,3 +290,43 @@ test('changing the CLI concurrency applies to calls already waiting', async () =
   await Promise.all(all);
   assert.equal(running, 0);
 });
+
+test('waiting for a CLI slot ends when the review is aborted', async () => {
+  const { CodeHub } = require('../src/codehub');
+  const ch = new CodeHub({ codehubCommand: [process.execPath, '-e', ''], concurrency: 1 }, quiet);
+  await ch.sem.acquire(); // a fetch holds the only slot
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(), 50);
+  const t0 = Date.now();
+  await assert.rejects(ch.mrView('1', '2', { signal: ctl.signal }), (e) => e.code === 'CANCELLED');
+  assert.ok(Date.now() - t0 < 2000);
+  assert.equal(ch.sem.waiters.length, 0);
+  ch.sem.release();
+  assert.equal(ch.sem.active, 0);
+});
+
+test('a running older version (lock in the old location) blocks startup before data is touched', async () => {
+  const http = require('http');
+  const { spawn } = require('child_process');
+  const home = tmp();
+  const roaming = path.join(home, 'roaming'); const local = path.join(home, 'local');
+  const legacy = path.join(local, 'ReviewX');
+  fs.mkdirSync(path.join(legacy, 'tmp', 'rv-active'), { recursive: true });
+  fs.writeFileSync(path.join(legacy, 'projects.json'), '[]');
+  // A stand-in for the older instance.
+  const old = http.createServer((req, res) => { res.end(JSON.stringify({ app: 'ReviewX', version: '1.0.0' })); });
+  await new Promise((r) => old.listen(0, '127.0.0.1', r));
+  fs.writeFileSync(path.join(legacy, 'instance.json'), JSON.stringify({ pid: process.pid, port: old.address().port }));
+  const env = Object.assign({}, process.env, { APPDATA: roaming, LOCALAPPDATA: local, XDG_CONFIG_HOME: roaming, XDG_DATA_HOME: local });
+  delete env.REVIEWX_LOCK_DIR; delete env.REVIEWX_CONFIG;
+  // The test process stands in for the old pid, so the lock reads as alive.
+  const out = await new Promise((resolve) => {
+    const p = spawn(process.execPath, [path.join(__dirname, '..', 'bin', 'reviewx.js'), '--no-open'], { env });
+    let s = ''; p.stdout.on('data', (b) => { s += b; });
+    p.on('close', () => resolve(s));
+    setTimeout(() => p.kill(), 15000);
+  });
+  old.close();
+  assert.match(out, /ReviewX 已在运行/);
+  assert.ok(fs.existsSync(path.join(legacy, 'tmp', 'rv-active')), 'the older instance\'s working files are kept');
+});

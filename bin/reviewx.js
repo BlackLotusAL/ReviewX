@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const { loadConfig, reviewxHome, ConfigError } = require('../src/config');
+const { loadConfig, reviewxHome, localDataDir, ConfigError } = require('../src/config');
 const { StoreError } = require('../src/store');
 const { App, openExternal } = require('../src/app');
 const { createServer } = require('../src/server');
@@ -56,13 +56,19 @@ async function main() {
     throw e;
   }
 
-  // Single instance per machine.
-  // All ReviewX files live next to the config file or in the data directory (R13).
+  // Single instance per machine, checked before any data is touched.
+  // All ReviewX files live next to the config file or in the data directory (R13);
+  // older versions kept the lock under %LOCALAPPDATA%\ReviewX, so that one is
+  // checked too, and also written when it exists so older versions see us.
   const lockDir = ensureDir(process.env.REVIEWX_LOCK_DIR || reviewxHome());
   const lockFile = path.join(lockDir, 'instance.json');
-  let lock = null;
-  try { lock = JSON.parse(fs.readFileSync(lockFile, 'utf8')); } catch { /* none */ }
-  if (lock && lock.pid !== process.pid && alive(lock.pid)) {
+  const legacyDir = path.join(localDataDir(), 'ReviewX');
+  const lockFiles = [lockFile];
+  if (!process.env.REVIEWX_LOCK_DIR && path.resolve(legacyDir) !== path.resolve(lockDir) && fs.existsSync(legacyDir)) lockFiles.push(path.join(legacyDir, 'instance.json'));
+  for (const f of lockFiles) {
+    let lock = null;
+    try { lock = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* none */ }
+    if (!lock || lock.pid === process.pid || !alive(lock.pid)) continue;
     const info = await ping(lock.port);
     if (info && info.app === 'ReviewX') {
       const url = 'http://127.0.0.1:' + lock.port + '/';
@@ -90,7 +96,8 @@ async function main() {
     process.exit(2);
   });
   server.listen(cfg.port, '127.0.0.1', () => {
-    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, port: cfg.port, startedAt: new Date().toISOString() }));
+    const lockData = JSON.stringify({ pid: process.pid, port: cfg.port, startedAt: new Date().toISOString() });
+    for (const f of lockFiles) { try { fs.writeFileSync(f, lockData); } catch { /* best effort for the legacy copy */ } }
     const url = 'http://127.0.0.1:' + cfg.port + '/';
     app.logger.info('server.start addr=127.0.0.1:' + cfg.port + ' data=' + cfg.dataDir + ' version=' + pkg.version);
     console.log('ReviewX ' + pkg.version + ' 已启动');
@@ -113,10 +120,12 @@ async function main() {
     await Promise.race([done, new Promise((r) => setTimeout(r, 8000))]);
     killAll();
     server.close();
-    try {
-      const cur = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
-      if (cur.pid === process.pid) fs.unlinkSync(lockFile);
-    } catch { /* ignore */ }
+    for (const f of lockFiles) {
+      try {
+        const cur = JSON.parse(fs.readFileSync(f, 'utf8'));
+        if (cur.pid === process.pid) fs.unlinkSync(f);
+      } catch { /* ignore */ }
+    }
     process.exit(0);
   };
   process.on('SIGINT', shutdown);
