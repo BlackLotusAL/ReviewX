@@ -122,7 +122,7 @@ class Store {
     const map = new Map();
     for (const e of this.readAttemptEvents(pid, iid)) {
       const a = map.get(e.id) || { id: e.id };
-      if (e.t === 'queued') { a.queuedAt = e.at; a.status = 'queued'; }
+      if (e.t === 'queued') { a.queuedAt = e.at; a.status = 'queued'; a.trigger = e.trigger || 'manual'; }
       if (e.t === 'started') { a.startedAt = e.at; a.status = 'running'; }
       if (e.t === 'ended') Object.assign(a, { endedAt: e.at, status: e.status, reportId: e.reportId, conclusion: e.conclusion, failure: e.failure, stopReason: e.stopReason, steps: e.steps });
       map.set(e.id, a);

@@ -55,7 +55,17 @@ function createServer(app) {
     return { text: '已在浏览器打开 CodeHub 项目 ' + pr.path };
   });
 
-  route('POST', '/api/fetch', (p, b) => { app.startFetch(b.pid ? [String(b.pid)] : null); return { ok: true }; });
+  route('POST', '/api/fetch', (p, b) => { app.startFetch(b.pid ? [String(b.pid)] : null, 'manual'); return { ok: true }; });
+
+  // Settings page (R26); same origin checks as every other API.
+  route('GET', '/api/settings', () => app.settingsView());
+  route('POST', '/api/settings', (p, b) => {
+    const r = app.saveSettings(b.values || {});
+    if (!r.ok) { const err = new HttpError(400, '设置不合法，未保存'); err.data = { errors: r.errors }; throw err; }
+    return r;
+  });
+  route('POST', '/api/settings/open-dir', () => { app.openExternal(path.dirname(app.cfg.configPath)); return { text: '已在资源管理器打开 ' + path.dirname(app.cfg.configPath) }; });
+  route('POST', '/api/automation/resume', () => ({ resumed: app.automation.resume() }));
 
   route('POST', '/api/reviews', (p, b) => app.engine.enqueue(b.pid, b.iid));
   route('POST', '/api/reviews/stop', (p, b) => { app.engine.stop(String(b.pid), String(b.iid)); return { ok: true }; });
@@ -156,7 +166,7 @@ function createServer(app) {
     } catch (e) {
       const status = e.status || 400;
       if (status >= 500 || !e.status) app.logger.warn('http ' + req.method + ' ' + req.url.split('?')[0] + ' error=' + e.message);
-      if (!res.headersSent) send(res, status, { error: e.message });
+      if (!res.headersSent) send(res, status, Object.assign({ error: e.message }, e.data || {}));
       else res.end();
     }
   });

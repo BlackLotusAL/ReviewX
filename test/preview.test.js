@@ -27,7 +27,7 @@ function get(port, p) {
 test('/preview serves the preview page and its scripts', async () => {
   const port = await freePort();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rx-pv-'));
-  const app = new App({ dataDir: dir, port, concurrency: 2, codehubCommand: 'codehub', gitCommand: 'git', opencodeCommand: 'opencode', excludeFileTypes: [], opencodeTimeoutMinutes: 2, wrapUpMinutes: 1 });
+  const app = new App({ dataDir: dir, port, concurrency: 2, codehubCommand: 'codehub', gitCommand: 'git', opencodeCommand: 'opencode', excludeFileTypes: [], reviewTimeoutMinutes: 2, wrapUpMinutes: 1 });
   app.init();
   const server = createServer(app);
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
@@ -155,6 +155,39 @@ test('preview backend: sample data, decisions and project validation', async () 
     const rules = await be.request('GET', '/api/rules');
     assert.ok(rules.rules.some((r) => r.error));
     assert.ok(rules.rules.some((r) => r.draft));
+  } finally {
+    stop();
+  }
+});
+
+test('preview settings: validation errors per field, save applies (R26)', async () => {
+  const { be, stop } = loadPreview();
+  try {
+    const s = await be.request('GET', '/api/settings');
+    assert.equal(s.values.autoFetchIntervalMinutes, 60);
+    await assert.rejects(be.request('POST', '/api/settings', { values: { autoFetchIntervalMinutes: 3, wrapUpMinutes: 70 } }),
+      (e) => Boolean(e.data && e.data.errors.autoFetchIntervalMinutes && e.data.errors.wrapUpMinutes));
+    const r = await be.request('POST', '/api/settings', { values: { autoFetch: false } });
+    assert.deepEqual(r.changed, ['autoFetch']);
+    const st = await be.request('GET', '/api/state');
+    assert.equal(st.automation.autoFetch, false);
+    assert.equal(st.automation.nextFetchAt, null);
+  } finally {
+    stop();
+  }
+});
+
+test('preview auto review after a fetch: new MRs queued, WIP skipped (R28)', async () => {
+  const { be, stop } = loadPreview();
+  try {
+    await be.request('POST', '/api/fetch', {});
+    await wait(3500);
+    const st = await be.request('GET', '/api/state');
+    const q = st.queue.filter((j) => j.pid === '318').map((j) => j.iid + ':' + j.trigger);
+    assert.ok(q.includes('91:auto'));
+    assert.ok(!st.queue.some((j) => j.iid === '88'));
+    assert.equal(st.automation.lastFetch.mode, 'manual');
+    assert.equal(st.mrs.find((m) => m.iid === '91').trigger, 'auto');
   } finally {
     stop();
   }

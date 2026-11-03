@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { resolveCommand, run, killTree } = require('./proc');
 const { sleep } = require('./util');
-const { ReviewFailure, Stopped } = require('./failure');
+const { ReviewFailure, Stopped, timeoutFailure } = require('./failure');
 
 const READ_TOOLS = ['read', 'glob', 'grep'];
 
@@ -60,6 +60,13 @@ function buildConfig({ mcpUrl, excludes, wrapUp }) {
   };
 }
 
+// The configured wrap-up point, unless steps 1–5 already used up the time
+// before it: then the session still gets a few minutes to read the diff.
+function effectiveWrapAt(wrapAt, deadline, now) {
+  const at = wrapAt > now ? wrapAt : now + 5 * 60000;
+  return Math.min(at, deadline);
+}
+
 function isSubmitTool(name) { return /^reviewx[_-]/.test(name || '') && /(report_finding|finish_review)$/.test(name); }
 
 class OpenCode {
@@ -74,9 +81,11 @@ class OpenCode {
     return r;
   }
 
-  async modelOf(sessionId, cwd) {
+  // signal: the review's abort signal, so the export stops at the review deadline too.
+  async modelOf(sessionId, cwd, signal) {
     try {
-      const r = await run(this.cmd(), ['export', sessionId], { cwd, env: cleanEnv(), timeoutMs: 60000 });
+      const r = await run(this.cmd(), ['export', sessionId], { cwd, env: cleanEnv(), timeoutMs: 60000, signal });
+      if (r.aborted) return null;
       const j = JSON.parse(r.stdout.slice(r.stdout.indexOf('{')));
       const m = j.info && j.info.model;
       if (m && m.id) return (m.providerID ? m.providerID + '/' : '') + m.id;
@@ -93,10 +102,14 @@ class OpenCode {
    *       tracker { diffFiles:Set<rel>, read:Set<rel>, finished:bool, count:int, wrapUp:bool },
    *       onProgress(), rawLog(line)
    */
+  /**
+   * The wrap-up time and the timeout are absolute points counted from step 1
+   * of the review (R11): opts.wrapAt and opts.deadline (ms since epoch).
+   */
   async review(opts) {
     const t0 = Date.now();
-    const deadline = t0 + opts.timeoutMs;
-    const wrapAt = t0 + opts.wrapUpMs;
+    const deadline = opts.deadline;
+    const wrapAt = effectiveWrapAt(opts.wrapAt, deadline, t0);
     const tr = opts.tracker;
     let sessionId = null;
     let violation = null;
@@ -169,9 +182,7 @@ class OpenCode {
       if (contextOverflow) {
         throw new ReviewFailure({ step: 6, kind: 'context', code: 'CONTEXT_OVERFLOW', title: '步骤 6/7 上下文超限', reason: 'OpenCode 自动压缩后仍超出模型上下文上限', next: '该 MR 规模超出模型能力，建议改为人工检视；队列中的其余检视继续执行。', detail: contextOverflow.slice(0, 500) });
       }
-      if (Date.now() >= deadline) {
-        throw new ReviewFailure({ step: 6, kind: 'ai', code: 'OPENCODE_TIMEOUT', title: '步骤 6/7 超时', reason: '步骤 6 总时长超过「OpenCode 超时」（' + Math.round(opts.timeoutMs / 60000) + ' 分钟）', next: '调大配置项「OpenCode 超时」（opencodeTimeoutMinutes）后重启 ReviewX，再重新检视。', detail: 'elapsed=' + Math.round((Date.now() - t0) / 1000) + 's' });
-      }
+      if (Date.now() >= deadline) throw timeoutFailure(6, opts.timeoutMinutes, Date.now() - opts.startedAt);
       return res;
     };
 
@@ -208,11 +219,11 @@ class OpenCode {
     throw new ReviewFailure({
       step: 6, kind: 'ai', code: 'REVIEW_INCOMPLETE', title: '步骤 6/7 检视未完成',
       reason: truncated ? '模型推理超出输出上限：收尾时输出再次被截断，未调用 finish_review' : (stillUnread.length ? '收尾后仍有 ' + stillUnread.length + ' 个差异文件未读' : 'AI 收尾后仍未调用 finish_review'),
-      next: '调大配置项「收尾时间」（wrapUpMinutes）和「OpenCode 超时」（opencodeTimeoutMinutes）后重启 ReviewX，再重新检视。已提交的意见不会保存为报告。',
+      next: '在「设置」中调大「收尾时间」和「检视超时」后重新检视。已提交的意见不会保存为报告。',
       unread: stillUnread.length ? [...new Set(stillUnread)] : null,
       detail: (lastError || '').slice(-1000)
     });
   }
 }
 
-module.exports = { OpenCode, buildConfig, cleanEnv };
+module.exports = { OpenCode, buildConfig, cleanEnv, effectiveWrapAt };

@@ -12,7 +12,7 @@
     clock: 'M12 8v4l3 2M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0', doc: 'M14 3H5v18h14V8Zm0 0v5h5M8 12h8M8 16h6',
     log: 'M4 6h16M4 12h16M4 18h10', check: 'm5 12 4 4L19 6',
     warn: 'M12 8v5m0 3v.01M10.3 4.8 2.8 18a1.5 1.5 0 0 0 1.3 2h15.8a1.5 1.5 0 0 0 1.3-2L13.7 4.8a2 2 0 0 0-3.4 0Z',
-    minus: 'M5 12h14', folder: 'M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z',
+    minus: 'M5 12h14', sliders: 'M4 6h9m4 0h3M4 12h3m4 0h9M4 18h11m4 0h1M15 4v4M9 10v4M17 16v4', folder: 'M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z',
     send: 'm21 3-7 18-4-7-7-4ZM21 3 10 14', ext: 'M14 4h6v6m0-6L10 14M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5',
     file: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Zm0 0v5h5'
   };
@@ -65,7 +65,7 @@
     const res = await fetch(url, { method, headers: Object.assign({ 'X-ReviewX': '1' }, body ? { 'Content-Type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin' });
     let j = {};
     try { j = await res.json(); } catch { /* empty */ }
-    if (!res.ok) throw new Error(j.error || ('请求失败（' + res.status + '）'));
+    if (!res.ok) { const err = new Error(j.error || ('请求失败（' + res.status + '）')); err.data = j; throw err; }
     return j;
   }
 
@@ -77,7 +77,8 @@
     pid: '', pidMsg: null, pidBusy: false, flash: null,
     confirmBulk: false, toast: null,
     rules: null, ruleScope: 'global', ruleSel: null, edit: null, scopeMenu: null, scopeQ: '',
-    logs: [], logPath: '', logErrorsOnly: false, busy: {}
+    logs: [], logPath: '', logErrorsOnly: false, busy: {},
+    settings: null, setDraft: null, setErr: {}, setMsg: null, skipQ: '', exQ: '', exErr: ''
   };
 
   function toast(text) {
@@ -113,7 +114,7 @@
     if (!j || !j.step) return '';
     const el = now() - (j.stepStartedAt || now());
     if (j.step === 5) return (long ? '文件 ' : '') + j.obj + '/' + j.objN + (long ? '' : ' 个文件');
-    if (j.step === 6) return (j.phase === 'wrapup' ? '收尾中 · ' : '') + '差异 ' + j.diffRead + '/' + j.diffN + ' · 意见 ' + j.findings + ' 条 · ' + mmss(el) + ' / ' + mmss(j.limitMs);
+    if (j.step === 6) return (j.phase === 'wrapup' ? '收尾中 · ' : '') + '差异 ' + j.diffRead + '/' + j.diffN + ' · 意见 ' + j.findings + ' 条 · ' + mmss(now() - (j.startedAt || now())) + ' / ' + mmss(j.limitMs);
     if (j.step === 7) return '意见 ' + j.objN + '/' + j.objN;
     return '已运行 ' + mmss(el);
   }
@@ -128,7 +129,7 @@
     }
     const html = '<div>' + (S.connected ? '' : '<div class="conn" role="alert">与 ReviewX 服务的连接已断开，正在重连…（服务停止后请在终端重新运行 reviewx）</div>') +
       (PREVIEW ? '<div class="preview-bar" role="note"><b>预览模式</b><span>使用示例数据，所有操作只在本页面里模拟：不会连接 CodeHub、Git 或 OpenCode，也不会写入任何本机文件。刷新页面即恢复初始数据。</span><button type="button" class="btn btn-s" style="min-height: 30px; padding: 0 12px; font-size: 12px" data-act="previewReset">重置示例数据</button></div>' : '') +
-      '<div class="layout">' + sidebar() + '<main class="main">' + (S.view === 'mr' ? viewMr() : S.view === 'rules' ? viewRules() : viewLogs()) + '</main></div>' +
+      '<div class="layout">' + sidebar() + '<main class="main">' + (S.view === 'mr' ? viewMr() : S.view === 'rules' ? viewRules() : S.view === 'settings' ? viewSettings() : viewLogs()) + '</main></div>' +
       drawer() + dialog() + (S.toast ? '<div class="toast" role="status">' + esc(S.toast.text) + '</div>' : '') + '</div>';
     const tpl = document.createElement('template');
     tpl.innerHTML = html;
@@ -179,14 +180,16 @@
   function sidebar() {
     const s = S.srv;
     const pendingTotal = s.mrs.reduce((n, m) => n + (projFailed(m.pid) ? 0 : m.pending), 0);
-    const nav = [['mr', '检视队列', IC.branch, pendingTotal ? pendingTotal + ' 待处理' : ''], ['rules', '规则配置', IC.doc, s.drafts.length ? s.drafts.length + ' 草稿' : ''], ['logs', '会话日志', IC.log, '']];
+    const paused = Boolean(s.automation && s.automation.paused);
+    const nav = [['mr', '检视队列', IC.branch, pendingTotal ? pendingTotal + ' 待处理' : ''], ['rules', '规则配置', IC.doc, s.drafts.length ? s.drafts.length + ' 草稿' : ''], ['logs', '会话日志', IC.log, ''], ['settings', '设置', IC.sliders, paused ? '已暂停' : '']];
+    const badge = { mr: ['#eaf3ff', '#0059b8'], settings: ['#fff0f1', '#ac3039'] };
     let h = '<aside aria-label="导航与项目" class="side">';
     h += '<div style="display: flex; align-items: center; gap: 10px; padding: 0 4px"><span aria-hidden="true" style="position: relative; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: #121212; color: #ffffff; font-size: 17px; line-height: 1; font-weight: 700; letter-spacing: -0.06em; padding: 0 0 2px 1px; box-sizing: border-box"><span style="display: inline-flex; align-items: baseline">rx<span style="display: inline-block; width: 4px; height: 4px; margin-left: 2px; background: #3d9bff; border-radius: 50%"></span></span></span><span style="font-size: 17px; font-weight: 600; letter-spacing: -0.02em">ReviewX</span></div>';
     h += '<nav aria-label="视图" style="display: flex; flex-direction: column; gap: 4px">';
     for (const n of nav) {
       const on = S.view === n[0];
       h += '<button type="button" class="navlink" ' + data({ act: 'go', view: n[0] }) + (on ? ' aria-current="page"' : '') + ' style="background: ' + (on ? '#ffffff' : 'transparent') + '; border-color: ' + (on ? '#e1e3e6' : 'transparent') + '; color: ' + (on ? '#121212' : '#62686c') + '; font-weight: ' + (on ? 500 : 400) + '">' + ico(n[2]) + esc(n[1]) +
-        (n[3] ? '<span style="margin-left: auto; font-size: 12px; font-weight: 500; color: ' + (n[0] === 'mr' ? '#0059b8' : '#62686c') + '; background: ' + (n[0] === 'mr' ? '#eaf3ff' : '#eef0f2') + '; padding: 0 8px; border-radius: 999px">' + esc(n[3]) + '</span>' : '') + '</button>';
+        (n[3] ? '<span style="margin-left: auto; font-size: 12px; font-weight: 500; color: ' + (badge[n[0]] || ['', '#62686c'])[1] + '; background: ' + (badge[n[0]] || ['#eef0f2'])[0] + '; padding: 0 8px; border-radius: 999px">' + esc(n[3]) + '</span>' : '') + '</button>';
     }
     h += '</nav>';
     const bad = S.pidMsg && S.pidMsg.tone === 'bad';
@@ -287,7 +290,8 @@
     let h = '<article data-key="c-' + m.pid + '-' + m.iid + '" style="position: relative; display: flex; flex-direction: column; gap: 10px; min-height: 204px; box-sizing: border-box; padding: 20px 24px 18px; border: ' + vm.border + '; border-radius: 14px; background: ' + vm.bg + '; opacity: ' + (staleGroup ? 0.55 : 1) + '; overflow: hidden">';
     h += '<div style="display: flex; align-items: center; gap: 10px; font-size: 13px"><button type="button" class="tbtn mono" ' + data(Object.assign({ act: 'openMrWeb' }, k)) + ' aria-label="在 CodeHub 打开 MR !' + esc(m.iid) + '" ' + attr({ disabled: !m.webUrl }) + ' style="font-weight: 600; color: #121212">!' + esc(m.iid) + '</button>' +
       (m.isDraft ? '<span class="pill" style="background: #eef0f2; color: #62686c; padding: 0 8px">Draft</span>' : '') +
-      (vm.stale ? '<span class="pill" style="background: #fdf6ec; color: #7a4a10; padding: 0 8px" title="报告基于旧版本">旧版本</span>' : '') + '</div>';
+      (vm.stale ? '<span class="pill" style="background: #fdf6ec; color: #7a4a10; padding: 0 8px" title="报告基于旧版本">旧版本</span>' : '') +
+      (m.trigger === 'auto' && (j || m.state === 'done') ? '<span class="pill" style="background: #eef0f2; color: #3b3f42; padding: 0 8px">自动检视</span>' : '') + '</div>';
     h += '<h3 style="margin: 0; font-size: 17px; font-weight: 600; line-height: 1.5"><button type="button" class="tbtn title2" ' + data(Object.assign({ act: 'open' }, k)) + ' title="' + esc(m.title) + '">' + esc(m.title) + '</button></h3>';
     h += '<p style="margin: -4px 0 0; font-size: 13px; color: #8c9195; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">' + esc(tm) + (m.author ? ' · ' + esc(m.author) : '') + '</p>';
     if (vm.segs) h += '<div role="img" aria-label="步骤 ' + (j ? j.step : 0) + '/7" style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; margin-top: 4px">' + vm.segs.map((sg) => '<span style="height: 4px; border-radius: 2px; background: ' + sg.c + '; animation: ' + (sg.a ? 'rxbreathe 1.6s ease-in-out infinite' : 'none') + '"></span>').join('') + '</div>';
@@ -305,9 +309,27 @@
     const pendingTotal = s.mrs.reduce((n, m) => n + (projFailed(m.pid) ? 0 : m.pending), 0);
     const next = nextPendingMr();
     const nextKey = next ? next.pid + '/' + next.iid : null;
-    let h = '<header style="position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px">';
+    const au = s.automation || {};
+    let h = '';
+    if (au.paused) {
+      h += '<div role="alert" style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 0 0 28px; padding: 16px 20px; border: 1px solid #efc9cc; border-radius: 14px; background: #fff8f8">' +
+        ico(IC.warn, '', 'color: #ac3039; width: 20px; height: 20px') +
+        '<div style="flex: 1 1 420px; min-width: 0"><p style="margin: 0; font-size: 15px; font-weight: 600; color: #ac3039">队列已停止，自动化已暂停</p><p style="margin: 2px 0 0; font-size: 13px; line-height: 1.6; color: #3b3f42">' +
+        esc(au.paused.reason + '（' + hm(au.paused.at) + (au.paused.source ? ' · ' + au.paused.source : '') + '）。' + (au.paused.next || '排除原因后点击「恢复」。') + '排队中的检视已转为已停止，需要时重新发起。') + '</p></div>' +
+        '<button type="button" class="btn btn-p" data-act="resume">恢复</button></div>';
+    }
+    let meta; let metaFg = '#62686c'; let autoOff = false;
+    if (au.paused) { meta = '自动化已暂停'; metaFg = '#ac3039'; }
+    else if (f.active) meta = '<span class="spin" style="color: #62686c; margin-right: 6px; vertical-align: -1px"></span>' + (f.mode === 'auto' ? '自动获取中' : '获取中') + ' · 项目 ' + f.done + '/' + f.total + ' · ' + f.failed + ' 个失败';
+    else {
+      const lf = au.lastFetch;
+      meta = esc(lf ? '上次获取 ' + hm(lf.at) + '（' + (lf.mode === 'auto' ? '自动' : '手动') + '）' : '尚未获取 MR');
+      if (au.autoFetch) meta += au.nextFetchAt ? ' · 下次自动获取 ' + hm(au.nextFetchAt) : '';
+      else { meta += ' · 自动获取已关闭'; autoOff = true; }
+    }
+    h += '<header style="position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px">';
     h += '<div style="display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 20px"><h1 style="margin: 0; font-size: 32px; line-height: 1.4; font-weight: 600">检视队列</h1>' +
-      '<span role="status" style="font-size: 13px; color: #62686c">' + (f.active ? '<span class="spin" style="color: #62686c; margin-right: 6px; vertical-align: -1px"></span>获取中 · 项目 ' + f.done + '/' + f.total + ' 完成 · ' + f.failed + ' 个失败' : (f.summary ? esc(f.summary) + ' · ' + hm(f.finishedAt) : '')) + '</span></div>';
+      '<span role="status" style="font-size: 13px; color: ' + metaFg + '">' + meta + (autoOff ? ' · <button type="button" class="tbtn" data-act="go" data-view="settings" style="color: #0059b8; font-weight: 600">去设置</button>' : '') + '</span></div>';
     h += '<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px">' +
       '<button type="button" class="btn btn-s" aria-expanded="' + S.queueOpen + '" data-act="toggleQueue">' + (running ? '<span class="spin" style="color: #3b3f42"></span>' : '') + esc(running + queued ? '运行中 ' + running + ' · 排队 ' + queued : '队列空闲') + ico(IC.chevDown, 'ico-s', 'transform: ' + (S.queueOpen ? 'rotate(180deg)' : 'none')) + '</button>' +
       '<button type="button" class="btn btn-s" ' + attr({ disabled: f.active || !s.projects.length }) + ' data-act="fetchAll">' + ico(IC.refresh) + (f.active ? '获取中…' : '获取 MR') + '</button>' +
@@ -375,7 +397,7 @@
       '<dt style="color: #62686c">影响</dt><dd style="margin: 0">!' + esc(iid) + ' 本次检视未完成，不会生成报告；已有的报告和处理记录不受影响。</dd>' +
       '<dt style="color: #62686c">原因</dt><dd style="margin: 0">' + esc(fl.reason) + '</dd>' +
       '<dt style="color: #62686c">进度</dt><dd style="margin: 0">' + esc(progress) + '</dd>' +
-      '<dt style="color: #62686c">队列</dt><dd style="margin: 0"><b style="font-weight: 600">' + (fl.stopsQueue ? '已停止，其余排队中的检视已转为「已停止」' : '继续执行其余检视') + '</b></dd>' +
+      '<dt style="color: #62686c">队列</dt><dd style="margin: 0"><b style="font-weight: 600">' + (fl.pausesAutomation ? '已停止，排队中的检视已转为「已停止」；全部自动化已暂停，排除原因后在页面顶部点击「恢复」' : fl.stopsQueue ? '已停止（已开启「失败时停止队列」），排队中的检视已转为「已停止」' : '继续执行其余检视') + '</b></dd>' +
       (fl.next ? '<dt style="color: #62686c">下一步</dt><dd style="margin: 0">' + esc(fl.next) + '</dd>' : '') + '</dl>';
     if (fl.unread && fl.unread.length) h += '<details style="margin-top: 12px; font-size: 12px"><summary style="display: flex; align-items: center; gap: 6px; color: #3b3f42">未读的差异文件（' + fl.unread.length + '）' + ico(IC.chevRight, 'ico-s chev') + '</summary><ul class="mono" style="margin: 6px 0 0; padding-left: 18px">' + fl.unread.map((u) => '<li>' + esc(u) + '</li>').join('') + '</ul></details>';
     if (fl.detail || fl.code) h += '<details style="margin-top: 14px; border-top: 1px solid #edc4c7; padding-top: 10px; color: #62686c; font-size: 12px"><summary style="display: flex; align-items: center; gap: 6px">技术详情' + ico(IC.chevRight, 'ico-s chev') + '</summary><p class="mono" style="margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere">' + esc(fl.code + (fl.detail ? '\n' + fl.detail : '')) + '</p></details>';
@@ -431,7 +453,8 @@
       '<p style="margin: 8px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 13px; color: #62686c">' + esc((pr && pr.path) || (d && d.projectPath) || '') +
       '<button type="button" class="tbtn mono" ' + data({ act: 'openMrWeb', pid, iid }) + ' style="display: inline-flex; align-items: center; gap: 4px; font-weight: 500; color: #3b3f42; text-decoration: underline; text-decoration-color: #c6c9cc; text-underline-offset: 3px">!' + esc(iid) + ico(IC.ext, 'ico-s') + '</button>' +
       (m && m.sourceBranch ? '<span class="mono" style="font-size: 12px">' + esc(m.sourceBranch) + ' → ' + esc(m.targetBranch) + '</span>' : '') +
-      (closed ? '<span class="pill" style="background: #eef0f2; color: #62686c">已不在开放列表</span>' : '') + '</p></div>' +
+      (closed ? '<span class="pill" style="background: #eef0f2; color: #62686c">已不在开放列表</span>' : '') +
+      (m && m.trigger === 'auto' && (job || m.state === 'done') ? '<span class="pill" style="background: #eef0f2; color: #3b3f42">自动检视</span>' : '') + '</p></div>' +
       '<button type="button" aria-label="关闭详情" class="btn btn-q" data-act="closeDrawer" style="width: 38px; min-height: 38px; padding: 0; background: #f5f7f8; flex: 0 0 auto">' + ico(IC.x) + '</button></header>';
     h += '<div style="padding: 22px clamp(18px, 4vw, 36px) 60px">';
     if (!d) return h + '<p style="color: #62686c">加载中…</p></div></section></div>';
@@ -577,6 +600,7 @@
     const rows = [
       ['报告时间', ymdhm(rep.createdAt)],
       ['代码版本', (rep.sourceSha || '').slice(0, 10) + ' · MR 更新于 ' + mdhm(rep.mrUpdatedAt)],
+      ['触发方式', rep.trigger === 'auto' ? '自动（自动检视）' : '手动'],
       ['模型', rep.model || '未调用 OpenCode'],
       ['耗时', dur(rep.durationMs)],
       ['使用的规则', rep.rules.length ? rep.rules.join('、') : '无'],
@@ -675,6 +699,139 @@
     return h + '</div>';
   }
 
+  // ---- settings (R26) ----
+  const SET_NAMES = {
+    autoFetch: '自动获取 MR', autoFetchIntervalMinutes: '获取间隔', autoReviewNewMr: '自动检视新 MR', autoReviewNewVersion: '自动检视新版本',
+    skipKeywords: '跳过关键词', stopQueueOnFailure: '失败时停止队列', reviewTimeoutMinutes: '检视超时', wrapUpMinutes: '收尾时间',
+    outputLanguage: '输出语言', concurrency: 'CLI 并发数', excludeFileTypes: '排除文件类型'
+  };
+  const SET_NUM = ['autoFetchIntervalMinutes', 'reviewTimeoutMinutes', 'wrapUpMinutes', 'concurrency'];
+  const setSaved = () => S.settings.values;
+  const setDraft = () => S.setDraft || S.settings.values;
+  const sameVal = (a, b) => JSON.stringify(a) === JSON.stringify(b) || (typeof a !== 'object' && String(a).trim() === String(b).trim());
+  const setChanged = () => Object.keys(SET_NAMES).filter((k) => !sameVal(setDraft()[k], setSaved()[k]));
+  function setPatch(patch) { S.setDraft = Object.assign({}, setDraft(), patch); S.setMsg = null; render(); }
+
+  // Same rules as the server (src/config.js); the server checks again on save.
+  function validateDraft(D) {
+    const e = {};
+    const pos = (v) => /^[1-9]\d*$/.test(String(v).trim());
+    if (!/^\d+$/.test(String(D.autoFetchIntervalMinutes).trim()) || Number(D.autoFetchIntervalMinutes) < 5) e.autoFetchIntervalMinutes = '须为不小于 5 的整数';
+    if (!pos(D.reviewTimeoutMinutes)) e.reviewTimeoutMinutes = '须为正整数';
+    if (!pos(D.wrapUpMinutes)) e.wrapUpMinutes = '须为正整数';
+    else if (pos(D.reviewTimeoutMinutes) && Number(D.wrapUpMinutes) >= Number(D.reviewTimeoutMinutes)) e.wrapUpMinutes = '须小于检视超时（' + String(D.reviewTimeoutMinutes).trim() + ' 分钟）';
+    if (!pos(D.concurrency)) e.concurrency = '须为正整数';
+    return e;
+  }
+
+  function viewSettings() {
+    let h = '<header style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px"><div><h1 style="margin: 0; font-size: 32px; line-height: 1.4; font-weight: 600">设置</h1><p style="margin: 2px 0 0; font-size: 14px; color: #62686c">保存后立即生效；进行中的检视按开始时的设置执行完毕。</p></div>';
+    if (!S.settings) return h + '</header><p style="color: #62686c; margin-top: 24px">加载中…</p>';
+    h += '<div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap"><span class="mono" style="font-size: 12px; color: #62686c; overflow-wrap: anywhere">' + esc(S.settings.configPath) + '</span><button type="button" class="btn btn-s" data-act="settingsOpenDir">打开所在目录</button></div></header>';
+    const D = setDraft(); const V = setSaved(); const E = S.setErr || {};
+    const sw = (k, labelId) => '<button type="button" role="switch" aria-checked="' + Boolean(D[k]) + '" aria-labelledby="' + labelId + '" ' + data({ act: 'setToggle', key: k }) + ' style="position: relative; flex: 0 0 auto; width: 40px; height: 24px; border-radius: 999px; border: 0; padding: 0; background: ' + (D[k] ? '#121212' : '#c6c9cc') + '"><span style="position: absolute; top: 3px; left: ' + (D[k] ? '19px' : '3px') + '; width: 18px; height: 18px; border-radius: 50%; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.2)"></span></button>';
+    const row = (first, indent, left, right, err, errId) => '<div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 32px; align-items: center; padding: 18px 22px 18px ' + (indent ? '64px' : '22px') + '; border-top: ' + (first ? '0' : '1px solid #eceef0') + '"><div style="min-width: 0">' + left + '</div><div style="display: flex; align-items: center; gap: 8px; justify-content: flex-end">' + right + '</div>' +
+      (err ? '<p id="' + errId + '" role="alert" style="grid-column: 1 / -1; justify-self: end; margin: -2px 0 0; font-size: 12px; color: #ac3039">' + esc(err) + '</p>' : '') + '</div>';
+    const title = (id, text) => '<p id="' + id + '" style="margin: 0; font-size: 15px; font-weight: 600">' + text + '</p>';
+    const labelT = (forId, text, fg) => '<label for="' + forId + '" style="display: block; font-size: 15px; font-weight: 600' + (fg ? '; color: ' + fg : '') + '">' + text + '</label>';
+    const desc = (text) => '<p style="margin: 3px 0 0; font-size: 13px; line-height: 1.6; color: #62686c">' + text + '</p>';
+    const num = (k, id, unit, disabled) => '<input id="' + id + '" class="field mono" inputmode="numeric" autocomplete="off" ' + attr({ value: String(D[k]), 'data-input': 'set:' + k, 'aria-invalid': E[k] ? 'true' : 'false', 'aria-describedby': id + '-e', disabled: Boolean(disabled) }) + ' style="width: 84px; text-align: right; font-size: 14px; border-color: ' + (E[k] ? '#ac3039' : '#c6c9cc') + '">' + (unit ? '<span style="font-size: 14px; color: #62686c">' + unit + '</span>' : '');
+    const chips = (k, inputId, qKey, placeholder, addAct, bd) => '<div style="margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px; border: 1px solid ' + (bd || '#c6c9cc') + '; border-radius: 12px; box-sizing: border-box">' +
+      D[k].map((w) => '<span class="mono" data-key="' + esc(k + ':' + w) + '" style="display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0 2px 0 10px; border-radius: 8px; background: #eef0f2; font-size: 13px; color: #121212">' + esc(w) + '<button type="button" class="btn btn-q" aria-label="移除 ' + esc(w) + '" ' + data({ act: 'setChipRemove', key: k, v: w }) + ' style="min-height: 28px; width: 28px; padding: 0">' + ico(IC.x, 'ico-s') + '</button></span>').join('') +
+      '<input id="' + inputId + '" autocomplete="off" placeholder="' + placeholder + '" ' + attr({ value: S[qKey], 'data-input': qKey }) + ' style="flex: 1 1 180px; min-width: 140px; min-height: 32px; border: 0; padding: 0 8px; font: inherit; font-size: 13px; background: transparent; color: #121212"><button type="button" class="btn btn-q" data-act="' + addAct + '" style="min-height: 32px">添加</button></div>';
+    const section = (id, name, note, body) => '<section aria-labelledby="' + id + '"><h2 id="' + id + '" style="margin: 0 0 4px; font-size: 18px; font-weight: 600">' + name + '</h2>' + (note ? '<p style="margin: 0 0 14px; font-size: 13px; color: #62686c">' + note + '</p>' : '<div style="height: 12px"></div>') + '<div style="border: 1px solid #e1e3e6; border-radius: 16px; background: #ffffff">' + body + '</div></section>';
+    const baseline = (D.autoReviewNewMr && !V.autoReviewNewMr) || (D.autoReviewNewVersion && !V.autoReviewNewVersion);
+    const langs = [['中文', '中文'], ['English', 'English']];
+    if (!langs.some((o) => o[0] === D.outputLanguage)) langs.push([D.outputLanguage, D.outputLanguage]);
+    const exDefault = sameVal(D.excludeFileTypes, S.settings.defaults.excludeFileTypes);
+    const exErr = S.exErr || E.excludeFileTypes;
+
+    h += '<div style="max-width: 880px; margin-top: 32px; display: flex; flex-direction: column; gap: 36px">';
+    h += section('st-h-auto', '自动化', '每项可单独关闭。遇到认证失败、网络不可用等环境级错误时，全部自动化暂停，排除后在页面顶部点击「恢复」。',
+      row(true, false, title('st-af-l', '自动获取 MR') + desc('按间隔自动获取全部关注项目的开放 MR，流程与手动获取相同；单个项目失败不弹窗。'), sw('autoFetch', 'st-af-l')) +
+      row(false, true, labelT('st-interval', '获取间隔', D.autoFetch ? '' : '#8c9195') + desc('不小于 5 的整数分钟。启动后等待一个间隔再首次获取；手动获取完成后重新计时。'), num('autoFetchIntervalMinutes', 'st-interval', '分钟', !D.autoFetch), E.autoFetchIntervalMinutes, 'st-interval-e') +
+      row(false, false, title('st-nm-l', '自动检视新 MR') + desc('首次出现在 MR 列表、从未检视过的 MR 自动加入检视队列。'), sw('autoReviewNewMr', 'st-nm-l')) +
+      row(false, false, title('st-nv-l', '自动检视新版本') + desc('MR 有新提交（更新时间与最新报告不一致）时自动加入队列；同一版本只自动加入一次，失败或停止后不再自动重试。'), sw('autoReviewNewVersion', 'st-nv-l')) +
+      (baseline ? '<div role="note" style="margin: 0 22px 18px; padding: 10px 14px; border-radius: 10px; background: #eaf3ff; color: #0f3d73; font-size: 13px; line-height: 1.6">保存后以当时的 MR 列表为基线：列表中已有的 MR 及其当前版本不会被自动检视，之后出现的新 MR 和新版本才会自动加入队列。</div>' : '') +
+      '<div style="padding: 18px 22px; border-top: 1px solid #eceef0">' + labelT('st-skip', '跳过关键词') + desc('标题包含任一词的 MR 不自动检视，不区分大小写；手动检视不受影响。') + chips('skipKeywords', 'st-skip', 'skipQ', '输入关键词，按 Enter 添加', 'setAddSkip') +
+      (E.skipKeywords ? '<p role="alert" style="margin: 6px 0 0; font-size: 12px; color: #ac3039">' + esc(E.skipKeywords) + '</p>' : '') + '</div>');
+    h += section('st-h-queue', '检视队列', '',
+      row(true, false, title('st-sf-l', '失败时停止队列') + desc('步骤 6–7 失败（OpenCode 报错、超时、检视未完成、保存失败）时停止整个队列，排队中的检视转为已停止；关闭时只影响该检视。<br>认证失败、网络不可用等环境级错误始终停止队列并暂停全部自动化，不受此开关控制。'), sw('stopQueueOnFailure', 'st-sf-l')));
+    h += section('st-h-exec', '检视执行', '',
+      row(true, false, labelT('st-timeout', '检视超时') + desc('从步骤 1 开始计时，不含排队时间；超过时终止检视并判为失败。'), num('reviewTimeoutMinutes', 'st-timeout', '分钟'), E.reviewTimeoutMinutes, 'st-timeout-e') +
+      row(false, false, labelT('st-wrap', '收尾时间') + desc('到达后要求 AI 提交已有意见并结束检视，同样从步骤 1 开始计；须小于检视超时。'), num('wrapUpMinutes', 'st-wrap', '分钟'), E.wrapUpMinutes, 'st-wrap-e') +
+      row(false, false, title('st-lang-l', '输出语言') + desc('检视意见正文使用的语言；代码、标识符、文件路径和错误信息保持原文。'),
+        '<div role="radiogroup" aria-labelledby="st-lang-l" style="display: inline-flex; gap: 2px; padding: 3px; border: 1px solid #e1e3e6; border-radius: 999px; background: #f5f7f8">' + langs.map((o) => { const on = D.outputLanguage === o[0]; return '<button type="button" role="radio" aria-checked="' + on + '" ' + data({ act: 'setLang', v: o[0] }) + ' style="min-height: 34px; padding: 0 16px; border-radius: 999px; border: 1px solid ' + (on ? '#c6c9cc' : 'transparent') + '; background: ' + (on ? '#ffffff' : 'transparent') + '; color: ' + (on ? '#121212' : '#62686c') + '; font-size: 13px; font-weight: ' + (on ? 600 : 400) + '">' + esc(o[1]) + '</button>'; }).join('') + '</div>', E.outputLanguage, 'st-lang-e'));
+    h += section('st-h-fetch', '获取 MR', '',
+      row(true, false, labelT('st-cli', 'CLI 并发数') + desc('全局同时执行的 CodeHub CLI 调用上限。获取时先完成第一个项目，再并行处理其余项目。'), num('concurrency', 'st-cli', ''), E.concurrency, 'st-cli-e'));
+    h += section('st-h-ex', '排除文件', '',
+      '<div style="padding: 18px 22px"><div style="display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px">' + labelT('st-ex', '排除文件类型') +
+      '<span style="display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: #62686c">共 ' + D.excludeFileTypes.length + ' 项' + (exDefault ? '' : ' · <button type="button" class="tbtn" data-act="setResetEx" style="color: #0059b8; font-weight: 600">恢复默认清单</button>') + '</span></div>' +
+      desc('支持扩展名（.png、.min.js）和完整文件名（go.sum），只匹配文件名、不匹配目录；二进制文件按内容自动识别并排除。') +
+      chips('excludeFileTypes', 'st-ex', 'exQ', '添加扩展名或文件名', 'setAddEx', exErr ? '#ac3039' : '') +
+      (exErr ? '<p role="alert" style="margin: 6px 0 0; font-size: 12px; color: #ac3039">' + esc(exErr) + '</p>' : '') + '</div>');
+    const ro = (first, name, note, value) => row(first, false, '<p style="margin: 0; font-size: 15px; font-weight: 600">' + name + '</p>' + desc(note), '<span class="mono" style="padding: 7px 12px; border: 1px solid #e1e3e6; border-radius: 10px; background: #f5f7f8; font-size: 13px; color: #3b3f42; overflow-wrap: anywhere">' + esc(value) + '</span>');
+    h += section('st-h-ro', '仅配置文件', '以下两项只能在配置文件中修改，重启 ReviewX 后生效。',
+      ro(true, '端口', 'ReviewX 只监听 127.0.0.1 的这个端口。', String(S.settings.readonly.port)) +
+      ro(false, '数据目录', '报告与处理记录、代码缓存、规则、诊断日志都存放在这里；更改位置后不会自动迁移旧数据。', S.settings.readonly.dataDir));
+    h += '</div>';
+    const changed = setChanged();
+    const msg = S.setMsg;
+    const barText = msg ? msg.text : changed.length ? '有 ' + changed.length + ' 项修改未保存：' + changed.map((k) => SET_NAMES[k]).join('、') : '所有设置均已保存';
+    const barFg = msg ? (msg.tone === 'bad' ? '#ac3039' : '#18733f') : changed.length ? '#121212' : '#62686c';
+    h += '<div style="position: sticky; bottom: 0; z-index: 3; max-width: 880px; margin-top: 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 14px 0 20px; background: #ffffff; border-top: 1px solid #e1e3e6">' +
+      '<span role="status" style="flex: 1 1 320px; min-width: 0; font-size: 14px; font-weight: ' + (changed.length || msg ? 600 : 400) + '; color: ' + barFg + '">' + esc(barText) + '</span>' +
+      '<button type="button" class="btn btn-q" ' + attr({ disabled: !changed.length || Boolean(S.busy.settings) }) + ' data-act="setRevert">还原</button>' +
+      '<button type="button" class="btn btn-p" ' + attr({ disabled: !changed.length || Boolean(S.busy.settings) }) + ' data-act="setSave">' + (S.busy.settings ? '<span class="spin"></span>保存中' : '保存') + '</button></div>';
+    return h;
+  }
+
+  async function loadSettings() {
+    try { S.settings = await api('GET', '/api/settings'); render(); } catch (e) { toast(e.message); }
+  }
+
+  async function saveSettingsDraft() {
+    const D = setDraft();
+    const errs = validateDraft(D);
+    const names = (ks) => ks.map((k) => SET_NAMES[k] || k).join('、');
+    if (Object.keys(errs).length) {
+      S.setErr = errs;
+      S.setMsg = { text: Object.keys(errs).length + ' 项设置不合法，未保存：' + names(Object.keys(errs)) + '。已有设置保持不变', tone: 'bad' };
+      render();
+      return;
+    }
+    const values = Object.assign({}, D);
+    for (const k of SET_NUM) values[k] = Number(String(D[k]).trim());
+    S.busy.settings = true; render();
+    try {
+      const r = await api('POST', '/api/settings', { values });
+      S.settings = Object.assign({}, S.settings, { values: r.values });
+      S.setDraft = null; S.setErr = {}; S.exErr = ''; S.exQ = ''; S.skipQ = '';
+      S.setMsg = { text: '已保存 · ' + hm(Date.now()) + ' · 立即生效；进行中的检视按开始时的设置执行完毕', tone: 'ok' };
+      toast('设置已保存，立即生效');
+    } catch (e) {
+      if (e.data && e.data.errors) {
+        S.setErr = e.data.errors;
+        const ks = Object.keys(e.data.errors);
+        S.setMsg = { text: ks.length + ' 项设置不合法，未保存：' + names(ks) + '。已有设置保持不变', tone: 'bad' };
+      } else S.setMsg = { text: '保存失败：' + e.message + '。已有设置保持不变', tone: 'bad' };
+    }
+    S.busy.settings = false; render();
+  }
+
+  function addChip(key, qKey) {
+    const v = (S[qKey] || '').trim();
+    if (!v) return;
+    const list = setDraft()[key];
+    if (key === 'excludeFileTypes') {
+      if (/[\/\\\s]/.test(v)) { S.exErr = '只匹配文件名，不能包含目录或空格：' + v; render(); return; }
+      if (list.includes(v)) { S.exErr = '已在清单中：' + v; render(); return; }
+    } else if (list.some((w) => w.toLowerCase() === v.toLowerCase())) { S[qKey] = ''; render(); return; }
+    S[qKey] = ''; S.exErr = '';
+    const er = Object.assign({}, S.setErr); delete er[key]; S.setErr = er;
+    setPatch({ [key]: list.concat([v]) });
+  }
+
   // ---- logs ----
   function viewLogs() {
     const lv = { INFO: ['#eef0f2', '#59636e', '#ffffff', 'transparent'], WARN: ['#fff3e8', '#9a4a08', '#fffcf8', '#e0a96b'], ERROR: ['#fbdde0', '#ac3039', '#fff0f1', '#ac3039'] };
@@ -743,6 +900,7 @@
     if (S.drawer) { S.drawer = null; S.detail = null; }
     if (view === 'rules') loadRules(true);
     if (view === 'logs') loadLogs();
+    if (view === 'settings') loadSettings();
     render();
     window.scrollTo(0, 0);
   }
@@ -844,6 +1002,17 @@
     // logs
     copyLogPath: async () => { try { await navigator.clipboard.writeText(S.logPath || S.srv.logPath); toast('已复制日志路径'); } catch { toast('复制失败，请手动选择路径'); } },
     logErrors: () => { S.logErrorsOnly = !S.logErrorsOnly; render(); },
+    // settings
+    settingsOpenDir: () => act(() => api('POST', '/api/settings/open-dir')),
+    setToggle: (d) => setPatch({ [d.key]: !setDraft()[d.key] }),
+    setLang: (d) => setPatch({ outputLanguage: d.v }),
+    setChipRemove: (d) => setPatch({ [d.key]: setDraft()[d.key].filter((w) => w !== d.v) }),
+    setAddSkip: () => addChip('skipKeywords', 'skipQ'),
+    setAddEx: () => addChip('excludeFileTypes', 'exQ'),
+    setResetEx: () => { S.exErr = ''; setPatch({ excludeFileTypes: S.settings.defaults.excludeFileTypes.slice() }); },
+    setRevert: () => { S.setDraft = null; S.setErr = {}; S.setMsg = null; S.exErr = ''; S.exQ = ''; S.skipQ = ''; render(); },
+    setSave: () => saveSettingsDraft(),
+    resume: () => act(() => api('POST', '/api/automation/resume'), (r) => (r.resumed ? '已恢复：队列与自动化继续运行' : '自动化未处于暂停状态')),
     previewReset: () => { if (PREVIEW) { PREVIEW.reset(); S.drawer = null; S.detail = null; S.dialog = null; S.rules = null; S.ruleSel = null; S.edit = null; S.pidMsg = null; S.logs = []; if (S.view === 'rules') loadRules(false); loadLogs(); toast('已恢复初始示例数据'); } }
   };
 
@@ -868,6 +1037,13 @@
     const v = e.target.value;
     if (k === 'pid') { S.pid = v; if (S.pidMsg && S.pidMsg.tone !== 'muted') S.pidMsg = null; render(); return; }
     if (k === 'scopeQ') { S.scopeQ = v; render(); return; }
+    if (k === 'skipQ' || k === 'exQ') { S[k] = v; if (k === 'exQ') S.exErr = ''; render(); return; }
+    if (k.startsWith('set:')) {
+      const key = k.slice(4);
+      const er = Object.assign({}, S.setErr); delete er[key]; S.setErr = er;
+      setPatch({ [key]: v });
+      return;
+    }
     const sel = S.rules && S.rules.find((r) => r.id === S.ruleSel);
     if (!sel) return;
     if (!S.edit || S.edit.id !== sel.id) S.edit = { id: sel.id, name: sel.name, files: sel.files || '', body: sel.body };
@@ -879,6 +1055,8 @@
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.id === 'pid-input') { e.preventDefault(); addProject(); }
+    if (e.key === 'Enter' && e.target.id === 'st-skip') { e.preventDefault(); addChip('skipKeywords', 'skipQ'); }
+    if (e.key === 'Enter' && e.target.id === 'st-ex') { e.preventDefault(); addChip('excludeFileTypes', 'exQ'); }
     if (e.key === 'Escape') {
       if (S.dialog) { S.dialog = null; render(); } else if (S.scopeMenu) { S.scopeMenu = null; render(); } else if (S.menu) { S.menu = null; render(); } else if (S.queueOpen) { S.queueOpen = false; render(); } else if (S.drawer) closeDrawer();
     }

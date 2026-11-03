@@ -89,24 +89,52 @@ function sleep(ms, signal) {
   });
 }
 
+function abortError() {
+  const e = new Error('已取消');
+  e.name = 'AbortError';
+  return e;
+}
+
 class Semaphore {
   constructor(max) {
     this.max = Math.max(1, max);
     this.active = 0;
     this.waiters = [];
   }
-  async acquire() {
+  // signal (optional): stop waiting when it aborts; rejects with an AbortError.
+  async acquire(signal) {
+    if (signal && signal.aborted) throw abortError();
     if (this.active < this.max) { this.active++; return; }
-    await new Promise((r) => this.waiters.push(r));
-    this.active++;
+    // The slot is taken for us in drain() before we are woken.
+    await new Promise((resolve, reject) => {
+      const waiter = () => { if (signal) signal.removeEventListener('abort', onAbort); resolve(); };
+      const onAbort = () => {
+        const i = this.waiters.indexOf(waiter);
+        if (i >= 0) { this.waiters.splice(i, 1); reject(abortError()); }
+      };
+      this.waiters.push(waiter);
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    });
   }
   release() {
     this.active--;
-    const next = this.waiters.shift();
-    if (next) next();
+    this.drain();
   }
-  async use(fn) {
-    await this.acquire();
+  // Start waiters only while there is room under the current limit.
+  drain() {
+    while (this.active < this.max && this.waiters.length) {
+      this.active++;
+      this.waiters.shift()();
+    }
+  }
+  // A new limit applies at once: more room starts waiters now; less room lets
+  // running calls finish and starts nothing until below the new limit.
+  setMax(max) {
+    this.max = Math.max(1, max);
+    this.drain();
+  }
+  async use(fn, signal) {
+    await this.acquire(signal);
     try { return await fn(); } finally { this.release(); }
   }
 }

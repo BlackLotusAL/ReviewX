@@ -49,7 +49,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function startServer() {
   const port = await freePort();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rx-shots-data-'));
-  const app = new App({ dataDir, port, concurrency: 2, codehubCommand: 'codehub', gitCommand: 'git', opencodeCommand: 'opencode', excludeFileTypes: [], opencodeTimeoutMinutes: 60, wrapUpMinutes: 50 });
+  const app = new App({ dataDir, port, concurrency: 2, codehubCommand: 'codehub', gitCommand: 'git', opencodeCommand: 'opencode', excludeFileTypes: [], reviewTimeoutMinutes: 60, wrapUpMinutes: 50 });
   app.init();
   const server = createServer(app);
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
@@ -122,7 +122,7 @@ const PRELUDE = `
   if (!document.getElementById('shot-css')) {
     // The UI re-renders constantly, so hide the preview banner with a rule, not inline style.
     const st = document.createElement('style'); st.id = 'shot-css';
-    st.textContent = '.preview-bar{display:none!important}';
+    st.textContent = '.preview-bar,.toast{display:none!important}';
     document.head.appendChild(st);
   }
   document.documentElement.style.scrollBehavior = 'auto';
@@ -188,6 +188,16 @@ async function main() {
     await page.eval(PRELUDE + `
       $('[data-act="go"][data-view="rules"]').click(); await W(900);`);
     await page.shot('rules.png');
+
+    // 5. Settings: automation switches with the baseline note shown.
+    page = await openPage(browser, base + '/preview');
+    await page.eval(PRELUDE + `
+      $('[data-act="go"][data-view="settings"]').click(); await W(900);
+      $('[data-act="setToggle"][data-key="autoReviewNewVersion"]').click(); await W(200);
+      $('[data-act="setSave"]').click(); await W(500);
+      $('[data-act="setToggle"][data-key="autoReviewNewVersion"]').click(); await W(300);
+      window.scrollTo(0, 0); await W(200);`);
+    await page.shot('settings.png');
   } finally {
     browser.close();
     server.close();
