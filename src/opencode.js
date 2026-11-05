@@ -60,11 +60,9 @@ function buildConfig({ mcpUrl, excludes, wrapUp }) {
   };
 }
 
-// The configured wrap-up point, unless steps 1–5 already used up the time
-// before it: then the session still gets a few minutes to read the diff.
-function effectiveWrapAt(wrapAt, deadline, now) {
-  const at = wrapAt > now ? wrapAt : now + 5 * 60000;
-  return Math.min(at, deadline);
+// The configured wrap-up point, never later than the review deadline (R11).
+function effectiveWrapAt(wrapAt, deadline) {
+  return Math.min(wrapAt, deadline);
 }
 
 function isSubmitTool(name) { return /^reviewx[_-]/.test(name || '') && /(report_finding|finish_review)$/.test(name); }
@@ -84,7 +82,7 @@ class OpenCode {
   // signal: the review's abort signal, so the export stops at the review deadline too.
   async modelOf(sessionId, cwd, signal) {
     try {
-      const r = await run(this.cmd(), ['export', sessionId], { cwd, env: cleanEnv(), timeoutMs: 60000, signal });
+      const r = await run(this.cmd(), ['export', sessionId], { cwd, env: cleanEnv(), signal });
       if (r.aborted) return null;
       const j = JSON.parse(r.stdout.slice(r.stdout.indexOf('{')));
       const m = j.info && j.info.model;
@@ -107,9 +105,10 @@ class OpenCode {
    * of the review (R11): opts.wrapAt and opts.deadline (ms since epoch).
    */
   async review(opts) {
-    const t0 = Date.now();
     const deadline = opts.deadline;
-    const wrapAt = effectiveWrapAt(opts.wrapAt, deadline, t0);
+    const wrapAt = effectiveWrapAt(opts.wrapAt, deadline);
+    // Wrap-up time reached before the session started: wrap up as soon as it starts.
+    let wrapDue = false;
     const tr = opts.tracker;
     let sessionId = null;
     let violation = null;
@@ -123,7 +122,10 @@ class OpenCode {
       opts.rawLog(line);
       let ev;
       try { ev = JSON.parse(line); } catch { return; }
-      if (ev.sessionID && !sessionId) sessionId = ev.sessionID;
+      if (ev.sessionID && !sessionId) {
+        sessionId = ev.sessionID;
+        if (wrapDue && phaseCtl) phaseCtl.abort();
+      }
       const part = ev.part || {};
       if (ev.type === 'tool_use' || part.type === 'tool') {
         const name = part.tool || '';
@@ -161,7 +163,8 @@ class OpenCode {
       opts.signal.addEventListener('abort', stopFromParent, { once: true });
       const now = Date.now();
       const until = wrapUp ? deadline : Math.min(wrapAt, deadline);
-      const timer = setTimeout(() => phaseCtl.abort(), Math.max(0, until - now));
+      const ctl = phaseCtl;
+      const timer = setTimeout(() => { if (wrapUp || sessionId) ctl.abort(); else wrapDue = true; }, Math.max(0, until - now));
       try {
         return await run(this.cmd(), args, { cwd: opts.copyDir, env, signal: phaseCtl.signal, onLine: onEvent, onSpawn: (c) => { child = c; } });
       } catch (e) {

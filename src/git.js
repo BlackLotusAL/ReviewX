@@ -25,6 +25,18 @@ function classify(stderr) {
   return 'other';
 }
 
+// True when the folder treats file names case-insensitively (the Windows default;
+// a folder can also be made case-sensitive).
+function caseInsensitive(dir) {
+  const probe = path.join(dir, '.reviewx-case-' + process.pid + '-' + Date.now() + '.TMP');
+  fs.writeFileSync(probe, '');
+  try {
+    return fs.existsSync(probe.slice(0, -4) + '.tmp');
+  } finally {
+    fs.rmSync(probe, { force: true });
+  }
+}
+
 function matchExcluded(file, patterns) {
   const base = path.posix.basename(file).toLowerCase();
   for (const p of patterns) {
@@ -55,7 +67,7 @@ class Git {
     if (!cmd) throw new GitError('cli', '未找到 Git（请确认已安装并可在终端运行 git）');
     const env = Object.assign({}, process.env, { GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C', GIT_ASKPASS: process.env.GIT_ASKPASS || '' }, opts.env || {});
     if (!env.GIT_ASKPASS) delete env.GIT_ASKPASS;
-    const res = await run(cmd, ['-c', 'core.longpaths=true', '-c', 'core.quotepath=false', '-c', 'core.autocrlf=false'].concat(args), { cwd: opts.cwd, env, signal: opts.signal, timeoutMs: opts.timeoutMs || 30 * 60 * 1000 });
+    const res = await run(cmd, ['-c', 'core.longpaths=true', '-c', 'core.quotepath=false', '-c', 'core.autocrlf=false'].concat(args), { cwd: opts.cwd, env, signal: opts.signal, timeoutMs: opts.timeoutMs });
     if (res.aborted) throw new GitError('cancelled', '已取消');
     if (res.code !== 0 && !opts.allowFail) {
       const kind = res.timedOut ? 'network' : classify(res.stderr);
@@ -126,11 +138,16 @@ class Git {
     const indexFile = dest + '.index';
     try {
       // core.symlinks=false: repository symlinks become plain files holding the link text.
-      await this.git(['-c', 'core.symlinks=false', '--git-dir', dir, '--work-tree', dest, 'checkout', '-f', sha, '--', '.'], { signal, env: { GIT_INDEX_FILE: indexFile } });
+      // core.ignorecase must match the folder we write to, not whatever the cache
+      // repository recorded: on a case-insensitive disk, ignorecase=false makes
+      // directories like Foo/ and foo/ fail with "cannot create directory ...
+      // Directory not empty".
+      const ic = caseInsensitive(dest) ? 'true' : 'false';
+      await this.git(['-c', 'core.symlinks=false', '-c', 'core.ignorecase=' + ic, '--git-dir', dir, '--work-tree', dest, 'checkout', '-f', sha, '--', '.'], { signal, env: { GIT_INDEX_FILE: indexFile } });
     } finally {
       fs.rmSync(indexFile, { force: true });
     }
   }
 }
 
-module.exports = { Git, GitError, matchExcluded, KIND_LABEL, classify };
+module.exports = { Git, GitError, matchExcluded, KIND_LABEL, classify, caseInsensitive };

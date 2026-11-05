@@ -11,9 +11,9 @@
   const MODEL = 'deepseek/deepseek-chat（示例）';
   const SEV_RANK = { fatal: 0, major: 1, minor: 2, suggestion: 3 };
   const SENT = ['published', 'manual', 'failed', 'unknown', 'sending'];
-  // R13: config file and data both default to %APPDATA%\ReviewX.
-  const DATA_DIR = 'C:\\Users\\dev\\AppData\\Roaming\\ReviewX';
-  const CONFIG_PATH = DATA_DIR + '\\config.json';
+  // R13: the config file lives in %APPDATA%\ReviewX; data defaults to %LOCALAPPDATA%\ReviewX.
+  const DATA_DIR = 'C:\\Users\\dev\\AppData\\Local\\ReviewX';
+  const CONFIG_PATH = 'C:\\Users\\dev\\AppData\\Roaming\\ReviewX\\config.json';
   const DEFAULT_EXCLUDES = ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'Cargo.lock', 'go.sum', 'poetry.lock', 'Pipfile.lock', 'composer.lock', 'Gemfile.lock', '.min.js', '.min.css', '.map', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.svg', '.ttf', '.otf', '.woff', '.woff2', '.eot'];
   const MIN = 60000;
 
@@ -134,7 +134,7 @@
       fetched: {}, fetchState: {}, failOnce: { 202: true },
       fetch: { active: false, total: 3, done: 3, ok: 2, failed: 1, summary: '已更新 2/3 个项目，1 个失败', finishedAt: now - 25 * MIN, mode: 'auto' },
       settings: {
-        values: { autoFetch: true, autoFetchIntervalMinutes: 60, autoReviewNewMr: true, autoReviewNewVersion: true, skipKeywords: ['WIP', 'Draft'], stopQueueOnFailure: false, reviewTimeoutMinutes: 60, wrapUpMinutes: 50, outputLanguage: '中文', concurrency: 6, excludeFileTypes: DEFAULT_EXCLUDES.slice() },
+        values: { autoFetch: true, autoFetchIntervalMinutes: 60, autoReviewNewMr: true, autoReviewNewVersion: true, skipKeywords: ['WIP'], stopQueueOnFailure: false, reviewTimeoutMinutes: 60, wrapUpMinutes: 50, outputLanguage: '中文', concurrency: 6, excludeFileTypes: DEFAULT_EXCLUDES.slice() },
         readonly: { port: 17080, dataDir: DATA_DIR }, configPath: CONFIG_PATH, defaults: { excludeFileTypes: DEFAULT_EXCLUDES.slice() }
       },
       auto: { paused: null, lastFetch: { at: now - 25 * MIN, mode: 'auto' }, nextFetchAt: now + 35 * MIN, seen: {}, handled: {} },
@@ -315,7 +315,7 @@
     }
     return {
       version: '1.0.0（预览）', rev: st.rev, now: Date.now(), preview: true,
-      dataDir: DATA_DIR, logPath: DATA_DIR + '\\logs\\' + new Date().toISOString().slice(0, 10) + '.log', configPath: 'C:\\Users\\dev\\AppData\\Roaming\\ReviewX\\config.json', rulesDir: DATA_DIR + '\\rules',
+      dataDir: DATA_DIR, logPath: DATA_DIR + '\\logs\\' + new Date().toISOString().slice(0, 10) + '.log', configPath: CONFIG_PATH, rulesDir: DATA_DIR + '\\rules',
       projects, mrs, queue: st.queue.map(jobView), fetch: st.fetch, automation: automationView(), sending: st.sending ? { pid: st.sending.pid, iid: st.sending.iid, reportId: st.sending.reportId, fid: st.sending.fid } : null,
       drafts: st.rules.filter((r) => r.draft && !r.error).map((r) => ({ id: r.id, name: r.name, source: r.source }))
     };
@@ -530,6 +530,24 @@
     if (!j) throw new Error('该 MR 没有排队中的检视');
     endJob(j, 'stopped', { stopReason: reason || '已取消 · 尚未开始' });
     log('INFO', 'review.cancel !' + iid + ' project=' + pid);
+  }
+
+  function move(pid, iid, position) {
+    const j = st.queue.find((x) => x.pid === pid && x.iid === iid && x.status === 'queued');
+    if (!j) throw new Error('该 MR 没有排队中的检视');
+    const queued = st.queue.filter((x) => x.status === 'queued');
+    const n = Number(position);
+    if (!Number.isInteger(n)) throw new Error('排队位置须为整数');
+    const to = Math.max(0, Math.min(queued.length - 1, n - 1));
+    const from = queued.indexOf(j);
+    if (to !== from) {
+      queued.splice(from, 1);
+      queued.splice(to, 0, j);
+      st.queue = st.queue.filter((x) => x.status !== 'queued').concat(queued);
+      log('INFO', 'review.reorder !' + iid + ' project=' + pid + ' position=' + (to + 1) + '/' + queued.length);
+      changed(pid + '/' + iid);
+    }
+    return { position: to + 1, total: queued.length };
   }
 
   function stop(pid, iid, reason) {
@@ -844,6 +862,7 @@
     ['POST', /^\/api\/reviews$/, (m, b) => enqueue(String(b.pid), String(b.iid))],
     ['POST', /^\/api\/reviews\/stop$/, (m, b) => { stop(String(b.pid), String(b.iid)); return { ok: true }; }],
     ['POST', /^\/api\/reviews\/cancel$/, (m, b) => { cancel(String(b.pid), String(b.iid)); return { ok: true }; }],
+    ['POST', /^\/api\/reviews\/move$/, (m, b) => move(String(b.pid), String(b.iid), b.position)],
     ['POST', /^\/api\/mr\/(\d+)\/(\d+)\/open$/, (m) => ({ text: '预览模式不会打开浏览器。实际会打开 CodeHub MR !' + m[2] })],
     ['POST', /^\/api\/findings\/send$/, (m, b) => { send(b); return { ok: true }; }],
     ['POST', /^\/api\/findings\/dismiss$/, (m, b) => { decide(b, 'dismiss'); return { ok: true }; }],

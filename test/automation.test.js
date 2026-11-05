@@ -195,7 +195,7 @@ test('settings save: validates every field, writes only non-defaults (R26)', () 
   assert.equal(bad.ok, false);
   assert.deepEqual(Object.keys(bad.errors).sort(), ['autoFetchIntervalMinutes', 'excludeFileTypes', 'port', 'wrapUpMinutes']);
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).opencodeTimeoutMinutes, 90); // untouched
-  const ok = saveSettings(file, cur, { autoFetchIntervalMinutes: 30, skipKeywords: [' WIP ', 'Draft', 'WIP'], wrapUpMinutes: 50, reviewTimeoutMinutes: 60 });
+  const ok = saveSettings(file, cur, { autoFetchIntervalMinutes: 30, skipKeywords: [' WIP ', 'WIP'], wrapUpMinutes: 50, reviewTimeoutMinutes: 60 });
   assert.equal(ok.ok, true);
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(raw.port, 18080);
@@ -207,19 +207,22 @@ test('settings save: validates every field, writes only non-defaults (R26)', () 
   assert.equal(loadConfig(file).autoFetchIntervalMinutes, 30);
 });
 
-test('an install that never set dataDir keeps its data in the old default location', () => {
+test('an install that never set dataDir keeps its data in the previous default location', () => {
   const home = tmp();
   const saved = { APPDATA: process.env.APPDATA, LOCALAPPDATA: process.env.LOCALAPPDATA, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, XDG_DATA_HOME: process.env.XDG_DATA_HOME };
   try {
     process.env.APPDATA = process.env.XDG_CONFIG_HOME = path.join(home, 'roaming');
     process.env.LOCALAPPDATA = process.env.XDG_DATA_HOME = path.join(home, 'local');
     const file = path.join(home, 'roaming', 'ReviewX', 'config.json');
-    assert.equal(loadConfig(file).dataDir, path.join(home, 'roaming', 'ReviewX')); // fresh install: new default
+    assert.equal(loadConfig(file).dataDir, path.join(home, 'local', 'ReviewX')); // fresh install: %LOCALAPPDATA%\ReviewX
+    assert.ok(fs.existsSync(file)); // the config file stays in %APPDATA%\ReviewX
+    fs.writeFileSync(path.join(home, 'roaming', 'ReviewX', 'projects.json'), '[]');
+    const cfg = loadConfig(file);
+    assert.equal(cfg.dataDir, path.join(home, 'roaming', 'ReviewX'));
+    assert.equal(cfg.legacyDataDir, true);
     fs.mkdirSync(path.join(home, 'local', 'ReviewX'), { recursive: true });
     fs.writeFileSync(path.join(home, 'local', 'ReviewX', 'projects.json'), '[]');
-    const cfg = loadConfig(file);
-    assert.equal(cfg.dataDir, path.join(home, 'local', 'ReviewX'));
-    assert.equal(cfg.legacyDataDir, true);
+    assert.equal(loadConfig(file).dataDir, path.join(home, 'local', 'ReviewX')); // data in the default wins
   } finally {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
@@ -227,14 +230,39 @@ test('an install that never set dataDir keeps its data in the old default locati
 
 // ---- PR #8 review fixes ----
 
-test('wrap-up keeps the configured point unless preparation used it up', () => {
+test('wrap-up uses only the configured point, capped at the deadline', () => {
   const { effectiveWrapAt } = require('../src/opencode');
   const now = 1000000;
-  // 2-minute timeout, 1-minute wrap-up, steps 1–5 finished at once: wrap up at minute 1.
-  assert.equal(effectiveWrapAt(now + 60000, now + 120000, now), now + 60000);
-  // Wrap-up point already passed: a few minutes to read the diff, capped at the deadline.
-  assert.equal(effectiveWrapAt(now - 1000, now + 3600000, now), now + 300000);
-  assert.equal(effectiveWrapAt(now - 1000, now + 120000, now), now + 120000);
+  assert.equal(effectiveWrapAt(now + 60000, now + 120000), now + 60000);
+  assert.equal(effectiveWrapAt(now - 1000, now + 3600000), now - 1000); // no extra allowance
+  assert.equal(effectiveWrapAt(now + 200000, now + 120000), now + 120000);
+});
+
+test('a wrap-up point passed before the session starts wraps up once the session starts', async () => {
+  const { OpenCode } = require('../src/opencode');
+  const dir = tmp();
+  const calls = path.join(dir, 'calls.log');
+  const script = path.join(dir, 'fake-opencode.js');
+  fs.writeFileSync(script, [
+    "const fs = require('fs');",
+    'fs.appendFileSync(' + JSON.stringify(calls) + ", process.argv.slice(2).join(' ') + '\\n');",
+    "if (process.argv.includes('-s')) { console.log(JSON.stringify({ type: 'text', sessionID: 'ses_1' })); process.exit(0); }",
+    "setTimeout(() => console.log(JSON.stringify({ type: 'step_start', sessionID: 'ses_1' })), 300);",
+    'setTimeout(() => {}, 20000);'
+  ].join('\n'));
+  const oc = new OpenCode({ opencodeCommand: [process.execPath, script] }, quiet);
+  const now = Date.now();
+  const tracker = { diffFiles: new Set(['.reviewx-diff/a.js.diff']), read: new Set(), finished: false, count: 0, wrapUp: false };
+  const err = await oc.review({
+    copyDir: dir, taskFile: path.join(dir, 'task.md'), mcpUrl: 'http://127.0.0.1:1/mcp/x', excludes: [], tracker,
+    signal: new AbortController().signal, onProgress() {}, rawLog() {},
+    startedAt: now - 60000, wrapAt: now - 1000, deadline: now + 60000, timeoutMinutes: 2
+  }).then(() => null, (e) => e);
+  const lines = fs.readFileSync(calls, 'utf8').trim().split('\n');
+  assert.equal(lines.length, 2); // the main run, then the wrap-up in the same session
+  assert.match(lines[1], /-s ses_1/);
+  assert.ok(tracker.wrapUp);
+  assert.ok(!err || err.code !== 'OPENCODE_ERROR', 'not reported as an OpenCode start failure');
 });
 
 test('the model export stops when the review is aborted', async () => {
@@ -329,4 +357,22 @@ test('a running older version (lock in the old location) blocks startup before d
   old.close();
   assert.match(out, /ReviewX 已在运行/);
   assert.ok(fs.existsSync(path.join(legacy, 'tmp', 'rv-active')), 'the older instance\'s working files are kept');
+});
+
+// ---- queue popover: reorder ----
+
+test('queued reviews can be moved; the running review keeps its place', () => {
+  const app = fakeApp();
+  app.paused = { reason: 'hold' }; // keep everything queued
+  for (const iid of ['1', '2', '3', '4']) app.engine.enqueue('9', iid);
+  app.engine.jobs[0].status = 'running'; // stands in for the review in progress
+  const order = () => app.engine.jobs.map((j) => j.iid).join(',');
+  assert.deepEqual(app.engine.move('9', '4', 1), { position: 1, total: 3 });
+  assert.equal(order(), '1,4,2,3');
+  assert.deepEqual(app.engine.move('9', '4', 99), { position: 3, total: 3 }); // clamped to the end
+  assert.equal(order(), '1,2,3,4');
+  assert.throws(() => app.engine.move('9', '1', 1), /没有排队中的检视/); // running
+  assert.throws(() => app.engine.move('9', '2', 'x'), /整数/);
+  app.engine.cancel('9', '3');
+  assert.equal(order(), '1,2,4');
 });

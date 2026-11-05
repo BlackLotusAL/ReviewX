@@ -137,6 +137,26 @@ class ReviewEngine {
     this.app.changed(j.pid, j.iid);
   }
 
+  // Move a queued review to `position` (1-based) among the queued reviews.
+  // Running reviews keep their place.
+  move(pid, iid, position) {
+    const j = this.find(pid, iid);
+    if (!j || j.status !== 'queued') throw new Error('该 MR 没有排队中的检视');
+    const queued = this.jobs.filter((x) => x.status === 'queued');
+    const n = Number(position);
+    if (!Number.isInteger(n)) throw new Error('排队位置须为整数');
+    const to = Math.max(0, Math.min(queued.length - 1, n - 1));
+    const from = queued.indexOf(j);
+    if (to !== from) {
+      queued.splice(from, 1);
+      queued.splice(to, 0, j);
+      this.jobs = this.jobs.filter((x) => x.status !== 'queued').concat(queued);
+      this.log.info('review.reorder !' + j.iid + ' project=' + j.pid + ' position=' + (to + 1) + '/' + queued.length);
+      this.app.changed(j.pid, j.iid);
+    }
+    return { position: to + 1, total: queued.length };
+  }
+
   stop(pid, iid, reason) {
     const j = this.find(pid, iid);
     if (!j) throw new Error('该 MR 没有进行中的检视');
