@@ -73,7 +73,7 @@
   const S = {
     srv: null, connected: false,
     view: 'mr', drawer: null, drawerClosing: false, detail: null, detailRev: -1, tab: null, groupOrder: null,
-    menu: null, queueOpen: false, dialog: null, dialogTasks: [],
+    menu: null, queueOpen: false, qDrag: null, qOver: null, qFocus: null, dialog: null, dialogTasks: [],
     pid: '', pidMsg: null, pidBusy: false, flash: null,
     confirmBulk: false, toast: null,
     rules: null, ruleScope: 'global', ruleSel: null, edit: null, scopeMenu: null, scopeQ: '',
@@ -110,6 +110,67 @@
     return { pos: q.findIndex((j) => j.pid === pid && j.iid === iid) + 1, n: q.length };
   }
 
+  // 「当前检视队列」: running, queued (cancel, drag or arrow keys to reorder), finished with findings.
+  function queuePopover(running, queued, pendingTotal) {
+    const s = S.srv;
+    const run = s.queue.filter((j) => j.status !== 'queued');
+    const wait = s.queue.filter((j) => j.status === 'queued');
+    const done = s.mrs.filter((m) => !jobOf(m.pid, m.iid) && (m.pending || m.verify) && !projFailed(m.pid));
+    const who = (pid, iid, extra) => '<span style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #62686c">' + esc((proj(pid) || { short: '' }).short) + ' <span class="mono" style="color: #0059b8">!' + esc(iid) + '</span>' + (extra || '') + '</span>';
+    const ttl = (t) => '<span style="display: block; font-size: 13px; font-weight: 500; color: #121212; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">' + esc(t) + '</span>';
+    const head = (t) => '<h4 style="margin: 14px 0 4px; font-size: 12px; font-weight: 600; color: #62686c">' + esc(t) + '</h4>';
+    const rowBtn = 'class="tbtn rowh" style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px 8px 10px 44px; box-sizing: border-box"';
+    let h = '<section aria-label="当前检视队列" style="position: absolute; right: 0; top: 64px; z-index: 6; width: min(560px, 100%); box-sizing: border-box; padding: 16px; background: #ffffff; border: 1px solid #e1e3e6; border-radius: 14px; box-shadow: 0 10px 32px rgba(18,18,18,0.16)">' +
+      '<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px"><h3 style="margin: 0; font-size: 15px; font-weight: 600">当前检视队列</h3><span style="font-size: 12px; color: #62686c">执行中 ' + running + ' · 排队 ' + queued + ' · 待处理 ' + pendingTotal + '</span></div>';
+    if (!run.length && !wait.length && !done.length) h += '<p style="margin: 8px 0 0; font-size: 13px; color: #62686c">队列为空</p>';
+    if (run.length) {
+      h += head('执行中') + '<ul style="list-style: none; margin: 0; padding: 0">';
+      for (const j of run) {
+        h += '<li data-key="qr-' + j.pid + '-' + j.iid + '" style="border-top: 1px solid #eceef0"><button type="button" ' + rowBtn + ' ' + data({ act: 'open', pid: j.pid, iid: j.iid }) + '>' +
+          '<span style="flex: 1; min-width: 0">' + who(j.pid, j.iid) + ttl(j.title) + '</span>' +
+          '<span style="display: flex; flex-direction: column; align-items: flex-end; gap: 2px"><span class="pill" style="background: #eef0f2; color: #3b3f42"><span class="spin"></span>' + (j.status === 'stopping' ? '停止中' : '检视中') + '</span><span style="font-size: 12px; color: #62686c">' + esc(j.step ? '步骤 ' + j.step + '/7 ' + STEPS[j.step - 1] : '准备中') + '</span></span></button></li>';
+      }
+      h += '</ul>';
+    }
+    if (wait.length) {
+      const n = wait.length;
+      const drag = S.qDrag; const over = S.qOver;
+      h += head('排队中 · ' + n + (n > 1 ? ' · 拖动调整顺序' : '')) + '<ul aria-label="排队中的检视" style="list-style: none; margin: 0; padding: 0">';
+      wait.forEach((j, i) => {
+        const k = j.pid + '/' + j.iid;
+        const dragging = drag === k;
+        const line = over && over.key === k && drag && drag !== k ? (over.after ? 'inset 0 -2px 0 #007cff' : 'inset 0 2px 0 #007cff') : 'none';
+        h += '<li data-key="qw-' + j.pid + '-' + j.iid + '" draggable="' + (n > 1) + '" ' + data({ qitem: k }) + ' style="display: flex; align-items: center; gap: 4px; padding: 4px 0; border-top: 1px solid #eceef0; background: ' + (dragging ? '#f5f7f8' : '#ffffff') + '; opacity: ' + (dragging ? '0.45' : '1') + '; box-shadow: ' + line + '">' +
+          '<button type="button" class="btn btn-q" ' + data({ qhandle: k, pid: j.pid, iid: j.iid, pos: i + 1 }) + ' ' + attr({ 'aria-label': '调整 !' + j.iid + ' 的排队顺序，当前第 ' + (i + 1) + ' 位，共 ' + n + ' 位；按上下方向键移动', disabled: n < 2 }) + ' style="width: 36px; min-height: 40px; padding: 0; color: #8c9195; cursor: ' + (n > 1 ? 'grab' : 'default') + '; flex: 0 0 auto">' +
+          '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width: 2.6"><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"></path></svg></button>' +
+          '<button type="button" class="tbtn rowh" ' + data({ act: 'open', pid: j.pid, iid: j.iid }) + ' style="flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 6px 8px; border-radius: 8px">' +
+          '<span style="flex: 1; min-width: 0">' + who(j.pid, j.iid, j.trigger === 'auto' ? '<span class="pill" style="background: #eef0f2; color: #3b3f42; padding: 0 6px; font-size: 11px; line-height: 1.6">自动检视</span>' : '') + ttl(j.title) + '</span>' +
+          '<span class="mono" style="font-size: 12px; color: #62686c; white-space: nowrap">第 ' + (i + 1) + '/' + n + ' 位</span></button>' +
+          '<button type="button" class="btn btn-q" ' + data({ act: 'cancel', pid: j.pid, iid: j.iid }) + ' aria-label="取消 !' + esc(j.iid) + ' 的排队" style="min-height: 34px; padding: 0 10px; font-weight: 500; flex: 0 0 auto">' + ico(IC.x, 'ico-s') + '取消排队</button></li>';
+      });
+      h += '</ul>';
+    }
+    if (done.length) {
+      h += head('检视完成 · 待处理') + '<ul style="list-style: none; margin: 0; padding: 0">';
+      for (const m of done) {
+        h += '<li data-key="qd-' + m.pid + '-' + m.iid + '" style="border-top: 1px solid #eceef0"><button type="button" ' + rowBtn + ' ' + data({ act: 'open', pid: m.pid, iid: m.iid }) + '>' +
+          '<span style="flex: 1; min-width: 0">' + who(m.pid, m.iid) + ttl(m.title) + '</span>' +
+          '<span class="pill" style="background: ' + (m.pending ? '#eaf3ff' : '#eef0f2') + '; color: ' + (m.pending ? '#0059b8' : '#3b3f42') + '">' + esc(m.pending ? m.pending + ' 条待处理' : m.verify + ' 条需核对') + '</span></button></li>';
+      }
+      h += '</ul>';
+    }
+    return h + '</section>';
+  }
+
+  // Move a queued review to a 1-based position; focus follows the moved row.
+  async function moveQueued(pid, iid, position) {
+    S.qDrag = null; S.qOver = null; S.qFocus = { key: pid + '/' + iid, pos: position };
+    render();
+    const r = await act(() => api('POST', '/api/reviews/move', { pid, iid, position }), (x) => '已将 !' + iid + ' 移到排队第 ' + x.position + ' 位');
+    if (!r) S.qFocus = null;
+    else if (S.qFocus) S.qFocus.pos = r.position;
+  }
+
   function stepDetail(j, long) {
     if (!j || !j.step) return '';
     const el = now() - (j.stepStartedAt || now());
@@ -136,6 +197,14 @@
     const next = tpl.content.firstElementChild;
     if (!root.firstElementChild) root.appendChild(next);
     else morph(root.firstElementChild, next);
+    // Moving a row can drop focus; give it back to the moved row's handle.
+    if (S.qFocus && !S.queueOpen) S.qFocus = null;
+    if (S.qFocus) {
+      const hd = [...document.querySelectorAll('[data-qhandle]')].find((x) => x.getAttribute('data-qhandle') === S.qFocus.key);
+      if (hd && (!document.activeElement || document.activeElement === document.body)) hd.focus();
+      // Stop following once the new order has arrived.
+      if (!hd || Number(hd.getAttribute('data-pos')) === S.qFocus.pos) S.qFocus = null;
+    }
     const dr = document.getElementById('drawer');
     if (dr && dr.firstElementChild) {
       const h0 = dr.firstElementChild.offsetHeight + 'px';
@@ -334,28 +403,7 @@
       '<button type="button" class="btn btn-s" aria-expanded="' + S.queueOpen + '" data-act="toggleQueue">' + (running ? '<span class="spin" style="color: #3b3f42"></span>' : '') + esc(running + queued ? '运行中 ' + running + ' · 排队 ' + queued : '队列空闲') + ico(IC.chevDown, 'ico-s', 'transform: ' + (S.queueOpen ? 'rotate(180deg)' : 'none')) + '</button>' +
       '<button type="button" class="btn btn-s" ' + attr({ disabled: f.active || !s.projects.length }) + ' data-act="fetchAll">' + ico(IC.refresh) + (f.active ? '获取中…' : '获取 MR') + '</button>' +
       '<button type="button" class="btn btn-s" data-act="nextPending">下一个待处理 MR' + ico(IC.arrow) + '</button></div>';
-    if (S.queueOpen) {
-      const items = [];
-      for (const j of s.queue) {
-        const run = j.status !== 'queued';
-        const q = queuePos(j.pid, j.iid);
-        items.push({ pid: j.pid, iid: j.iid, title: j.title, bg: '#eef0f2', fg: run ? '#3b3f42' : '#62686c', spin: run, label: run ? (j.status === 'stopping' ? '停止中' : '检视中') : '排队中', sub: run ? (j.step ? '步骤 ' + j.step + '/7 ' + STEPS[j.step - 1] : '准备中') : '第 ' + q.pos + '/' + q.n + ' 位' });
-      }
-      for (const m of s.mrs) {
-        if (jobOf(m.pid, m.iid) || (!m.pending && !m.verify) || projFailed(m.pid)) continue;
-        items.push({ pid: m.pid, iid: m.iid, title: m.title, bg: m.pending ? '#eaf3ff' : '#eef0f2', fg: m.pending ? '#0059b8' : '#3b3f42', spin: false, label: m.pending ? m.pending + ' 条待处理' : m.verify + ' 条需核对', sub: '检视完成' });
-      }
-      h += '<section aria-label="当前检视队列" style="position: absolute; right: 0; top: 64px; z-index: 6; width: min(560px, 100%); box-sizing: border-box; padding: 16px; background: #ffffff; border: 1px solid #e1e3e6; border-radius: 14px; box-shadow: 0 10px 32px rgba(18,18,18,0.16)">' +
-        '<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-bottom: 8px"><h3 style="margin: 0; font-size: 15px; font-weight: 600">当前检视队列</h3><span style="font-size: 12px; color: #62686c">执行中 ' + running + ' · 排队 ' + queued + ' · 待处理 ' + pendingTotal + '</span></div>' +
-        (items.length ? '' : '<p style="margin: 8px 0; font-size: 13px; color: #62686c">队列为空</p>') + '<ul style="list-style: none; margin: 0; padding: 0">';
-      for (const q of items) {
-        const pr = proj(q.pid) || { short: '' };
-        h += '<li data-key="q-' + q.pid + '-' + q.iid + '" style="border-top: 1px solid #e1e3e6"><button type="button" class="tbtn rowh" ' + data({ act: 'open', pid: q.pid, iid: q.iid }) + ' style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px 8px">' +
-          '<span style="flex: 1; min-width: 0"><span style="display: block; font-size: 12px; color: #62686c">' + esc(pr.short) + ' <span class="mono" style="color: #0059b8">!' + esc(q.iid) + '</span></span><span style="display: block; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">' + esc(q.title) + '</span></span>' +
-          '<span style="display: flex; flex-direction: column; align-items: flex-end; gap: 2px"><span class="pill" style="background: ' + q.bg + '; color: ' + q.fg + '">' + (q.spin ? '<span class="spin"></span>' : '') + esc(q.label) + '</span><span style="font-size: 12px; color: #62686c">' + esc(q.sub) + '</span></span></button></li>';
-      }
-      h += '</ul></section>';
-    }
+    if (S.queueOpen) h += queuePopover(running, queued, pendingTotal);
     h += '</header>';
     if (!s.projects.length) {
       h += '<div style="margin-top: 32px; display: flex; flex-direction: column; align-items: flex-start; gap: 18px; padding: 32px; border: 1px solid #e1e3e6; border-radius: 22px; background: #fafbfc"><h2 style="margin: 0; font-size: 26px; font-weight: 500">暂无关注项目</h2><p style="margin: 0; color: #62686c">在左侧输入 Project ID 添加，然后点击「获取 MR」列出项目中的开放 MR。</p></div>';
@@ -776,6 +824,8 @@
       ro(false, '数据目录', '报告与处理记录、代码缓存、规则、诊断日志都存放在这里；更改位置后不会自动迁移旧数据。', S.settings.readonly.dataDir));
     h += '</div>';
     const changed = setChanged();
+    // Text typed in a list input but not yet added counts as an unsaved change.
+    for (const [q, k] of [['skipQ', 'skipKeywords'], ['exQ', 'excludeFileTypes']]) if ((S[q] || '').trim() && !changed.includes(k)) changed.push(k);
     const msg = S.setMsg;
     const barText = msg ? msg.text : changed.length ? '有 ' + changed.length + ' 项修改未保存：' + changed.map((k) => SET_NAMES[k]).join('、') : '所有设置均已保存';
     const barFg = msg ? (msg.tone === 'bad' ? '#ac3039' : '#18733f') : changed.length ? '#121212' : '#62686c';
@@ -791,6 +841,9 @@
   }
 
   async function saveSettingsDraft() {
+    // A keyword or file type typed but not yet added with Enter is saved too.
+    if ((S.skipQ || '').trim()) addChip('skipKeywords', 'skipQ');
+    if ((S.exQ || '').trim()) { addChip('excludeFileTypes', 'exQ'); if (S.exErr) return; }
     const D = setDraft();
     const errs = validateDraft(D);
     const names = (ks) => ks.map((k) => SET_NAMES[k] || k).join('、');
@@ -1053,7 +1106,45 @@
     if (k === 'ruleName') render();
   });
 
+  // Queue reordering: drag a queued row, or focus its handle and press ↑/↓.
+  const qItem = (e) => e.target.closest && e.target.closest('[data-qitem]');
+  document.addEventListener('dragstart', (e) => {
+    const li = qItem(e);
+    if (!li) return;
+    try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', li.getAttribute('data-qitem')); } catch { /* ignore */ }
+    S.qDrag = li.getAttribute('data-qitem'); S.qOver = null; render();
+  });
+  document.addEventListener('dragover', (e) => {
+    const li = qItem(e);
+    if (!li || !S.qDrag) return;
+    e.preventDefault();
+    const r = li.getBoundingClientRect();
+    const o = { key: li.getAttribute('data-qitem'), after: e.clientY > r.top + r.height / 2 };
+    if (!S.qOver || S.qOver.key !== o.key || S.qOver.after !== o.after) { S.qOver = o; render(); }
+  });
+  document.addEventListener('drop', (e) => {
+    const li = qItem(e);
+    if (!li || !S.qDrag) return;
+    e.preventDefault();
+    const src = S.qDrag; const tgt = li.getAttribute('data-qitem');
+    const after = Boolean(S.qOver && S.qOver.after);
+    if (src === tgt) { S.qDrag = null; S.qOver = null; render(); return; }
+    const rest = S.srv.queue.filter((j) => j.status === 'queued').map((j) => j.pid + '/' + j.iid).filter((k) => k !== src);
+    const to = rest.indexOf(tgt) + (after ? 1 : 0);
+    const [pid, iid] = src.split('/');
+    moveQueued(pid, iid, to + 1);
+  });
+  document.addEventListener('dragend', () => { if (S.qDrag || S.qOver) { S.qDrag = null; S.qOver = null; render(); } });
+
   document.addEventListener('keydown', (e) => {
+    const hd = e.target.closest && e.target.closest('[data-qhandle]');
+    if (hd && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      const pos = Number(hd.getAttribute('data-pos')) + (e.key === 'ArrowUp' ? -1 : 1);
+      const n = S.srv.queue.filter((j) => j.status === 'queued').length;
+      if (pos >= 1 && pos <= n) moveQueued(hd.getAttribute('data-pid'), hd.getAttribute('data-iid'), pos);
+      return;
+    }
     if (e.key === 'Enter' && e.target.id === 'pid-input') { e.preventDefault(); addProject(); }
     if (e.key === 'Enter' && e.target.id === 'st-skip') { e.preventDefault(); addChip('skipKeywords', 'skipQ'); }
     if (e.key === 'Enter' && e.target.id === 'st-ex') { e.preventDefault(); addChip('excludeFileTypes', 'exQ'); }

@@ -54,6 +54,25 @@ test('exportTree writes committed symlinks as plain files', async () => {
   assert.equal(fs.readFileSync(path.join(dest, '.ignore'), 'utf8'), '../../outside');
 });
 
+test('exportTree handles directories that differ only by case', async () => {
+  const { execFileSync } = require('child_process');
+  const { Git } = require('../src/git');
+  const repo = path.join(tmp(), 'cache.git');
+  const g = (args, input, env) => execFileSync('git', ['--git-dir', repo, ...args], { input, env: Object.assign({}, process.env, env || {}) }).toString().trim();
+  execFileSync('git', ['init', '--bare', '--quiet', repo]);
+  // A cache repository that recorded a case-sensitive disk (git's own probe, or a copy from elsewhere).
+  g(['config', 'core.ignorecase', 'false']);
+  const blob = g(['hash-object', '-w', '--stdin'], 'x\n');
+  const idx = path.join(tmp(), 'idx');
+  g(['update-index', '--add', '--index-info'], '100644 ' + blob + '\tSrc/A.java\n100644 ' + blob + '\tsrc/b/B.java\n', { GIT_INDEX_FILE: idx });
+  const sha = g(['commit-tree', '-m', 'x', g(['write-tree'], '', { GIT_INDEX_FILE: idx })]);
+  const dest = path.join(tmp(), 'copy');
+  await new Git({ gitCommand: 'git' }).exportTree(repo, sha, dest);
+  assert.ok(fs.existsSync(path.join(dest, 'Src', 'A.java')));
+  assert.ok(fs.existsSync(path.join(dest, 'src', 'b', 'B.java')));
+  assert.deepEqual(fs.readdirSync(dest).filter((n) => n.startsWith('.reviewx-case')), []);
+});
+
 test('run() keeps multibyte characters split across stdout chunks', async () => {
   const script = path.join(tmp(), 'emit.js');
   // Write "中文" in two chunks that split the first character's bytes.

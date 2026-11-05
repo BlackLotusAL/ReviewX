@@ -70,6 +70,7 @@ function createServer(app) {
   route('POST', '/api/reviews', (p, b) => app.engine.enqueue(b.pid, b.iid));
   route('POST', '/api/reviews/stop', (p, b) => { app.engine.stop(String(b.pid), String(b.iid)); return { ok: true }; });
   route('POST', '/api/reviews/cancel', (p, b) => { app.engine.cancel(String(b.pid), String(b.iid)); return { ok: true }; });
+  route('POST', '/api/reviews/move', (p, b) => app.engine.move(String(b.pid), String(b.iid), b.position));
 
   route('POST', '/api/mr/:pid/:iid/open', (p) => {
     const d = app.detail(p.pid, p.iid);

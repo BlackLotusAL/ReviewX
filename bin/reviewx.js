@@ -104,7 +104,7 @@ async function main() {
     console.log('  访问地址：' + url);
     console.log('  诊断日志：' + app.logger.currentPath());
     console.log('  配置文件：' + cfg.configPath);
-    console.log('  数据目录：' + cfg.dataDir + (cfg.legacyDataDir ? '（沿用旧版本的默认位置；要改用 %APPDATA%\\ReviewX，请移动数据后在配置文件中设置 dataDir）' : ''));
+    console.log('  数据目录：' + cfg.dataDir + (cfg.legacyDataDir ? '（沿用上一版本的默认位置；要改用 %LOCALAPPDATA%\\ReviewX，请停止 ReviewX，把数据移过去后重新启动）' : ''));
     console.log('按 Ctrl+C 停止服务。');
     if (args.open && !openExternal(url)) console.log('无法自动打开浏览器，请手动访问上面的地址。');
   });

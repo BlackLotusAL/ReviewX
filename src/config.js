@@ -1,6 +1,7 @@
 'use strict';
 // Configuration (R13, R26). The config file always lives at
-// %APPDATA%\ReviewX\config.json. Port and data directory are changed only in
+// %APPDATA%\ReviewX\config.json (Roaming); data defaults to %LOCALAPPDATA%\ReviewX
+// (Local). ReviewX writes nowhere else. Port and data directory are changed only in
 // that file (restart needed); every other item can also be changed on the
 // Settings page, which validates all fields and writes them back to the file.
 const fs = require('fs');
@@ -26,7 +27,6 @@ function appDataDir() {
   return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
 }
 
-// Kept for callers that still need the old location (nothing new is written there).
 function localDataDir() {
   if (process.platform === 'win32') return process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
   return process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
@@ -38,13 +38,13 @@ function defaultConfigPath() { return path.join(reviewxHome(), 'config.json'); }
 function defaults() {
   return {
     port: 17080,
-    dataDir: reviewxHome(),
+    dataDir: path.join(localDataDir(), 'ReviewX'),
     // Settings page items
     autoFetch: true,
     autoFetchIntervalMinutes: 60,
     autoReviewNewMr: true,
     autoReviewNewVersion: true,
-    skipKeywords: ['WIP', 'Draft'],
+    skipKeywords: ['WIP'],
     stopQueueOnFailure: false,
     reviewTimeoutMinutes: 60,
     wrapUpMinutes: 50,
@@ -156,11 +156,11 @@ function loadConfig(configPath) {
       fs.writeFileSync(file, JSON.stringify(STARTER, null, 2) + '\n');
     } catch { /* not fatal */ }
   }
-  // The default data directory moved from %LOCALAPPDATA%\ReviewX to
-  // %APPDATA%\ReviewX. An install that never set dataDir keeps using its
-  // existing data where it is, instead of starting empty.
+  // The previous version kept data next to the config file in %APPDATA%\ReviewX.
+  // An install that never set dataDir keeps using that data where it is,
+  // instead of starting empty.
   if (!(raw && Object.prototype.hasOwnProperty.call(raw, 'dataDir'))) {
-    const legacy = path.join(localDataDir(), 'ReviewX');
+    const legacy = reviewxHome();
     const hasData = (dir) => fs.existsSync(path.join(dir, 'projects.json'));
     if (path.resolve(legacy) !== path.resolve(cfg.dataDir) && hasData(legacy) && !hasData(cfg.dataDir)) {
       cfg.dataDir = legacy;

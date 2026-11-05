@@ -36,7 +36,7 @@ test('config: defaults written, bad values rejected with field name', () => {
   assert.equal(cfg.reviewTimeoutMinutes, 60);
   assert.equal(cfg.autoFetch, true);
   assert.equal(cfg.autoFetchIntervalMinutes, 60);
-  assert.deepEqual(cfg.skipKeywords, ['WIP', 'Draft']);
+  assert.deepEqual(cfg.skipKeywords, ['WIP']);
   assert.equal(cfg.stopQueueOnFailure, false);
   assert.equal(cfg.wrapUpMinutes, 50);
   assert.ok(fs.existsSync(file));

@@ -48,10 +48,14 @@ class CodeHub {
   async call(args, opts = {}) {
     const cmd = this.resolved();
     // Waiting for a free CLI slot is cancelled too (e.g. at the review deadline).
+    // Calls made by a review pass its signal and are bounded only by the review
+    // timeout (R11); other calls (fetching MRs, adding a project, sending a
+    // comment) keep a guard so a hung CLI cannot block them forever.
+    const timeoutMs = opts.timeoutMs !== undefined ? opts.timeoutMs : (opts.signal ? 0 : 120000);
     return this.sem.use(async () => {
       let res;
       try {
-        res = await run(cmd, args.concat(['--output', 'json']), { signal: opts.signal, timeoutMs: opts.timeoutMs || 120000 });
+        res = await run(cmd, args.concat(['--output', 'json']), { signal: opts.signal, timeoutMs });
       } catch (e) {
         throw new CodeHubError('CLI_MISSING', e.message);
       }
