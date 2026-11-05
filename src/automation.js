@@ -10,6 +10,9 @@ const { readJSON, writeJSONAtomic } = require('./util');
 
 const TICK_MS = 15000;
 
+// Stop reason of an auto review taken out of the queue by a skip keyword.
+const SKIP_REASON = '已取消 · 标题含跳过关键词，不自动检视';
+
 function skipHit(keywords, title) {
   const t = String(title || '').toLowerCase();
   return (keywords || []).some((w) => w && t.includes(String(w).toLowerCase()));
@@ -107,6 +110,7 @@ class Automation {
   onSettingsChanged(prev) {
     if (this.switchTurnedOn({ newMr: prev.autoReviewNewMr, newVersion: prev.autoReviewNewVersion })) this.takeBaseline();
     this.state.switches = this.currentSwitches();
+    this.dropSkipped();
     this.save();
     if (prev.autoFetchIntervalMinutes !== this.cfg.autoFetchIntervalMinutes || (!prev.autoFetch && this.cfg.autoFetch)) {
       const base = (this.state.lastFetch && this.state.lastFetch.at) || this.startedAt;
@@ -148,7 +152,29 @@ class Automation {
   }
 
   // ---- auto review (R28) ----
+  // R28: an auto review still waiting in the queue whose title now has a skip
+  // keyword (keyword added later, or added to the title after it was queued)
+  // is taken out again. Running and manual reviews are left alone. The MR is
+  // judged afresh once the keyword is gone.
+  dropSkipped() {
+    const dropped = [];
+    for (const j of (this.app.engine.jobs || []).slice()) {
+      if (j.status !== 'queued' || j.trigger !== 'auto') continue;
+      const m = this.app.openMr ? this.app.openMr(j.pid, j.iid) : null;
+      if (!skipHit(this.cfg.skipKeywords, m ? m.title : j.title)) continue;
+      try { this.app.engine.cancel(j.pid, j.iid, SKIP_REASON); } catch { continue; }
+      const key = j.pid + '/' + j.iid;
+      delete this.state.seen[key];
+      delete this.state.handled[key];
+      this.log.info('review.auto_skip !' + j.iid + ' project=' + j.pid + ' reason=keyword dequeued=true');
+      dropped.push('!' + j.iid);
+    }
+    if (dropped.length) this.app.notify('标题含跳过关键词，已移出检视队列：' + dropped.join('、'));
+    return dropped;
+  }
+
   autoReview(onlyKey) {
+    if (!onlyKey) this.dropSkipped();
     if (!this.reviewEnabled() || this.isPaused()) return [];
     const queued = [];
     for (const p of this.app.activeProjects()) {
@@ -165,7 +191,7 @@ class Automation {
         this.state.seen[key] = true;
         if (this.state.handled[key] === m.updatedAt) continue;
         const info = this.app.reviewInfo(p.id, m.iid);
-        const isNew = firstSeen && info.attempts.length === 0;
+        const isNew = firstSeen && info.attempts.every((a) => a.stopReason === SKIP_REASON);
         const isNewVersion = Boolean(info.latest && info.latest.mrUpdatedAt !== m.updatedAt);
         if (!((this.cfg.autoReviewNewMr && isNew) || (this.cfg.autoReviewNewVersion && isNewVersion))) continue;
         const job = this.app.engine.find(p.id, m.iid);
@@ -213,4 +239,4 @@ class Automation {
   }
 }
 
-module.exports = { Automation, skipHit };
+module.exports = { Automation, skipHit, SKIP_REASON };

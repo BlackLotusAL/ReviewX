@@ -403,15 +403,33 @@
   }
 
   // R28: queue new MRs and new versions after each fetch.
+  // R28: auto reviews still queued whose title now has a skip keyword leave the queue.
+  const SKIP_REASON = '已取消 · 标题含跳过关键词，不自动检视';
+  const skipHit = (title) => { const t = String(title || '').toLowerCase(); return st.settings.values.skipKeywords.some((w) => t.includes(w.toLowerCase())); };
+  function dropSkipped() {
+    const dropped = [];
+    for (const j of st.queue.slice()) {
+      if (j.status !== 'queued' || j.trigger !== 'auto') continue;
+      const m = openMrs(j.pid).find((x) => x.iid === j.iid);
+      if (!skipHit(m ? m.title : j.title)) continue;
+      cancel(j.pid, j.iid, SKIP_REASON);
+      const key = j.pid + '/' + j.iid;
+      delete st.auto.seen[key]; delete st.auto.handled[key];
+      log('INFO', 'review.auto_skip !' + j.iid + ' project=' + j.pid + ' reason=keyword dequeued=true');
+      dropped.push('!' + j.iid);
+    }
+    if (dropped.length) toast('标题含跳过关键词，已移出检视队列：' + dropped.join('、'));
+  }
+
   function autoReview() {
     const V = st.settings.values; const A = st.auto;
+    dropSkipped();
     if (!(V.autoReviewNewMr || V.autoReviewNewVersion) || A.paused) return;
     const queued = [];
     for (const p of active()) {
       for (const m of openMrs(p.id)) {
         const key = p.id + '/' + m.iid;
-        const t = m.title.toLowerCase();
-        if (V.skipKeywords.some((w) => t.includes(w.toLowerCase()))) {
+        if (skipHit(m.title)) {
           if (!A.seen[key]) log('INFO', 'review.auto_skip !' + m.iid + ' project=' + p.id + ' reason=keyword');
           continue;
         }
@@ -419,7 +437,7 @@
         A.seen[key] = true;
         if (A.handled[key] === m.updatedAt) continue;
         const latest = (st.reports[key] || [])[0];
-        const isNew = firstSeen && !(st.attempts[key] || []).length;
+        const isNew = firstSeen && (st.attempts[key] || []).every((a) => a.stopReason === SKIP_REASON);
         const isNewVer = Boolean(latest && latest.mrUpdatedAt !== m.updatedAt);
         if (!((V.autoReviewNewMr && isNew) || (V.autoReviewNewVersion && isNewVer))) continue;
         if (st.queue.some((j) => j.pid === p.id && j.iid === m.iid)) continue;
@@ -468,6 +486,7 @@
       st.auto.nextFetchAt = Math.max((st.auto.lastFetch ? st.auto.lastFetch.at : Date.now()) + v.autoFetchIntervalMinutes * 60000, Date.now() + 60000);
     }
     log('INFO', 'settings.save changed=' + (changedKeys.join(',') || 'none'));
+    dropSkipped();
     changed();
     return { ok: true, changed: changedKeys, values: clone(v) };
   }

@@ -824,6 +824,8 @@
       ro(false, '数据目录', '报告与处理记录、代码缓存、规则、诊断日志都存放在这里；更改位置后不会自动迁移旧数据。', S.settings.readonly.dataDir));
     h += '</div>';
     const changed = setChanged();
+    // Text typed in a list input but not yet added counts as an unsaved change.
+    for (const [q, k] of [['skipQ', 'skipKeywords'], ['exQ', 'excludeFileTypes']]) if ((S[q] || '').trim() && !changed.includes(k)) changed.push(k);
     const msg = S.setMsg;
     const barText = msg ? msg.text : changed.length ? '有 ' + changed.length + ' 项修改未保存：' + changed.map((k) => SET_NAMES[k]).join('、') : '所有设置均已保存';
     const barFg = msg ? (msg.tone === 'bad' ? '#ac3039' : '#18733f') : changed.length ? '#121212' : '#62686c';
@@ -839,6 +841,9 @@
   }
 
   async function saveSettingsDraft() {
+    // A keyword or file type typed but not yet added with Enter is saved too.
+    if ((S.skipQ || '').trim()) addChip('skipKeywords', 'skipQ');
+    if ((S.exQ || '').trim()) { addChip('excludeFileTypes', 'exQ'); if (S.exErr) return; }
     const D = setDraft();
     const errs = validateDraft(D);
     const names = (ks) => ks.map((k) => SET_NAMES[k] || k).join('、');

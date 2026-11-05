@@ -376,3 +376,37 @@ test('queued reviews can be moved; the running review keeps its place', () => {
   app.engine.cancel('9', '3');
   assert.equal(order(), '1,2,4');
 });
+
+// ---- skip keywords also apply to auto reviews already waiting ----
+
+test('auto reviews still queued leave the queue once their title has a skip keyword (R28)', () => {
+  const { SKIP_REASON } = require('../src/automation');
+  const app = fakeApp();
+  const mrs = [mr('1', 'a'), mr('2', 'a'), mr('3', 'a'), mr('9', 'a')];
+  Object.assign(app, {
+    activeProjects: () => [{ id: '1' }],
+    openMrs: () => mrs,
+    openMr: (pid, iid) => mrs.find((m) => m.iid === iid) || null,
+    reviewInfo: (pid, iid) => ({ attempts: app.store.attempts(pid, iid), latest: null }),
+    notes: [], notify: (t) => app.notes.push(t)
+  });
+  app.engine.pump = () => {}; // keep everything queued
+  app.automation = new Automation(app);
+  app.automation.load();
+  app.automation.state.seen = {}; app.automation.state.handled = {}; // no baseline: all new
+  app.engine.enqueue('1', '9'); // manual review: never touched by keywords
+  assert.deepEqual(app.automation.autoReview(), ['!1', '!2', '!3']);
+  // A keyword is added while they wait, and !2's title gains the default one.
+  const prev = Object.assign({}, app.cfg);
+  app.cfg.skipKeywords = ['WIP', '版本火车', 'skip'];
+  mrs[0] = mr('1', 'a', '【版本火车】11 月');
+  mrs[1] = mr('2', 'a', 'WIP: 调整');
+  mrs[3] = mr('9', 'a', 'skip me');
+  app.automation.onSettingsChanged(prev);
+  assert.deepEqual(app.engine.jobs.map((j) => j.iid), ['9', '3']);
+  assert.equal(app.store.attempts('1', '1')[0].stopReason, SKIP_REASON);
+  assert.match(app.notes.join('\n'), /移出检视队列：!1、!2/);
+  // Once the keyword is gone the MR is judged afresh and queued again as new.
+  mrs[0] = mr('1', 'a', '11 月发布');
+  assert.deepEqual(app.automation.autoReview(), ['!1']);
+});
